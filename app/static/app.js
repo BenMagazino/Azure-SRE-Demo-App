@@ -25,6 +25,73 @@ function apiPost(path, body) {
 function showPanel(id) {
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
   document.querySelector(`#${id}`).classList.remove("hidden");
+  document.querySelectorAll(".steps [data-panel]").forEach((step) => {
+    const active = step.dataset.panel === id;
+    step.classList.toggle("active", active);
+    if (active) {
+      step.setAttribute("aria-current", "step");
+    } else {
+      step.removeAttribute("aria-current");
+    }
+  });
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    return copied;
+  }
+}
+
+async function showDeviceCode(device, event, authWindow) {
+  const copied = await copyToClipboard(event.code);
+  const code = document.createElement("strong");
+  code.textContent = event.code;
+
+  const notice = document.createElement("p");
+  notice.className = `device-notice${copied ? "" : " warning"}`;
+  notice.setAttribute("role", "status");
+  notice.textContent = copied
+    ? "Device code copied to your clipboard."
+    : "Automatic copy was blocked. Use Copy code below.";
+
+  const actions = document.createElement("div");
+  actions.className = "device-actions";
+  const copy = document.createElement("button");
+  copy.className = "secondary";
+  copy.textContent = copied ? "Copy again" : "Copy code";
+  copy.addEventListener("click", async () => {
+    const retryCopied = await copyToClipboard(event.code);
+    notice.classList.toggle("warning", !retryCopied);
+    notice.textContent = retryCopied
+      ? "Device code copied to your clipboard."
+      : "Clipboard access is blocked. Select and copy the code above.";
+  });
+  const link = document.createElement("a");
+  link.href = event.verification_url;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = authWindow && !authWindow.closed
+    ? "Microsoft sign-in opened in a new tab"
+    : `Open ${event.verification_url}`;
+  actions.append(copy, link);
+  device.replaceChildren(code, notice, actions);
+  device.classList.remove("hidden");
+
+  if (authWindow && !authWindow.closed) {
+    authWindow.location.replace(event.verification_url);
+  }
 }
 
 async function loadPrerequisites() {
@@ -80,6 +147,11 @@ async function startAuth(kind) {
   const button = document.querySelector(`[data-auth="${kind}"]`);
   const log = document.querySelector(`#${kind}-log`);
   const device = document.querySelector(`#${kind}-device`);
+  const authWindow = window.open("about:blank", "_blank");
+  if (authWindow) {
+    authWindow.document.title = "Waiting for Microsoft sign-in";
+    authWindow.document.body.textContent = "Preparing Microsoft device-code sign-in...";
+  }
   button.disabled = true;
   log.textContent = "Starting device-code sign-in...\n";
   device.classList.add("hidden");
@@ -96,15 +168,7 @@ async function startAuth(kind) {
         log.scrollTop = log.scrollHeight;
       }
       if (event.type === "device_code") {
-        const code = document.createElement("strong");
-        code.textContent = event.code;
-        const link = document.createElement("a");
-        link.href = event.verification_url;
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        link.textContent = `Open ${event.verification_url}`;
-        device.replaceChildren(code, link);
-        device.classList.remove("hidden");
+        void showDeviceCode(device, event, authWindow);
       }
       if (event.type === "done") {
         log.textContent += event.success
@@ -118,6 +182,7 @@ async function startAuth(kind) {
       }
     };
   } catch (error) {
+    if (authWindow && !authWindow.closed) authWindow.close();
     log.textContent += `Failed to start sign-in: ${error}\n`;
     button.disabled = false;
   }

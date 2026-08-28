@@ -15,11 +15,11 @@
       </header>
 
       <nav class="steps" aria-label="Setup steps">
-        <span class="active">1. Prerequisites</span>
-        <span>2. Sign in</span>
-        <span>3. Configure</span>
-        <span>4. Deploy</span>
-        <span>5. Demo</span>
+        <span data-panel="prerequisites" class="active" aria-current="step">1. Prerequisites</span>
+        <span data-panel="authentication">2. Sign in</span>
+        <span data-panel="configuration">3. Configure</span>
+        <span data-panel="deployment">4. Deploy</span>
+        <span data-panel="summary">5. Demo</span>
       </nav>
 
       <section id="prerequisites" class="panel">
@@ -36,7 +36,7 @@
 
       <section id="authentication" class="panel hidden">
         <h2>Sign in to Azure</h2>
-        <p>Run each device-code sign-in here. Follow the URL and enter the displayed code.</p>
+        <p>Start each sign-in below. The device code is copied automatically and the Microsoft sign-in page opens in a new tab.</p>
         <div class="auth-grid">
           <article>
             <h3>Azure CLI</h3>
