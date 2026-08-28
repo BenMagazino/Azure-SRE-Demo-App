@@ -174,7 +174,7 @@ async function startAuth(kind) {
     notice.className = "device-notice";
     notice.setAttribute("role", "status");
     notice.textContent =
-      "Complete the Microsoft sign-in window. Your organization may require MFA.";
+      "Complete the Microsoft sign-in page in your browser. Your organization may require MFA.";
     device.replaceChildren(notice);
     device.classList.remove("hidden");
   } else {

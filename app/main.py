@@ -118,6 +118,11 @@ def run_process(job: Job, command: list[str], cwd: Optional[Path] = None) -> tup
     if resolved is None:
         job.emit("error", message=f"Command not found: {command[0]}")
         return False, ""
+    environment = None
+    if command[:2] == ["az", "login"]:
+        # Use browser authentication so work accounts absent from Windows WAM remain selectable.
+        environment = os.environ.copy()
+        environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
     try:
         process = subprocess.Popen(
             [resolved, *command[1:]],
@@ -129,6 +134,7 @@ def run_process(job: Job, command: list[str], cwd: Optional[Path] = None) -> tup
             errors="replace",
             bufsize=1,
             creationflags=CREATE_NO_WINDOW,
+            env=environment,
         )
     except OSError as error:
         job.emit("error", message=str(error))
@@ -665,6 +671,10 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, format_string: str, *args: Any) -> None:
         print(f"[web] {format_string % args}")
+
+    def end_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         data = json.dumps(payload).encode("utf-8")

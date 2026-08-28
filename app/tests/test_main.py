@@ -2,11 +2,13 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.main import (
+    Job,
     command_version,
     http_json,
     is_device_login_url,
     parse_device_code,
     prerequisite_statuses,
+    run_process,
 )
 
 
@@ -63,6 +65,21 @@ class PrerequisiteTests(unittest.TestCase):
         run.return_value = MagicMock(stdout='{"azure-cli":"2.89.1"}', stderr="")
         self.assertEqual(command_version("az", ("version",)), "2.89.1")
         self.assertEqual(run.call_args.args[0][0], r"C:\Tools\az.cmd")
+
+
+class ProcessTests(unittest.TestCase):
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.shutil.which")
+    def test_azure_login_disables_windows_broker(self, which, popen) -> None:
+        which.return_value = r"C:\Tools\az.cmd"
+        popen.return_value.stdout = []
+        popen.return_value.wait.return_value = 0
+
+        success, _ = run_process(Job(), ["az", "login"])
+
+        self.assertTrue(success)
+        environment = popen.call_args.kwargs["env"]
+        self.assertEqual(environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
 
 
 class RequestAuthenticationTests(unittest.TestCase):
