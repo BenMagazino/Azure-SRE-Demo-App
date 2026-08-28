@@ -87,8 +87,10 @@ class PrerequisiteTests(unittest.TestCase):
     def test_reports_each_configured_tool(self, command_version) -> None:
         command_version.return_value = "1.2.3"
         statuses = prerequisite_statuses()
-        self.assertEqual([item.id for item in statuses], ["az", "azd", "git"])
+        self.assertEqual([item.id for item in statuses], ["winget", "az", "azd", "git"])
         self.assertTrue(all(item.installed for item in statuses))
+        self.assertFalse(statuses[0].required)
+        self.assertTrue(all(item.required for item in statuses[1:]))
 
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")

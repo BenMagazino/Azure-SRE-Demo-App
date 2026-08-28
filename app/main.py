@@ -51,15 +51,25 @@ class ToolStatus:
     version: Optional[str]
     install_command: str
     install_url: str
+    required: bool
 
 
 TOOLS = (
+    (
+        "winget",
+        "WinGet (recommended installer)",
+        ("--version",),
+        "Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery; "
+        "Repair-WinGetPackageManager -Force -Latest",
+        "https://learn.microsoft.com/windows/package-manager/winget/",
+        False,
+    ),
     ("az", "Azure CLI", ("version",), "winget install --id Microsoft.AzureCLI",
-     "https://learn.microsoft.com/cli/azure/install-azure-cli-windows"),
+     "https://learn.microsoft.com/cli/azure/install-azure-cli-windows", True),
     ("azd", "Azure Developer CLI", ("version",), "winget install --id Microsoft.Azd",
-     "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd"),
+     "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
     ("git", "Git", ("--version",), "winget install --id Git.Git",
-     "https://git-scm.com/download/win"),
+     "https://git-scm.com/download/win", True),
 )
 
 
@@ -107,8 +117,9 @@ def prerequisite_statuses() -> list[ToolStatus]:
             version=version,
             install_command=install_command,
             install_url=install_url,
+            required=required,
         )
-        for tool_id, name, args, install_command, install_url in TOOLS
+        for tool_id, name, args, install_command, install_url, required in TOOLS
     ]
 
 

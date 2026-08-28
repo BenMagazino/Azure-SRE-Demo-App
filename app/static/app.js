@@ -154,7 +154,9 @@ async function loadPrerequisites() {
     const response = await fetch("/api/prerequisites");
     const tools = await response.json();
     prereqList.replaceChildren(...tools.map(renderTool));
-    continueButton.disabled = !tools.every((tool) => tool.installed);
+    continueButton.disabled = !tools
+      .filter((tool) => tool.required)
+      .every((tool) => tool.installed);
   } catch (error) {
     prereqList.textContent = `Unable to check prerequisites: ${error}`;
   }
@@ -162,15 +164,15 @@ async function loadPrerequisites() {
 
 function renderTool(tool) {
   const row = document.createElement("div");
-  row.className = `tool ${tool.installed ? "ok" : ""}`;
+  row.className = `tool ${tool.installed ? "ok" : tool.required ? "" : "optional"}`;
   const status = document.createElement("span");
   status.className = "status";
-  status.textContent = tool.installed ? "OK" : "!";
+  status.textContent = tool.installed ? "OK" : tool.required ? "!" : "i";
   const name = document.createElement("strong");
   name.textContent = tool.name;
   const version = document.createElement("span");
   version.className = "version";
-  version.textContent = tool.version || "Missing";
+  version.textContent = tool.version || (tool.required ? "Missing" : "Missing (recommended)");
   row.append(status, name, version);
 
   if (!tool.installed) {
