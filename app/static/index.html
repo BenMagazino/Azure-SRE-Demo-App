@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure SRE Agent Demo Setup</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <span class="eyebrow">Scenario 1</span>
+        <h1>Azure SRE Agent Demo Setup</h1>
+        <p>Deploy the Grubify memory-leak demo without Git Bash or manual shell navigation.</p>
+      </header>
+
+      <nav class="steps" aria-label="Setup steps">
+        <span class="active">1. Prerequisites</span>
+        <span>2. Sign in</span>
+        <span>3. Configure</span>
+        <span>4. Deploy</span>
+        <span>5. Demo</span>
+      </nav>
+
+      <section id="prerequisites" class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Prerequisites</h2>
+            <p>The app checks your machine and gives you one-click copy commands for anything missing.</p>
+          </div>
+          <button id="refresh-prereqs" class="secondary">Re-check</button>
+        </div>
+        <div id="prereq-list" class="tool-list" aria-live="polite"></div>
+        <button id="continue-to-auth" disabled>Continue to sign in</button>
+      </section>
+
+      <section id="authentication" class="panel hidden">
+        <h2>Sign in to Azure</h2>
+        <p>Run each device-code sign-in here. Follow the URL and enter the displayed code.</p>
+        <div class="auth-grid">
+          <article>
+            <h3>Azure CLI</h3>
+            <button data-auth="azure-cli">Sign in with Azure CLI</button>
+            <div id="azure-cli-device" class="device-card hidden"></div>
+            <pre id="azure-cli-log" class="log"></pre>
+          </article>
+          <article>
+            <h3>Azure Developer CLI</h3>
+            <button data-auth="azd">Sign in with azd</button>
+            <div id="azd-device" class="device-card hidden"></div>
+            <pre id="azd-log" class="log"></pre>
+          </article>
+        </div>
+        <button id="continue-to-configure" disabled>Continue to configuration</button>
+      </section>
+
+      <section id="configuration" class="panel hidden">
+        <h2>Configure the Azure environment</h2>
+        <form id="configure-form" class="form-grid">
+          <label>
+            Environment name
+            <input id="environment-name" value="sre-lab" pattern="[A-Za-z0-9-]{2,30}" required>
+          </label>
+          <label>
+            Azure region
+            <select id="azure-location">
+              <option value="eastus2">East US 2</option>
+              <option value="swedencentral">Sweden Central</option>
+              <option value="australiaeast">Australia East</option>
+            </select>
+          </label>
+          <button type="submit">Save environment</button>
+        </form>
+        <p id="configure-status" aria-live="polite"></p>
+      </section>
+
+      <section id="deployment" class="panel hidden">
+        <h2>Deploy and configure the demo</h2>
+        <p>Infrastructure deployment and agent configuration typically take 8-15 minutes.</p>
+        <button id="start-deploy">Deploy Scenario 1</button>
+        <p id="deploy-step"></p>
+        <pre id="deploy-log" class="log large"></pre>
+      </section>
+
+      <section id="summary" class="panel hidden">
+        <h2>Demo ready</h2>
+        <div id="summary-links" class="summary-grid"></div>
+        <div class="demo-actions">
+          <button id="break-cart" class="danger">Break Cart</button>
+          <button id="teardown" class="secondary">Tear down Azure resources</button>
+        </div>
+        <pre id="demo-log" class="log large"></pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

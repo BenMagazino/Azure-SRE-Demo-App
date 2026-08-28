@@ -9,4 +9,4 @@ infra:
   path: infra
 
 # No services block — the container image is built in the cloud via ACR Tasks
-# by the Tauri app's post-provision step. No Docker Desktop needed locally.
+# by the Python app's post-provision step. No Docker Desktop needed locally.

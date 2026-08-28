@@ -9,9 +9,8 @@
 #   4. The SRE Agent picks up the alert and begins investigation
 #
 # NOTE: This is the reference shell version, vendored from the upstream lab
-# for parity/documentation purposes. The Tauri app implements this same
-# fault-injection logic natively in Rust (see src-tauri) so end users never
-# need to run this script directly.
+# for parity/documentation purposes. The Python app implements this same
+# fault-injection logic, so end users never need to run this script directly.
 # =============================================================================
 set -e
 

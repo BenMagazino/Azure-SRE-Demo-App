@@ -1,0 +1,249 @@
+const prereqList = document.querySelector("#prereq-list");
+const continueButton = document.querySelector("#continue-to-auth");
+const authStatus = { "azure-cli": false, azd: false };
+let sessionToken = "";
+
+async function initialize() {
+  const response = await fetch("/api/session");
+  const session = await response.json();
+  sessionToken = session.token;
+  await loadPrerequisites();
+}
+
+function apiPost(path, body) {
+  const options = {
+    method: "POST",
+    headers: { "X-SRE-Session": sessionToken },
+  };
+  if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  return fetch(path, options);
+}
+
+function showPanel(id) {
+  document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
+  document.querySelector(`#${id}`).classList.remove("hidden");
+}
+
+async function loadPrerequisites() {
+  prereqList.textContent = "Checking installed tools...";
+  continueButton.disabled = true;
+  try {
+    const response = await fetch("/api/prerequisites");
+    const tools = await response.json();
+    prereqList.replaceChildren(...tools.map(renderTool));
+    continueButton.disabled = !tools.every((tool) => tool.installed);
+  } catch (error) {
+    prereqList.textContent = `Unable to check prerequisites: ${error}`;
+  }
+}
+
+function renderTool(tool) {
+  const row = document.createElement("div");
+  row.className = `tool ${tool.installed ? "ok" : ""}`;
+  const status = document.createElement("span");
+  status.className = "status";
+  status.textContent = tool.installed ? "OK" : "!";
+  const name = document.createElement("strong");
+  name.textContent = tool.name;
+  const version = document.createElement("span");
+  version.className = "version";
+  version.textContent = tool.version || "Missing";
+  row.append(status, name, version);
+
+  if (!tool.installed) {
+    const install = document.createElement("div");
+    install.className = "install";
+    const code = document.createElement("code");
+    code.textContent = tool.install_command;
+    const copy = document.createElement("button");
+    copy.className = "secondary";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(tool.install_command);
+      copy.textContent = "Copied";
+    });
+    const link = document.createElement("a");
+    link.href = tool.install_url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = "Installer documentation";
+    install.append(code, copy, link);
+    row.append(install);
+  }
+  return row;
+}
+
+async function startAuth(kind) {
+  const button = document.querySelector(`[data-auth="${kind}"]`);
+  const log = document.querySelector(`#${kind}-log`);
+  const device = document.querySelector(`#${kind}-device`);
+  button.disabled = true;
+  log.textContent = "Starting device-code sign-in...\n";
+  device.classList.add("hidden");
+
+  try {
+    const response = await apiPost(`/api/auth/${kind}`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to start sign-in");
+    const events = new EventSource(`/api/jobs/${result.job_id}/events`);
+    events.onmessage = ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.type === "output") {
+        log.textContent += `${event.line}\n`;
+        log.scrollTop = log.scrollHeight;
+      }
+      if (event.type === "device_code") {
+        const code = document.createElement("strong");
+        code.textContent = event.code;
+        const link = document.createElement("a");
+        link.href = event.verification_url;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = `Open ${event.verification_url}`;
+        device.replaceChildren(code, link);
+        device.classList.remove("hidden");
+      }
+      if (event.type === "done") {
+        log.textContent += event.success
+          ? "\nSign-in completed.\n"
+          : `\nSign-in failed (exit ${event.exit_code}).\n`;
+        authStatus[kind] = event.success;
+        document.querySelector("#continue-to-configure").disabled =
+          !Object.values(authStatus).every(Boolean);
+        button.disabled = false;
+        events.close();
+      }
+    };
+  } catch (error) {
+    log.textContent += `Failed to start sign-in: ${error}\n`;
+    button.disabled = false;
+  }
+}
+
+function streamJob(jobId, log, options = {}) {
+  return new Promise((resolve) => {
+    const events = new EventSource(`/api/jobs/${jobId}/events`);
+    events.onmessage = ({ data }) => {
+      const event = JSON.parse(data);
+      if (event.type === "output") {
+        log.textContent += `${event.line}\n`;
+        log.scrollTop = log.scrollHeight;
+      }
+      if (event.type === "command") log.textContent += `> ${event.command.join(" ")}\n`;
+      if (event.type === "step" && options.stepElement) options.stepElement.textContent = event.name;
+      if (event.type === "error") log.textContent += `ERROR: ${event.message}\n`;
+      if (event.type === "done") {
+        events.close();
+        resolve(event);
+      }
+    };
+  });
+}
+
+async function configureEnvironment(event) {
+  event.preventDefault();
+  const status = document.querySelector("#configure-status");
+  status.textContent = "Saving environment...";
+  const response = await apiPost("/api/configure", {
+    environment: document.querySelector("#environment-name").value,
+    location: document.querySelector("#azure-location").value,
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    status.textContent = result.error || "Configuration failed.";
+    return;
+  }
+  status.textContent = `Ready: ${result.environment} in ${result.location}`;
+  showPanel("deployment");
+}
+
+async function startDeploy() {
+  const button = document.querySelector("#start-deploy");
+  const log = document.querySelector("#deploy-log");
+  const step = document.querySelector("#deploy-step");
+  button.disabled = true;
+  log.textContent = "Starting deployment...\n";
+  const response = await apiPost("/api/deploy");
+  const result = await response.json();
+  if (!response.ok) {
+    log.textContent += `${result.error || "Deployment did not start."}\n`;
+    button.disabled = false;
+    return;
+  }
+  const completed = await streamJob(result.job_id, log, { stepElement: step });
+  button.disabled = false;
+  if (completed.success) {
+    await loadSummary();
+    showPanel("summary");
+  } else {
+    step.textContent = "Deployment failed. Review the log above and retry.";
+  }
+}
+
+async function loadSummary() {
+  const response = await fetch("/api/summary");
+  const summary = await response.json();
+  const fields = [
+    ["Environment", summary.environment],
+    ["Resource group", summary.resource_group],
+    ["Agent portal", summary.agent_portal_url],
+    ["Grubify UI", summary.frontend_url],
+    ["Grubify API", summary.api_url],
+  ];
+  const container = document.querySelector("#summary-links");
+  container.replaceChildren(...fields.map(([label, value]) => {
+    const item = document.createElement("div");
+    item.className = "summary-item";
+    const heading = document.createElement("strong");
+    heading.textContent = label;
+    const content = value && value.startsWith("http")
+      ? document.createElement("a")
+      : document.createElement("span");
+    content.textContent = value || "Unavailable";
+    if (content instanceof HTMLAnchorElement) {
+      content.href = value;
+      content.target = "_blank";
+      content.rel = "noreferrer";
+    }
+    item.append(heading, content);
+    return item;
+  }));
+}
+
+async function runDemoAction(path, confirmation) {
+  if (confirmation && !window.confirm(confirmation)) return;
+  const log = document.querySelector("#demo-log");
+  log.textContent = `Starting ${path}...\n`;
+  const response = await apiPost(`/api/${path}`);
+  const result = await response.json();
+  if (!response.ok) {
+    log.textContent += `${result.error || "Action did not start."}\n`;
+    return;
+  }
+  const completed = await streamJob(result.job_id, log);
+  log.textContent += completed.success ? "\nCompleted.\n" : "\nAction failed.\n";
+}
+
+document.querySelector("#refresh-prereqs").addEventListener("click", loadPrerequisites);
+continueButton.addEventListener("click", () => showPanel("authentication"));
+document.querySelectorAll("[data-auth]").forEach((button) => {
+  button.addEventListener("click", () => startAuth(button.dataset.auth));
+});
+document.querySelector("#continue-to-configure").addEventListener("click", () => showPanel("configuration"));
+document.querySelector("#configure-form").addEventListener("submit", configureEnvironment);
+document.querySelector("#start-deploy").addEventListener("click", startDeploy);
+document.querySelector("#break-cart").addEventListener("click", () => runDemoAction(
+  "break-cart",
+  "Send 200 cart requests to trigger the Scenario 1 memory leak?"
+));
+document.querySelector("#teardown").addEventListener("click", () => runDemoAction(
+  "teardown",
+  "Permanently delete this demo's Azure resources?"
+));
+
+initialize().catch((error) => {
+  prereqList.textContent = `Unable to initialize the app: ${error}`;
+});
