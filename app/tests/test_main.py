@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from app.main import (
     Job,
+    authentication_statuses,
     command_version,
     http_json,
     is_device_login_url,
@@ -111,6 +112,14 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(success)
         environment = popen.call_args.kwargs["env"]
         self.assertEqual(environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
+
+    @patch("app.main.run_capture")
+    def test_reports_cached_authentication_status(self, run_capture) -> None:
+        run_capture.side_effect = [(True, ""), (False, "not logged in")]
+
+        statuses = authentication_statuses()
+
+        self.assertEqual(statuses, {"azure-cli": True, "azd": False})
 
 
 class RequestAuthenticationTests(unittest.TestCase):

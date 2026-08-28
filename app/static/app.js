@@ -8,6 +8,7 @@ async function initialize() {
   const session = await response.json();
   sessionToken = session.token;
   await loadPrerequisites();
+  await loadAuthStatus();
 }
 
 function apiPost(path, body) {
@@ -113,6 +114,39 @@ function showMfaNotice(device) {
   device.classList.remove("hidden");
 }
 
+function showAuthComplete(device, button, kind) {
+  const title = document.createElement("div");
+  title.className = "auth-result-title";
+  title.textContent = "Signed in";
+  const detail = document.createElement("p");
+  detail.className = "auth-result-detail";
+  detail.textContent = kind === "azure-cli"
+    ? "Azure CLI authentication completed successfully."
+    : "Azure Developer CLI authentication completed successfully.";
+  device.replaceChildren(title, detail);
+  device.classList.add("complete");
+  device.classList.remove("hidden");
+  button.textContent = kind === "azure-cli"
+    ? "Signed in with Azure CLI"
+    : "Signed in with azd";
+  button.disabled = true;
+}
+
+async function loadAuthStatus() {
+  const response = await fetch("/api/auth/status");
+  if (!response.ok) return;
+  const statuses = await response.json();
+  Object.entries(statuses).forEach(([kind, signedIn]) => {
+    authStatus[kind] = signedIn;
+    if (!signedIn) return;
+    const button = document.querySelector(`[data-auth="${kind}"]`);
+    const device = document.querySelector(`#${kind}-device`);
+    showAuthComplete(device, button, kind);
+  });
+  document.querySelector("#continue-to-configure").disabled =
+    !Object.values(authStatus).every(Boolean);
+}
+
 async function loadPrerequisites() {
   prereqList.textContent = "Checking installed tools...";
   continueButton.disabled = true;
@@ -205,7 +239,11 @@ async function startAuth(kind) {
         authStatus[kind] = event.success;
         document.querySelector("#continue-to-configure").disabled =
           !Object.values(authStatus).every(Boolean);
-        button.disabled = false;
+        if (event.success) {
+          showAuthComplete(device, button, kind);
+        } else {
+          button.disabled = false;
+        }
         events.close();
       }
     };

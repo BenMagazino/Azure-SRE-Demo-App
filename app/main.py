@@ -375,6 +375,19 @@ def run_capture(command: list[str], cwd: Optional[Path] = None) -> tuple[bool, s
     return result.returncode == 0, (result.stdout or result.stderr).strip()
 
 
+def authentication_statuses() -> dict[str, bool]:
+    azure_cli, _ = run_capture([
+        "az",
+        "account",
+        "show",
+        "--output",
+        "none",
+        "--only-show-errors",
+    ])
+    azd, _ = run_capture(["azd", "auth", "login", "--check-status"])
+    return {"azure-cli": azure_cli, "azd": azd}
+
+
 def azd_values(environment: str) -> dict[str, str]:
     success, output = run_capture(
         ["azd", "env", "get-values", "-e", environment],
@@ -839,6 +852,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/prerequisites":
             self.send_json([asdict(status) for status in prerequisite_statuses()])
+            return
+        if path == "/api/auth/status":
+            self.send_json(authentication_statuses())
             return
         if path == "/api/summary":
             environment = load_state().get("environment")
