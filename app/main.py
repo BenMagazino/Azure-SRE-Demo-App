@@ -189,19 +189,82 @@ def parse_claims_challenge_login(line: str) -> Optional[dict[str, str]]:
     }
 
 
+def cached_azure_context() -> Optional[dict[str, str]]:
+    success, output = run_capture([
+        "az",
+        "account",
+        "show",
+        "--query",
+        "{tenant:tenantId,subscription:id}",
+        "--output",
+        "json",
+        "--only-show-errors",
+    ])
+    if not success:
+        return None
+    try:
+        context = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    tenant = str(context.get("tenant", ""))
+    subscription = str(context.get("subscription", ""))
+    guid = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+    if not re.fullmatch(guid, tenant) or not re.fullmatch(guid, subscription):
+        return None
+    return {"tenant": tenant, "subscription": subscription}
+
+
+def scoped_azure_login_command(context: dict[str, str]) -> list[str]:
+    return [
+        "az",
+        "login",
+        "--tenant",
+        context["tenant"],
+        "--scope",
+        "https://management.core.windows.net//.default",
+        "--subscription",
+        context["subscription"],
+        "--skip-subscription-discovery",
+    ]
+
+
 def azure_login_worker(job: Job) -> None:
     challenge: dict[str, str] = {}
+    discovered_context: dict[str, str] = {}
+
+    context = cached_azure_context()
+    if context:
+        job.emit(
+            "output",
+            line="Using the previously selected Azure tenant and subscription...",
+        )
+        success, _ = run_process(
+            job,
+            scoped_azure_login_command(context),
+            emit_command=False,
+        )
+        job.emit("done", success=success, exit_code=0 if success else 1)
+        return
 
     def intercept_claims_challenge(line: str) -> bool:
         parsed = parse_claims_challenge_login(line)
-        if not parsed:
-            return False
-        challenge.update(parsed)
-        job.emit(
-            "output",
-            line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
-        )
-        return True
+        if parsed:
+            challenge.update(parsed)
+            job.emit(
+                "output",
+                line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
+            )
+            return True
+        if "AADSTS50076" in line:
+            selected = cached_azure_context()
+            if selected:
+                discovered_context.update(selected)
+                job.emit(
+                    "output",
+                    line="The selected Azure account is ready. Finishing sign-in for that subscription...",
+                )
+                return True
+        return False
 
     success, _ = run_process(
         job,
@@ -226,6 +289,12 @@ def azure_login_worker(job: Job) -> None:
                 "--claims-challenge",
                 challenge["claims_challenge"],
             ],
+            emit_command=False,
+        )
+    elif discovered_context:
+        success, _ = run_process(
+            job,
+            scoped_azure_login_command(discovered_context),
             emit_command=False,
         )
     job.emit("done", success=success, exit_code=0 if success else 1)

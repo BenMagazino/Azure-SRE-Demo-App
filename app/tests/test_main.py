@@ -10,6 +10,7 @@ from app.main import (
     parse_device_code,
     prerequisite_statuses,
     run_process,
+    scoped_azure_login_command,
 )
 
 
@@ -67,6 +68,17 @@ class ClaimsChallengeTests(unittest.TestCase):
                 "claims_challenge": "encoded-claims-value",
             },
         )
+
+    def test_builds_single_subscription_login(self) -> None:
+        command = scoped_azure_login_command({
+            "tenant": "00000000-0000-0000-0000-000000000000",
+            "subscription": "11111111-1111-1111-1111-111111111111",
+        })
+
+        self.assertEqual(command[0:2], ["az", "login"])
+        self.assertIn("--tenant", command)
+        self.assertIn("--subscription", command)
+        self.assertIn("--skip-subscription-discovery", command)
 
 
 class PrerequisiteTests(unittest.TestCase):
