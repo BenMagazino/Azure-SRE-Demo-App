@@ -7,6 +7,7 @@ from app.main import (
     command_version,
     http_json,
     is_device_login_url,
+    open_browser_url,
     parse_claims_challenge_login,
     parse_device_code,
     prerequisite_statuses,
@@ -122,6 +123,21 @@ class ProcessTests(unittest.TestCase):
         statuses = authentication_statuses()
 
         self.assertEqual(statuses, {"azure-cli": True, "azd": False})
+
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.find_edge")
+    @patch("app.main.is_windows_sandbox")
+    def test_opens_edge_directly_in_windows_sandbox(
+        self,
+        is_windows_sandbox,
+        find_edge,
+        popen,
+    ) -> None:
+        is_windows_sandbox.return_value = True
+        find_edge.return_value = MagicMock(__str__=lambda _: r"C:\Edge\msedge.exe")
+
+        self.assertTrue(open_browser_url("http://127.0.0.1:8765"))
+        popen.assert_called_once()
 
 
 class RequestAuthenticationTests(unittest.TestCase):

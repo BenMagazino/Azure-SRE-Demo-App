@@ -340,6 +340,40 @@ def is_device_login_url(url: str) -> bool:
     )
 
 
+def is_windows_sandbox() -> bool:
+    return (
+        os.name == "nt"
+        and os.environ.get("USERNAME", "").lower() == "wdagutilityaccount"
+    )
+
+
+def find_edge() -> Optional[Path]:
+    candidates = [
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Microsoft/Edge/Application/msedge.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/Edge/Application/msedge.exe",
+    ]
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def open_browser_url(url: str) -> bool:
+    if is_windows_sandbox():
+        edge = find_edge()
+        if edge:
+            try:
+                subprocess.Popen(
+                    [str(edge), url],
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                return True
+            except OSError:
+                pass
+    try:
+        return webbrowser.open_new_tab(url)
+    except webbrowser.Error:
+        return False
+
+
 def create_job(
     command: Optional[list[str]] = None,
     worker: Optional[Any] = None,
@@ -921,7 +955,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not is_device_login_url(verification_url):
                 self.send_json({"error": "Invalid Microsoft device-login URL"}, HTTPStatus.BAD_REQUEST)
                 return
-            if not webbrowser.open_new_tab(verification_url):
+            if not open_browser_url(verification_url):
                 self.send_json({"error": "Unable to open the default browser"}, HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
             self.send_json({"opened": True})
@@ -1040,7 +1074,7 @@ def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), AppHandler)
     url = f"http://{HOST}:{PORT}"
     print(f"SRE Agent onboarding wizard: {url}")
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    threading.Timer(0.6, lambda: open_browser_url(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
