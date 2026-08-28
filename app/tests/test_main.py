@@ -1,7 +1,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.main import command_version, http_json, parse_device_code, prerequisite_statuses
+from app.main import (
+    command_version,
+    http_json,
+    is_device_login_url,
+    parse_device_code,
+    prerequisite_statuses,
+)
 
 
 class DeviceCodeTests(unittest.TestCase):
@@ -21,6 +27,25 @@ class DeviceCodeTests(unittest.TestCase):
 
     def test_ignores_unrelated_output(self) -> None:
         self.assertIsNone(parse_device_code("Retrieving subscriptions..."))
+
+    def test_parses_new_device_login_url(self) -> None:
+        line = (
+            "To sign in, use a web browser to open the page "
+            "https://login.microsoft.com/device and enter the code BZ4MVCCE8 "
+            "to authenticate."
+        )
+        self.assertEqual(
+            parse_device_code(line),
+            {
+                "verification_url": "https://login.microsoft.com/device",
+                "code": "BZ4MVCCE8",
+            },
+        )
+
+    def test_only_allows_known_device_login_urls(self) -> None:
+        self.assertTrue(is_device_login_url("https://login.microsoft.com/device"))
+        self.assertTrue(is_device_login_url("https://microsoft.com/devicelogin"))
+        self.assertFalse(is_device_login_url("https://example.com/device"))
 
 
 class PrerequisiteTests(unittest.TestCase):

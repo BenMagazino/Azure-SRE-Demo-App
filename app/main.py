@@ -156,7 +156,11 @@ def stream_process(job: Job) -> None:
 
 
 def parse_device_code(line: str) -> Optional[dict[str, str]]:
-    url_match = re.search(r"https://\S*devicelogin\S*", line, re.IGNORECASE)
+    url_match = re.search(
+        r"https://(?:microsoft\.com/devicelogin|login\.microsoft(?:online)?\.com/device)\S*",
+        line,
+        re.IGNORECASE,
+    )
     code_match = re.search(
         r"(?:enter\s+(?:the\s+)?code|code[:\s]+)\s*([A-Z0-9-]{6,12})",
         line,
@@ -168,6 +172,16 @@ def parse_device_code(line: str) -> Optional[dict[str, str]]:
         "verification_url": url_match.group(0).rstrip(".,"),
         "code": code_match.group(1).upper(),
     }
+
+
+def is_device_login_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/").lower()
+    return parsed.scheme == "https" and (
+        (host == "microsoft.com" and path == "/devicelogin")
+        or (host in {"login.microsoft.com", "login.microsoftonline.com"} and path == "/device")
+    )
 
 
 def create_job(
@@ -715,6 +729,20 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path in commands:
             job = create_job(commands[path])
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
+            return
+        if path == "/api/open-device-login":
+            try:
+                verification_url = str(self.read_json().get("url", ""))
+            except (ValueError, json.JSONDecodeError):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            if not is_device_login_url(verification_url):
+                self.send_json({"error": "Invalid Microsoft device-login URL"}, HTTPStatus.BAD_REQUEST)
+                return
+            if not webbrowser.open_new_tab(verification_url):
+                self.send_json({"error": "Unable to open the default browser"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self.send_json({"opened": True})
             return
         if path == "/api/configure":
             self.configure_environment()

@@ -88,10 +88,17 @@ async function showDeviceCode(device, event) {
   device.classList.remove("hidden");
 
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  const authWindow = window.open(event.verification_url, "_blank");
-  link.textContent = authWindow
-    ? "Microsoft sign-in opened in a new tab"
-    : "Open Microsoft sign-in (popup was blocked)";
+  try {
+    const response = await apiPost("/api/open-device-login", {
+      url: event.verification_url,
+    });
+    const result = await response.json();
+    link.textContent = response.ok && result.opened
+      ? "Microsoft sign-in opened in your browser"
+      : "Open Microsoft sign-in";
+  } catch {
+    link.textContent = "Open Microsoft sign-in";
+  }
 }
 
 async function loadPrerequisites() {
