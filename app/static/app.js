@@ -101,6 +101,18 @@ async function showDeviceCode(device, event) {
   }
 }
 
+function showMfaNotice(device) {
+  if (device.querySelector(".mfa-notice")) return;
+  const notice = document.createElement("p");
+  notice.className = "mfa-notice";
+  notice.setAttribute("role", "status");
+  notice.textContent =
+    "Your organization requires additional MFA. Complete the Microsoft browser prompt; " +
+    "you do not need to run the commands shown in the log.";
+  device.append(notice);
+  device.classList.remove("hidden");
+}
+
 async function loadPrerequisites() {
   prereqList.textContent = "Checking installed tools...";
   continueButton.disabled = true;
@@ -168,6 +180,9 @@ async function startAuth(kind) {
       if (event.type === "output") {
         log.textContent += `${event.line}\n`;
         log.scrollTop = log.scrollHeight;
+        if (/AADSTS50076|continue the login in the pop-up window/i.test(event.line)) {
+          showMfaNotice(device);
+        }
       }
       if (event.type === "device_code") {
         void showDeviceCode(device, event);

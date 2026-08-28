@@ -38,6 +38,7 @@ header p, .panel p { color: #9fb0c4; }
 .device-notice { margin: 0 0 .65rem; color: #86efac; font-weight: 700; }
 .device-notice.warning { color: #fbbf24; }
 .device-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.mfa-notice { margin: 1rem 0 0 !important; padding: .8rem; border-left: 4px solid #fbbf24; background: #0d1a2a; color: #fde68a !important; }
 .form-grid { display: grid; gap: 1rem; max-width: 520px; }
 .form-grid label { display: grid; gap: .4rem; color: #b9c9dc; }
 input, select { width: 100%; padding: .75rem; border-radius: 6px; border: 1px solid #36506d; background: #08111f; color: #e8f0fa; }
