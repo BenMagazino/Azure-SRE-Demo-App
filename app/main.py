@@ -723,7 +723,12 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         commands = {
-            "/api/auth/azure-cli": ["az", "login", "--use-device-code"],
+            "/api/auth/azure-cli": [
+                "az",
+                "login",
+                "--scope",
+                "https://management.core.windows.net//.default",
+            ],
             "/api/auth/azd": ["azd", "auth", "login", "--use-device-code"],
         }
         if path in commands:

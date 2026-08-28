@@ -167,8 +167,19 @@ async function startAuth(kind) {
   const log = document.querySelector(`#${kind}-log`);
   const device = document.querySelector(`#${kind}-device`);
   button.disabled = true;
-  log.textContent = "Starting device-code sign-in...\n";
   device.classList.add("hidden");
+  if (kind === "azure-cli") {
+    log.textContent = "Starting secure Azure CLI sign-in...\n";
+    const notice = document.createElement("p");
+    notice.className = "device-notice";
+    notice.setAttribute("role", "status");
+    notice.textContent =
+      "Complete the Microsoft sign-in window. Your organization may require MFA.";
+    device.replaceChildren(notice);
+    device.classList.remove("hidden");
+  } else {
+    log.textContent = "Starting device-code sign-in...\n";
+  }
 
   try {
     const response = await apiPost(`/api/auth/${kind}`);
