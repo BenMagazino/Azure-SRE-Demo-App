@@ -2,6 +2,13 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $venv = Join-Path $repoRoot ".build-venv"
 $python = Get-Command python -ErrorAction SilentlyContinue
+$staleOneFileExecutable = Join-Path $repoRoot "dist\AzureSREAgentDemo.exe"
+
+# Remove the obsolete one-file artifact created by earlier builds. The
+# supported package is the complete dist\AzureSREAgentDemo directory.
+if (Test-Path $staleOneFileExecutable) {
+  Remove-Item $staleOneFileExecutable -Force
+}
 
 if (-not $python) {
   $launcher = Get-Command py -ErrorAction SilentlyContinue
