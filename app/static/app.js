@@ -83,13 +83,18 @@ async function showDeviceCode(device, event, authWindow) {
   link.target = "_blank";
   link.rel = "noreferrer";
   link.textContent = authWindow && !authWindow.closed
-    ? "Microsoft sign-in opened in a new tab"
+    ? "Microsoft sign-in opens in 3 seconds"
     : `Open ${event.verification_url}`;
   actions.append(copy, link);
   device.replaceChildren(code, notice, actions);
   device.classList.remove("hidden");
 
   if (authWindow && !authWindow.closed) {
+    authWindow.document.title = "Device code copied";
+    authWindow.document.body.textContent = copied
+      ? `Device code ${event.code} was copied. Opening Microsoft sign-in in 3 seconds...`
+      : `Device code ${event.code} is ready. Opening Microsoft sign-in in 3 seconds...`;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
     authWindow.location.replace(event.verification_url);
   }
 }
