@@ -19,7 +19,7 @@ if (Test-Path $stagingRoot) {
 if (-not $python) {
   $launcher = Get-Command py -ErrorAction SilentlyContinue
   if (-not $launcher) {
-    throw "Python is required. Run .\scripts\bootstrap-dev.ps1 first."
+    throw "Python is required. Run .\scripts\start.ps1 once to install or validate it."
   }
   & $launcher.Source -3 -m venv $venv
 } else {

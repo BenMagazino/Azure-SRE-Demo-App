@@ -1,16 +1,82 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$python = Get-Command python -ErrorAction SilentlyContinue
+$appPath = Join-Path $repoRoot "app\main.py"
 
-if ($python) {
-  & $python.Source (Join-Path $repoRoot "app\main.py")
-  exit $LASTEXITCODE
+function Find-PythonRuntime {
+  $candidates = @()
+  $launcher = Get-Command py -ErrorAction SilentlyContinue
+  if ($launcher) {
+    $candidates += [PSCustomObject]@{ Path = $launcher.Source; PrefixArgs = @("-3") }
+  }
+
+  $python = Get-Command python -ErrorAction SilentlyContinue
+  if ($python -and $python.Source -notlike "*\WindowsApps\python.exe") {
+    $candidates += [PSCustomObject]@{ Path = $python.Source; PrefixArgs = @() }
+  }
+
+  $commonPaths = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Launcher\py.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe")
+  )
+  foreach ($path in $commonPaths) {
+    if (Test-Path $path) {
+      $prefixArgs = if ($path.EndsWith("\py.exe")) { @("-3") } else { @() }
+      $candidates += [PSCustomObject]@{ Path = $path; PrefixArgs = $prefixArgs }
+    }
+  }
+
+  foreach ($candidate in $candidates) {
+    $versionText = (& $candidate.Path @($candidate.PrefixArgs) --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+      continue
+    }
+    $match = [regex]::Match($versionText, "Python\s+(\d+)\.(\d+)")
+    if ($match.Success) {
+      $major = [int]$match.Groups[1].Value
+      $minor = [int]$match.Groups[2].Value
+      if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 9)) {
+        $candidate | Add-Member -NotePropertyName Version -NotePropertyValue $versionText
+        return $candidate
+      }
+    }
+  }
+
+  return $null
 }
 
-$python = Get-Command py -ErrorAction SilentlyContinue
-if (-not $python) {
-  throw "Python 3.9 or newer is required. Run .\scripts\bootstrap-dev.ps1 first."
+$runtime = Find-PythonRuntime
+if (-not $runtime) {
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if (-not $winget) {
+    throw @"
+Python 3.9 or newer is required, and WinGet is unavailable.
+Install Python from https://www.python.org/downloads/windows/ and rerun this script.
+"@
+  }
+
+  Write-Host "Python 3.9 or newer was not found." -ForegroundColor Yellow
+  Write-Host "Installing Python 3.12 for the current user..."
+  & $winget.Source install `
+    --id Python.Python.3.12 `
+    --exact `
+    --scope user `
+    --accept-package-agreements `
+    --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) {
+    throw "WinGet was unable to install Python 3.12."
+  }
+
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $env:PATH = "$userPath;$machinePath"
+  $runtime = Find-PythonRuntime
+  if (-not $runtime) {
+    throw "Python was installed but could not be started. Open a new PowerShell window and rerun this script."
+  }
 }
 
-& $python.Source -3 (Join-Path $repoRoot "app\main.py")
+Write-Host "Using $($runtime.Version)"
+Write-Host "Starting the Azure SRE Agent onboarding wizard..." -ForegroundColor Green
+$launchArgs = @($runtime.PrefixArgs) + @($appPath)
+& $runtime.Path @launchArgs
 exit $LASTEXITCODE

@@ -22,18 +22,14 @@ official installation documentation.
 From PowerShell in the repository root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-dev.ps1 -Launch
-```
-
-The bootstrap checks Python and starts the local application. It does not create a
-virtual environment or download Python packages because the application uses only
-the Python standard library.
-
-For subsequent runs:
-
-```powershell
 .\scripts\start.ps1
 ```
+
+The start script checks for Python 3.9 or newer, installs Python 3.12 with WinGet
+when necessary, and launches the local application. It does not create a virtual
+environment or download Python packages because the application uses only the
+Python standard library. If both Python and WinGet are unavailable, it provides
+the direct Python installation URL.
 
 The browser opens automatically at <http://127.0.0.1:8765>.
 
