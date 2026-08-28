@@ -1,0 +1,12 @@
+# Azure Developer CLI (azd) template for the SRE Agent Lab (Scenario 1 only, vendored)
+# Run: azd up
+name: sre-agent-lab
+metadata:
+  template: sre-agent-lab@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+
+# No services block — the container image is built in the cloud via ACR Tasks
+# by the Tauri app's post-provision step. No Docker Desktop needed locally.
