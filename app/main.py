@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -112,8 +112,15 @@ def prerequisite_statuses() -> list[ToolStatus]:
     ]
 
 
-def run_process(job: Job, command: list[str], cwd: Optional[Path] = None) -> tuple[bool, str]:
-    job.emit("command", command=command)
+def run_process(
+    job: Job,
+    command: list[str],
+    cwd: Optional[Path] = None,
+    line_interceptor: Optional[Callable[[str], bool]] = None,
+    emit_command: bool = True,
+) -> tuple[bool, str]:
+    if emit_command:
+        job.emit("command", command=command)
     resolved = shutil.which(command[0])
     if resolved is None:
         job.emit("error", message=f"Command not found: {command[0]}")
@@ -145,6 +152,12 @@ def run_process(job: Job, command: list[str], cwd: Optional[Path] = None) -> tup
     for raw_line in process.stdout:
         line = raw_line.rstrip()
         captured.append(line)
+        if line_interceptor and line_interceptor(line):
+            try:
+                process.terminate()
+            except OSError:
+                pass
+            break
         job.emit("output", line=line)
         device = parse_device_code(line)
         if device:
@@ -159,6 +172,63 @@ def stream_process(job: Job) -> None:
     success, _ = run_process(job, job.command)
     exit_code = 0 if success else 1
     job.emit("done", success=exit_code == 0, exit_code=exit_code)
+
+
+def parse_claims_challenge_login(line: str) -> Optional[dict[str, str]]:
+    match = re.search(
+        r'az login --tenant "([^"]+)" --scope "([^"]+)" '
+        r'--claims-challenge "([^"]+)"',
+        line,
+    )
+    if not match:
+        return None
+    return {
+        "tenant": match.group(1),
+        "scope": match.group(2),
+        "claims_challenge": match.group(3),
+    }
+
+
+def azure_login_worker(job: Job) -> None:
+    challenge: dict[str, str] = {}
+
+    def intercept_claims_challenge(line: str) -> bool:
+        parsed = parse_claims_challenge_login(line)
+        if not parsed:
+            return False
+        challenge.update(parsed)
+        job.emit(
+            "output",
+            line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
+        )
+        return True
+
+    success, _ = run_process(
+        job,
+        job.command,
+        line_interceptor=intercept_claims_challenge,
+    )
+    if challenge:
+        logged_out, logout_output = run_capture(["az", "logout"])
+        if not logged_out:
+            job.emit("error", message=logout_output or "Unable to reset the partial Azure login.")
+            job.emit("done", success=False, exit_code=1)
+            return
+        success, _ = run_process(
+            job,
+            [
+                "az",
+                "login",
+                "--tenant",
+                challenge["tenant"],
+                "--scope",
+                challenge["scope"],
+                "--claims-challenge",
+                challenge["claims_challenge"],
+            ],
+            emit_command=False,
+        )
+    job.emit("done", success=success, exit_code=0 if success else 1)
 
 
 def parse_device_code(line: str) -> Optional[dict[str, str]]:
@@ -742,7 +812,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             "/api/auth/azd": ["azd", "auth", "login", "--use-device-code"],
         }
         if path in commands:
-            job = create_job(commands[path])
+            worker = azure_login_worker if path == "/api/auth/azure-cli" else None
+            job = create_job(commands[path], worker=worker)
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path == "/api/open-device-login":

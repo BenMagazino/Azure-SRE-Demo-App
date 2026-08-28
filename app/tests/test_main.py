@@ -6,6 +6,7 @@ from app.main import (
     command_version,
     http_json,
     is_device_login_url,
+    parse_claims_challenge_login,
     parse_device_code,
     prerequisite_statuses,
     run_process,
@@ -48,6 +49,24 @@ class DeviceCodeTests(unittest.TestCase):
         self.assertTrue(is_device_login_url("https://login.microsoft.com/device"))
         self.assertTrue(is_device_login_url("https://microsoft.com/devicelogin"))
         self.assertFalse(is_device_login_url("https://example.com/device"))
+
+
+class ClaimsChallengeTests(unittest.TestCase):
+    def test_parses_tenant_scoped_login_command(self) -> None:
+        line = (
+            'az login --tenant "00000000-0000-0000-0000-000000000000" '
+            '--scope "https://management.core.windows.net//.default" '
+            '--claims-challenge "encoded-claims-value"'
+        )
+
+        self.assertEqual(
+            parse_claims_challenge_login(line),
+            {
+                "tenant": "00000000-0000-0000-0000-000000000000",
+                "scope": "https://management.core.windows.net//.default",
+                "claims_challenge": "encoded-claims-value",
+            },
+        )
 
 
 class PrerequisiteTests(unittest.TestCase):
