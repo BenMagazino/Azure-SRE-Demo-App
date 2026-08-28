@@ -54,7 +54,7 @@ async function copyToClipboard(text) {
   }
 }
 
-async function showDeviceCode(device, event, authWindow) {
+async function showDeviceCode(device, event) {
   const copied = await copyToClipboard(event.code);
   const code = document.createElement("strong");
   code.textContent = event.code;
@@ -82,21 +82,16 @@ async function showDeviceCode(device, event, authWindow) {
   link.href = event.verification_url;
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.textContent = authWindow && !authWindow.closed
-    ? "Microsoft sign-in opens in 3 seconds"
-    : `Open ${event.verification_url}`;
+  link.textContent = "Microsoft sign-in opens in 3 seconds";
   actions.append(copy, link);
   device.replaceChildren(code, notice, actions);
   device.classList.remove("hidden");
 
-  if (authWindow && !authWindow.closed) {
-    authWindow.document.title = "Device code copied";
-    authWindow.document.body.textContent = copied
-      ? `Device code ${event.code} was copied. Opening Microsoft sign-in in 3 seconds...`
-      : `Device code ${event.code} is ready. Opening Microsoft sign-in in 3 seconds...`;
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    authWindow.location.replace(event.verification_url);
-  }
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  const authWindow = window.open(event.verification_url, "_blank");
+  link.textContent = authWindow
+    ? "Microsoft sign-in opened in a new tab"
+    : "Open Microsoft sign-in (popup was blocked)";
 }
 
 async function loadPrerequisites() {
@@ -152,11 +147,6 @@ async function startAuth(kind) {
   const button = document.querySelector(`[data-auth="${kind}"]`);
   const log = document.querySelector(`#${kind}-log`);
   const device = document.querySelector(`#${kind}-device`);
-  const authWindow = window.open("about:blank", "_blank");
-  if (authWindow) {
-    authWindow.document.title = "Waiting for Microsoft sign-in";
-    authWindow.document.body.textContent = "Preparing Microsoft device-code sign-in...";
-  }
   button.disabled = true;
   log.textContent = "Starting device-code sign-in...\n";
   device.classList.add("hidden");
@@ -173,7 +163,7 @@ async function startAuth(kind) {
         log.scrollTop = log.scrollHeight;
       }
       if (event.type === "device_code") {
-        void showDeviceCode(device, event, authWindow);
+        void showDeviceCode(device, event);
       }
       if (event.type === "done") {
         log.textContent += event.success
@@ -187,7 +177,6 @@ async function startAuth(kind) {
       }
     };
   } catch (error) {
-    if (authWindow && !authWindow.closed) authWindow.close();
     log.textContent += `Failed to start sign-in: ${error}\n`;
     button.disabled = false;
   }
