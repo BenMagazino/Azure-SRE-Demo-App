@@ -91,6 +91,63 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+INSTALL_LOCK = threading.Lock()
+
+INSTALL_COMMANDS = {
+    "winget": [
+        "powershell.exe",
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        (
+            "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 "
+            "-Force | Out-Null; "
+            "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; "
+            "Install-Module -Name Microsoft.WinGet.Client -Scope CurrentUser "
+            "-Force -AllowClobber -Repository PSGallery; "
+            "Import-Module Microsoft.WinGet.Client; "
+            "Repair-WinGetPackageManager -Force -Latest"
+        ),
+    ],
+    "az": [
+        "winget",
+        "install",
+        "--id",
+        "Microsoft.AzureCLI",
+        "--exact",
+        "--source",
+        "winget",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ],
+    "azd": [
+        "winget",
+        "install",
+        "--id",
+        "Microsoft.Azd",
+        "--exact",
+        "--source",
+        "winget",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ],
+    "git": [
+        "winget",
+        "install",
+        "--id",
+        "Git.Git",
+        "--exact",
+        "--source",
+        "winget",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ],
+}
 
 
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
@@ -127,6 +184,48 @@ def prerequisite_statuses() -> list[ToolStatus]:
         )
         for tool_id, name, args, install_command, install_url, required in TOOLS
     ]
+
+
+def refresh_process_path() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import winreg
+
+        paths = []
+        keys = (
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+        )
+        for hive, key_path in keys:
+            with winreg.OpenKey(hive, key_path) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+                paths.append(os.path.expandvars(value))
+        os.environ["PATH"] = os.pathsep.join(paths)
+    except (OSError, ImportError):
+        return
+
+
+def install_tool_worker(job: Job, tool_id: str) -> None:
+    with INSTALL_LOCK:
+        job.emit("started", command=job.command)
+        job.emit("output", line=f"Installing {tool_id}...")
+        success, _ = run_process(job, job.command)
+        if success:
+            refresh_process_path()
+            tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
+            success = tool.installed
+            if success:
+                job.emit("output", line=f"{tool.name} {tool.version or ''} is ready.")
+            else:
+                job.emit(
+                    "error",
+                    message=(
+                        "The installer completed, but the tool was not detected. "
+                        "Restart the app and re-check prerequisites."
+                    ),
+                )
+        job.emit("done", success=success, exit_code=0 if success else 1)
 
 
 def run_process(
@@ -950,6 +1049,18 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path in commands:
             worker = azure_login_worker if path == "/api/auth/azure-cli" else None
             job = create_job(commands[path], worker=worker)
+            self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
+            return
+        if path.startswith("/api/install/"):
+            tool_id = path.removeprefix("/api/install/").strip("/")
+            command = INSTALL_COMMANDS.get(tool_id)
+            if not command:
+                self.send_json({"error": "Unsupported installer"}, HTTPStatus.NOT_FOUND)
+                return
+            job = create_job(
+                command,
+                worker=lambda current_job: install_tool_worker(current_job, tool_id),
+            )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path == "/api/open-device-login":

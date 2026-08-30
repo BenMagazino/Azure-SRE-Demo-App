@@ -187,15 +187,49 @@ function renderTool(tool) {
       await navigator.clipboard.writeText(tool.install_command);
       copy.textContent = "Copied";
     });
+    const installButton = document.createElement("button");
+    installButton.className = "install-tool";
+    installButton.textContent = "Install";
+    installButton.addEventListener("click", () => installTool(tool, installButton, progress));
     const link = document.createElement("a");
     link.href = tool.install_url;
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "Installer documentation";
-    install.append(code, copy, link);
+    const progress = document.createElement("pre");
+    progress.className = "install-progress hidden";
+    progress.setAttribute("aria-live", "polite");
+    install.append(installButton, code, copy, link, progress);
     row.append(install);
   }
   return row;
+}
+
+async function installTool(tool, button, progress) {
+  document.querySelectorAll(".install-tool").forEach((item) => {
+    item.disabled = true;
+  });
+  button.textContent = "Installing...";
+  progress.textContent = `Starting ${tool.name} installation...\n`;
+  progress.classList.remove("hidden");
+  try {
+    const response = await apiPost(`/api/install/${tool.id}`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to start installation");
+    const completed = await streamJob(result.job_id, progress);
+    if (completed.success) {
+      progress.textContent += "\nInstallation completed. Re-checking prerequisites...\n";
+      await loadPrerequisites();
+      return;
+    }
+    progress.textContent += "\nInstallation failed. Review the output above or use the fallback command.\n";
+  } catch (error) {
+    progress.textContent += `\nInstallation failed: ${error}\n`;
+  }
+  button.textContent = "Retry install";
+  document.querySelectorAll(".install-tool").forEach((item) => {
+    item.disabled = false;
+  });
 }
 
 async function startAuth(kind) {

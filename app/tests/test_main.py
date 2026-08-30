@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.main import (
+    INSTALL_COMMANDS,
     Job,
     authentication_statuses,
     command_version,
@@ -96,6 +97,14 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertIn("--source winget", item.install_command)
             self.assertIn("--accept-source-agreements", item.install_command)
             self.assertIn("--accept-package-agreements", item.install_command)
+
+    def test_install_commands_are_allowlisted_and_noninteractive(self) -> None:
+        self.assertEqual(set(INSTALL_COMMANDS), {"winget", "az", "azd", "git"})
+        for tool_id in ("az", "azd", "git"):
+            command = INSTALL_COMMANDS[tool_id]
+            self.assertIn("--source", command)
+            self.assertIn("winget", command)
+            self.assertIn("--disable-interactivity", command)
 
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")
