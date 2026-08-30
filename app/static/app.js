@@ -1,7 +1,10 @@
 const prereqList = document.querySelector("#prereq-list");
 const continueButton = document.querySelector("#continue-to-auth");
+const installAllButton = document.querySelector("#install-all");
+const installAllProgress = document.querySelector("#install-all-progress");
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
+let installInProgress = false;
 
 async function initialize() {
   const response = await fetch("/api/session");
@@ -154,12 +157,22 @@ async function loadPrerequisites() {
     const response = await fetch("/api/prerequisites");
     const tools = await response.json();
     prereqList.replaceChildren(...tools.map(renderTool));
-    continueButton.disabled = !tools
+    const missingRequired = tools
       .filter((tool) => tool.required)
-      .every((tool) => tool.installed);
+      .filter((tool) => !tool.installed);
+    continueButton.disabled = missingRequired.length > 0;
+    installAllButton.classList.toggle("hidden", missingRequired.length === 0);
+    setInstallerButtonsDisabled(installInProgress);
   } catch (error) {
     prereqList.textContent = `Unable to check prerequisites: ${error}`;
   }
+}
+
+function setInstallerButtonsDisabled(disabled) {
+  document.querySelectorAll(".install-tool").forEach((item) => {
+    item.disabled = disabled;
+  });
+  installAllButton.disabled = disabled;
 }
 
 function renderTool(tool) {
@@ -206,9 +219,8 @@ function renderTool(tool) {
 }
 
 async function installTool(tool, button, progress) {
-  document.querySelectorAll(".install-tool").forEach((item) => {
-    item.disabled = true;
-  });
+  installInProgress = true;
+  setInstallerButtonsDisabled(true);
   button.textContent = "Installing...";
   progress.textContent = `Starting ${tool.name} installation...\n`;
   progress.classList.remove("hidden");
@@ -219,6 +231,7 @@ async function installTool(tool, button, progress) {
     const completed = await streamJob(result.job_id, progress);
     if (completed.success) {
       progress.textContent += "\nInstallation completed. Re-checking prerequisites...\n";
+      installInProgress = false;
       await loadPrerequisites();
       return;
     }
@@ -226,10 +239,32 @@ async function installTool(tool, button, progress) {
   } catch (error) {
     progress.textContent += `\nInstallation failed: ${error}\n`;
   }
+  installInProgress = false;
   button.textContent = "Retry install";
-  document.querySelectorAll(".install-tool").forEach((item) => {
-    item.disabled = false;
-  });
+  setInstallerButtonsDisabled(false);
+}
+
+async function installAll() {
+  installInProgress = true;
+  setInstallerButtonsDisabled(true);
+  installAllButton.textContent = "Installing dependencies...";
+  installAllProgress.textContent =
+    "Installing missing dependencies sequentially. This may take several minutes...\n";
+  installAllProgress.classList.remove("hidden");
+  try {
+    const response = await apiPost("/api/install/all");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to start installation");
+    const completed = await streamJob(result.job_id, installAllProgress);
+    installAllProgress.textContent += completed.success
+      ? "\nDependency installation completed. Re-checking prerequisites...\n"
+      : "\nSome dependencies could not be installed. Review the output above and retry them individually.\n";
+  } catch (error) {
+    installAllProgress.textContent += `\nDependency installation failed: ${error}\n`;
+  }
+  installInProgress = false;
+  installAllButton.textContent = "Install all dependencies";
+  await loadPrerequisites();
 }
 
 async function startAuth(kind) {
@@ -394,6 +429,7 @@ async function runDemoAction(path, confirmation) {
 }
 
 document.querySelector("#refresh-prereqs").addEventListener("click", loadPrerequisites);
+installAllButton.addEventListener("click", installAll);
 continueButton.addEventListener("click", () => showPanel("authentication"));
 document.querySelectorAll("[data-auth]").forEach((button) => {
   button.addEventListener("click", () => startAuth(button.dataset.auth));

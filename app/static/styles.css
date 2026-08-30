@@ -22,6 +22,7 @@ header p, .panel p { color: #9fb0c4; }
 .panel { border: 1px solid #28415f; background: #0d1a2aee; border-radius: 12px; padding: 1.5rem; box-shadow: 0 18px 50px #0006; }
 .hidden { display: none !important; }
 .panel-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
+.prereq-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .6rem; }
 .tool-list { display: grid; gap: .75rem; margin: 1.25rem 0; }
 .tool { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem; padding: 1rem; background: #122337; border-radius: 8px; border-left: 4px solid #d97706; }
 .tool.ok { border-left-color: #22c55e; }

@@ -3,10 +3,13 @@ from unittest.mock import MagicMock, patch
 
 from app.main import (
     INSTALL_COMMANDS,
+    INSTALL_ORDER,
     Job,
+    ToolStatus,
     authentication_statuses,
     command_version,
     http_json,
+    install_all_worker,
     is_device_login_url,
     open_browser_url,
     parse_claims_challenge_login,
@@ -100,11 +103,59 @@ class PrerequisiteTests(unittest.TestCase):
 
     def test_install_commands_are_allowlisted_and_noninteractive(self) -> None:
         self.assertEqual(set(INSTALL_COMMANDS), {"winget", "az", "azd", "git"})
+        self.assertEqual(INSTALL_ORDER, ("winget", "az", "azd", "git"))
         for tool_id in ("az", "azd", "git"):
             command = INSTALL_COMMANDS[tool_id]
             self.assertIn("--source", command)
             self.assertIn("winget", command)
             self.assertIn("--disable-interactivity", command)
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.run_process")
+    @patch("app.main.prerequisite_statuses")
+    def test_install_all_runs_missing_tools_sequentially(
+        self,
+        prerequisite_statuses,
+        run_process,
+        refresh_process_path,
+    ) -> None:
+        installed = set()
+
+        def statuses():
+            return [
+                ToolStatus(
+                    id=tool_id,
+                    name=tool_id,
+                    installed=tool_id in installed,
+                    version="1.0" if tool_id in installed else None,
+                    install_command="",
+                    install_url="",
+                    required=tool_id != "winget",
+                )
+                for tool_id in INSTALL_ORDER
+            ]
+
+        def install(_job, command):
+            installed.add(next(
+                tool_id
+                for tool_id, configured_command in INSTALL_COMMANDS.items()
+                if configured_command == command
+            ))
+            return True, ""
+
+        prerequisite_statuses.side_effect = statuses
+        run_process.side_effect = install
+        job = Job()
+
+        install_all_worker(job)
+
+        self.assertEqual(
+            [call.args[1] for call in run_process.call_args_list],
+            [INSTALL_COMMANDS[tool_id] for tool_id in INSTALL_ORDER],
+        )
+        self.assertEqual(refresh_process_path.call_count, len(INSTALL_ORDER))
+        events = list(job.events.queue)
+        self.assertTrue(events[-1]["success"])
 
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")

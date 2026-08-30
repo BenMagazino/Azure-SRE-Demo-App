@@ -13,9 +13,10 @@ Rust, MSYS2, MinGW, Node.js, or npm.
 - Python 3.9 or newer
 - An Azure subscription where you can create resources and role assignments
 
-Azure CLI, Azure Developer CLI, and Git are checked inside the app. If one is
-missing, the prerequisite screen provides its exact `winget install` command and
-official installation documentation.
+Azure CLI, Azure Developer CLI, and Git are checked inside the app. If any are
+missing, the prerequisite screen can install them sequentially with one action.
+Individual install, copy-command, and official-documentation fallbacks remain
+available.
 
 ## First run
 

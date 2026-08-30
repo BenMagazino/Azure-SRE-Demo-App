@@ -148,6 +148,7 @@ INSTALL_COMMANDS = {
         "--disable-interactivity",
     ],
 }
+INSTALL_ORDER = tuple(INSTALL_COMMANDS)
 
 
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
@@ -206,26 +207,78 @@ def refresh_process_path() -> None:
         return
 
 
+def run_tool_install(job: Job, tool_id: str) -> bool:
+    command = INSTALL_COMMANDS[tool_id]
+    job.emit("output", line=f"Installing {tool_id}...")
+    success, _ = run_process(job, command)
+    if not success:
+        return False
+
+    refresh_process_path()
+    tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
+    if tool.installed:
+        job.emit("output", line=f"{tool.name} {tool.version or ''} is ready.")
+        return True
+
+    job.emit(
+        "error",
+        message=(
+            "The installer completed, but the tool was not detected. "
+            "Restart the app and re-check prerequisites."
+        ),
+    )
+    return False
+
+
 def install_tool_worker(job: Job, tool_id: str) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=job.command)
-        job.emit("output", line=f"Installing {tool_id}...")
-        success, _ = run_process(job, job.command)
-        if success:
-            refresh_process_path()
-            tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
-            success = tool.installed
-            if success:
-                job.emit("output", line=f"{tool.name} {tool.version or ''} is ready.")
-            else:
-                job.emit(
-                    "error",
-                    message=(
-                        "The installer completed, but the tool was not detected. "
-                        "Restart the app and re-check prerequisites."
-                    ),
-                )
+        success = run_tool_install(job, tool_id)
         job.emit("done", success=success, exit_code=0 if success else 1)
+
+
+def install_all_worker(job: Job) -> None:
+    with INSTALL_LOCK:
+        job.emit("started", command=[])
+        statuses = {tool.id: tool for tool in prerequisite_statuses()}
+        missing_required = [
+            tool_id
+            for tool_id in INSTALL_ORDER
+            if statuses[tool_id].required and not statuses[tool_id].installed
+        ]
+        if not missing_required:
+            job.emit("output", line="All required dependencies are already installed.")
+            job.emit("done", success=True, exit_code=0)
+            return
+
+        install_ids = missing_required
+        if not statuses["winget"].installed:
+            install_ids = ["winget", *install_ids]
+
+        failures = []
+        for tool_id in install_ids:
+            if not run_tool_install(job, tool_id):
+                failures.append(tool_id)
+                if tool_id == "winget":
+                    job.emit(
+                        "error",
+                        message="WinGet is required to install the remaining dependencies.",
+                    )
+                    break
+
+        ready = all(
+            tool.installed
+            for tool in prerequisite_statuses()
+            if tool.required
+        )
+        if ready:
+            job.emit("output", line="All required dependencies are ready.")
+        elif failures:
+            job.emit(
+                "error",
+                message=f"Installation failed for: {', '.join(failures)}.",
+            )
+        job.emit("done", success=ready, exit_code=0 if ready else 1)
 
 
 def run_process(
@@ -1049,6 +1102,10 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path in commands:
             worker = azure_login_worker if path == "/api/auth/azure-cli" else None
             job = create_job(commands[path], worker=worker)
+            self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
+            return
+        if path == "/api/install/all":
+            job = create_job(worker=install_all_worker)
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path.startswith("/api/install/"):

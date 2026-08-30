@@ -26,10 +26,14 @@
         <div class="panel-heading">
           <div>
             <h2>Prerequisites</h2>
-            <p>The app checks your machine and gives you one-click copy commands for anything missing.</p>
+            <p>The app checks your machine and can install any missing dependencies for you.</p>
           </div>
-          <button id="refresh-prereqs" class="secondary">Re-check</button>
+          <div class="prereq-actions">
+            <button id="install-all" class="hidden">Install all dependencies</button>
+            <button id="refresh-prereqs" class="secondary">Re-check</button>
+          </div>
         </div>
+        <pre id="install-all-progress" class="install-progress hidden" aria-live="polite"></pre>
         <div id="prereq-list" class="tool-list" aria-live="polite"></div>
         <button id="continue-to-auth" disabled>Continue to sign in</button>
       </section>
