@@ -92,6 +92,10 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertTrue(all(item.installed for item in statuses))
         self.assertFalse(statuses[0].required)
         self.assertTrue(all(item.required for item in statuses[1:]))
+        for item in statuses[1:]:
+            self.assertIn("--source winget", item.install_command)
+            self.assertIn("--accept-source-agreements", item.install_command)
+            self.assertIn("--accept-package-agreements", item.install_command)
 
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")

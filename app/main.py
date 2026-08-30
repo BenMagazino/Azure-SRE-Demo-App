@@ -64,11 +64,17 @@ TOOLS = (
         "https://learn.microsoft.com/windows/package-manager/winget/",
         False,
     ),
-    ("az", "Azure CLI", ("version",), "winget install --id Microsoft.AzureCLI",
+    ("az", "Azure CLI", ("version",),
+     "winget install --id Microsoft.AzureCLI --exact --source winget "
+     "--accept-source-agreements --accept-package-agreements",
      "https://learn.microsoft.com/cli/azure/install-azure-cli-windows", True),
-    ("azd", "Azure Developer CLI", ("version",), "winget install --id Microsoft.Azd",
+    ("azd", "Azure Developer CLI", ("version",),
+     "winget install --id Microsoft.Azd --exact --source winget "
+     "--accept-source-agreements --accept-package-agreements",
      "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
-    ("git", "Git", ("--version",), "winget install --id Git.Git",
+    ("git", "Git", ("--version",),
+     "winget install --id Git.Git --exact --source winget "
+     "--accept-source-agreements --accept-package-agreements",
      "https://git-scm.com/download/win", True),
 )
 
