@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.main import (
@@ -198,11 +199,49 @@ class ProcessTests(unittest.TestCase):
 
     @patch("app.main.run_capture")
     def test_reports_cached_authentication_status(self, run_capture) -> None:
-        run_capture.side_effect = [(True, ""), (False, "not logged in")]
+        run_capture.side_effect = [
+            (True, ""),
+            (True, '{"status":"unauthenticated"}'),
+        ]
 
         statuses = authentication_statuses()
 
         self.assertEqual(statuses, {"azure-cli": True, "azd": False})
+
+    @patch("app.main.run_capture")
+    def test_reports_valid_azd_authentication_status(self, run_capture) -> None:
+        run_capture.side_effect = [
+            (False, "not logged in"),
+            (True, '{"status":"success","expiresOn":"2026-08-31T03:24:40Z"}'),
+        ]
+
+        statuses = authentication_statuses()
+
+        self.assertEqual(statuses, {"azure-cli": False, "azd": True})
+
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.find_edge")
+    @patch("app.main.is_windows_sandbox")
+    @patch("app.main.shutil.which")
+    def test_azure_login_launches_edge_directly_in_sandbox(
+        self,
+        which,
+        is_windows_sandbox,
+        find_edge,
+        popen,
+    ) -> None:
+        edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+        which.return_value = r"C:\Tools\az.cmd"
+        is_windows_sandbox.return_value = True
+        find_edge.return_value = edge
+        popen.return_value.stdout = []
+        popen.return_value.wait.return_value = 0
+
+        success, _ = run_process(Job(), ["az", "login"])
+
+        self.assertTrue(success)
+        environment = popen.call_args.kwargs["env"]
+        self.assertEqual(environment["BROWSER"], f'"{edge}" %s')
 
     @patch("app.main.subprocess.Popen")
     @patch("app.main.find_edge")

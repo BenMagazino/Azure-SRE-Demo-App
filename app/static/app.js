@@ -117,15 +117,21 @@ function showMfaNotice(device) {
   device.classList.remove("hidden");
 }
 
-function showAuthComplete(device, button, kind) {
+function showAuthComplete(device, button, kind, existingSession = false) {
   const title = document.createElement("div");
   title.className = "auth-result-title";
   title.textContent = "Signed in";
   const detail = document.createElement("p");
   detail.className = "auth-result-detail";
-  detail.textContent = kind === "azure-cli"
-    ? "Azure CLI authentication completed successfully."
-    : "Azure Developer CLI authentication completed successfully.";
+  if (existingSession) {
+    detail.textContent = kind === "azure-cli"
+      ? "An existing Azure CLI session is ready."
+      : "An existing Azure Developer CLI session is ready. azd stores its sign-in separately from Azure CLI.";
+  } else {
+    detail.textContent = kind === "azure-cli"
+      ? "Azure CLI authentication completed successfully."
+      : "Azure Developer CLI authentication completed successfully.";
+  }
   device.replaceChildren(title, detail);
   device.classList.add("complete");
   device.classList.remove("hidden");
@@ -144,7 +150,7 @@ async function loadAuthStatus() {
     if (!signedIn) return;
     const button = document.querySelector(`[data-auth="${kind}"]`);
     const device = document.querySelector(`#${kind}-device`);
-    showAuthComplete(device, button, kind);
+    showAuthComplete(device, button, kind, true);
   });
   document.querySelector("#continue-to-configure").disabled =
     !Object.values(authStatus).every(Boolean);

@@ -308,6 +308,8 @@ def run_process(
         # Use browser authentication so work accounts absent from Windows WAM remain selectable.
         environment = os.environ.copy()
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
+        if is_windows_sandbox() and (edge := find_edge()):
+            environment["BROWSER"] = f'"{edge}" %s'
     try:
         process = subprocess.Popen(
             [resolved, *command[1:]],
@@ -596,8 +598,25 @@ def authentication_statuses() -> dict[str, bool]:
         "none",
         "--only-show-errors",
     ])
-    azd, _ = run_capture(["azd", "auth", "login", "--check-status"])
-    return {"azure-cli": azure_cli, "azd": azd}
+    azd_command_succeeded, azd_output = run_capture([
+        "azd",
+        "auth",
+        "login",
+        "--check-status",
+        "--output",
+        "json",
+    ])
+    azd_authenticated = False
+    if azd_command_succeeded:
+        try:
+            azd_status = json.loads(azd_output)
+            if isinstance(azd_status, dict):
+                azd_authenticated = azd_status.get("status") == "success"
+            else:
+                print("[auth] Azure Developer CLI returned an unexpected status response.")
+        except json.JSONDecodeError as error:
+            print(f"[auth] Unable to parse Azure Developer CLI status: {error}")
+    return {"azure-cli": azure_cli, "azd": azd_authenticated}
 
 
 def azd_values(environment: str) -> dict[str, str]:
