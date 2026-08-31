@@ -244,6 +244,23 @@ function updateToolStatus(event) {
   version.textContent = "Install failed";
 }
 
+async function refreshInstalledToolTiles() {
+  try {
+    const response = await fetch("/api/prerequisites", { cache: "no-store" });
+    if (!response.ok) return;
+    const tools = await response.json();
+    tools
+      .filter((tool) => tool.installed)
+      .forEach((tool) => updateToolStatus({
+        tool_id: tool.id,
+        status: "ready",
+        version: tool.version,
+      }));
+  } catch (error) {
+    console.warn("Unable to refresh dependency tile status.", error);
+  }
+}
+
 async function installTool(tool, button, progress) {
   installInProgress = true;
   setInstallerButtonsDisabled(true);
@@ -283,9 +300,18 @@ async function installAll() {
     const response = await apiPost("/api/install/all");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start installation");
-    const completed = await streamJob(result.job_id, installAllProgress, {
-      onEvent: updateToolStatus,
-    });
+    const statusPoll = window.setInterval(() => {
+      void refreshInstalledToolTiles();
+    }, 1500);
+    let completed;
+    try {
+      completed = await streamJob(result.job_id, installAllProgress, {
+        onEvent: updateToolStatus,
+      });
+    } finally {
+      window.clearInterval(statusPoll);
+    }
+    await refreshInstalledToolTiles();
     installAllProgress.textContent += completed.success
       ? "\nDependency installation completed. Re-checking prerequisites...\n"
       : "\nSome dependencies could not be installed. Review the output above and retry them individually.\n";
