@@ -511,6 +511,21 @@ def azure_login_worker(job: Job) -> None:
     authenticated = threading.Event()
     stop_monitor = threading.Event()
 
+    stale_context = cached_azure_context()
+    if stale_context:
+        job.emit(
+            "output",
+            line="Clearing the previous Azure CLI account selection...",
+        )
+        logged_out, logout_output = run_capture(["az", "logout"])
+        if not logged_out:
+            job.emit(
+                "error",
+                message=logout_output or "Unable to clear the previous Azure CLI session.",
+            )
+            job.finish(success=False, exit_code=1)
+            return
+
     def monitor_authentication() -> None:
         while not stop_monitor.wait(1.5):
             if azure_cli_management_authenticated():
@@ -527,23 +542,6 @@ def azure_login_worker(job: Job) -> None:
     monitor.start()
 
     try:
-        context = cached_azure_context()
-        if context:
-            job.emit(
-                "output",
-                line="Using the previously selected Azure tenant and subscription...",
-            )
-            success, _ = run_process(
-                job,
-                scoped_azure_login_command(context),
-                emit_command=False,
-            )
-            success = authenticated.is_set() or (
-                success and azure_cli_management_authenticated()
-            )
-            job.finish(success=success, exit_code=0 if success else 1)
-            return
-
         def intercept_claims_challenge(line: str) -> bool:
             parsed = parse_claims_challenge_login(line)
             if parsed:
@@ -706,12 +704,16 @@ def run_capture(
     cwd: Optional[Path] = None,
     timeout: int = 60,
 ) -> tuple[bool, str]:
-    resolved = shutil.which(command[0])
-    if resolved is None:
+    process_command = resolved_process_command(command)
+    if process_command is None:
         return False, f"Command not found: {command[0]}"
+    environment = None
+    if command[0].lower() == "az":
+        environment = os.environ.copy()
+        environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
     try:
         result = subprocess.run(
-            [resolved, *command[1:]],
+            process_command,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
@@ -720,6 +722,7 @@ def run_capture(
             timeout=timeout,
             creationflags=CREATE_NO_WINDOW,
             check=False,
+            env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return False, str(error)

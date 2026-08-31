@@ -20,6 +20,7 @@ from app.main import (
     parse_device_code,
     prerequisite_statuses,
     resolved_process_command,
+    run_capture,
     run_process,
     scoped_azure_login_command,
 )
@@ -110,6 +111,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--skip-subscription-discovery", command)
         self.assertIn("--use-device-code", command)
 
+    @patch("app.main.azure_cli_management_authenticated", return_value=False)
     @patch("app.main.run_capture")
     @patch("app.main.run_process")
     @patch("app.main.cached_azure_context")
@@ -118,6 +120,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         cached_azure_context,
         run_process,
         run_capture,
+        azure_cli_management_authenticated,
     ) -> None:
         cached_azure_context.side_effect = [
             None,
@@ -163,6 +166,30 @@ class ClaimsChallengeTests(unittest.TestCase):
         command = run_capture.call_args.args[0]
         self.assertIn("get-access-token", command)
         self.assertEqual(run_capture.call_args.kwargs["timeout"], 10)
+
+    @patch("app.main.azure_cli_management_authenticated", return_value=False)
+    @patch("app.main.run_capture")
+    @patch("app.main.run_process")
+    @patch("app.main.cached_azure_context")
+    def test_clears_stale_context_before_account_selection(
+        self,
+        cached_azure_context,
+        run_process,
+        run_capture,
+        azure_cli_management_authenticated,
+    ) -> None:
+        cached_azure_context.return_value = {
+            "tenant": "00000000-0000-0000-0000-000000000000",
+            "subscription": "11111111-1111-1111-1111-111111111111",
+        }
+        run_capture.return_value = True, ""
+        run_process.return_value = False, ""
+        command = ["az", "login", "--use-device-code"]
+
+        azure_login_worker(Job(command))
+
+        self.assertEqual(run_capture.call_args_list[0].args[0], ["az", "logout"])
+        self.assertEqual(run_process.call_args_list[0].args[1], command)
 
 
 class PrerequisiteTests(unittest.TestCase):
@@ -276,6 +303,28 @@ class ProcessTests(unittest.TestCase):
         assert command is not None
         self.assertTrue(command[0].endswith(r"CLI2\python.exe"))
         self.assertEqual(command[1:], ["-IBm", "azure.cli", "login"])
+
+    @patch("app.main.subprocess.run")
+    @patch("app.main.resolved_process_command")
+    def test_capture_disables_windows_broker_for_status_checks(
+        self,
+        resolved_process_command,
+        run,
+    ) -> None:
+        resolved_process_command.return_value = [
+            r"C:\AzureCLI\python.exe",
+            "-IBm",
+            "azure.cli",
+            "account",
+            "get-access-token",
+        ]
+        run.return_value = MagicMock(returncode=1, stdout="", stderr="not logged in")
+
+        success, _ = run_capture(["az", "account", "get-access-token"])
+
+        self.assertFalse(success)
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
 
     @patch("app.main.subprocess.Popen")
     @patch("app.main.shutil.which")
