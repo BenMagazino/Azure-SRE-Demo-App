@@ -41,6 +41,7 @@ else:
 HOST = "127.0.0.1"
 PORT = 8765
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+AUTH_RETRY_GRACE_SECONDS = 4.0
 SESSION_TOKEN = uuid.uuid4().hex
 LOGGER = logging.getLogger("AzureSREAgentDemo")
 LOG_FILE: Optional[Path] = None
@@ -720,6 +721,12 @@ def azure_cli_management_authenticated() -> bool:
     return success
 
 
+def wait_for_management_authentication(
+    authenticated: threading.Event,
+) -> bool:
+    return authenticated.wait(AUTH_RETRY_GRACE_SECONDS)
+
+
 def azure_login_worker(job: Job) -> None:
     LOGGER.info("job=%s Azure CLI authentication worker started", job.id)
     challenge: dict[str, str] = {}
@@ -781,33 +788,17 @@ def azure_login_worker(job: Job) -> None:
                 selected = cached_azure_context()
                 if selected and selected["tenant"].lower() == parsed["tenant"].lower():
                     challenge_context.update(selected)
-                job.emit(
-                    "auth_phase",
-                    message=(
-                        "Your organization requires one additional device-code sign-in "
-                        "to satisfy management-plane MFA. Complete the second code; "
-                        "the app will then validate the selected subscription."
-                    ),
-                )
-                job.emit(
-                    "output",
-                    line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
-                )
                 return True
             if "AADSTS50076" in line:
                 selected = cached_azure_context()
                 if selected:
                     discovered_context.update(selected)
                     job.emit(
-                        "auth_phase",
-                        message=(
-                            "Your organization requires one additional device-code sign-in "
-                            "to finish authentication for the selected subscription."
-                        ),
-                    )
-                    job.emit(
                         "output",
-                        line="The selected Azure account is ready. Finishing sign-in for that subscription...",
+                        line=(
+                            "The selected Azure account is ready. "
+                            "Validating management access..."
+                        ),
                     )
                     return True
             return False
@@ -826,7 +817,31 @@ def azure_login_worker(job: Job) -> None:
             bool(challenge),
             bool(discovered_context),
         )
-        if not authenticated.is_set() and challenge:
+        grace_authenticated = authenticated.is_set()
+        if not grace_authenticated and (challenge or discovered_context):
+            LOGGER.info(
+                "job=%s waiting %.1fs for the initial management token "
+                "before starting a Conditional Access retry",
+                job.id,
+                AUTH_RETRY_GRACE_SECONDS,
+            )
+            grace_authenticated = wait_for_management_authentication(authenticated)
+        if not grace_authenticated and challenge:
+            job.emit(
+                "auth_phase",
+                message=(
+                    "Your organization requires one additional device-code sign-in "
+                    "to satisfy management-plane MFA. Complete the second code; "
+                    "the app will then validate the selected subscription."
+                ),
+            )
+            job.emit(
+                "output",
+                line=(
+                    "Conditional Access requested tenant-specific MFA. "
+                    "Retrying once for that tenant..."
+                ),
+            )
             logged_out, logout_output = run_capture(["az", "logout"])
             if not logged_out:
                 job.emit("error", message=logout_output or "Unable to reset the partial Azure login.")
@@ -837,13 +852,27 @@ def azure_login_worker(job: Job) -> None:
                 claims_challenge_login_command(challenge, challenge_context or None),
                 emit_command=False,
             )
-        elif not authenticated.is_set() and discovered_context:
+        elif not grace_authenticated and discovered_context:
+            job.emit(
+                "auth_phase",
+                message=(
+                    "Your organization requires one additional device-code sign-in "
+                    "to finish authentication for the selected subscription."
+                ),
+            )
+            job.emit(
+                "output",
+                line=(
+                    "Management access still requires MFA. "
+                    "Starting one additional sign-in..."
+                ),
+            )
             success, _ = run_process(
                 job,
                 scoped_azure_login_command(discovered_context),
                 emit_command=False,
             )
-        success = authenticated.is_set() or (
+        success = grace_authenticated or authenticated.is_set() or (
             success and azure_cli_management_authenticated()
         )
         job.finish(success=success, exit_code=0 if success else 1)

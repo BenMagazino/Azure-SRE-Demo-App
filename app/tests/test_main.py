@@ -152,6 +152,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--use-device-code", command)
 
     @patch("app.main.azure_cli_management_authenticated", return_value=False)
+    @patch("app.main.wait_for_management_authentication", return_value=False)
     @patch("app.main.run_capture")
     @patch("app.main.run_process")
     @patch("app.main.cached_azure_context")
@@ -160,6 +161,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         cached_azure_context,
         run_process,
         run_capture,
+        wait_for_management_authentication,
         azure_cli_management_authenticated,
     ) -> None:
         cached_azure_context.side_effect = [
@@ -196,6 +198,43 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("one additional device-code sign-in", phases[0]["message"])
         retry_command = run_process.call_args_list[-1].args[1]
         self.assertIn("--skip-subscription-discovery", retry_command)
+
+    @patch("app.main.azure_cli_management_authenticated", return_value=False)
+    @patch("app.main.wait_for_management_authentication", return_value=True)
+    @patch("app.main.run_capture")
+    @patch("app.main.run_process")
+    @patch("app.main.cached_azure_context")
+    def test_skips_retry_when_initial_management_token_becomes_ready(
+        self,
+        cached_azure_context,
+        run_process,
+        run_capture,
+        wait_for_management_authentication,
+        azure_cli_management_authenticated,
+    ) -> None:
+        cached_azure_context.side_effect = [
+            None,
+            {
+                "tenant": "00000000-0000-0000-0000-000000000000",
+                "subscription": "11111111-1111-1111-1111-111111111111",
+            },
+        ]
+
+        def login(_job, _command, **kwargs):
+            interceptor = kwargs.get("line_interceptor")
+            if interceptor:
+                interceptor("AADSTS50076: Additional authentication is required.")
+            return True, ""
+
+        run_process.side_effect = login
+        run_capture.return_value = True, ""
+        job = Job(["az", "login"])
+
+        azure_login_worker(job)
+
+        self.assertEqual(run_process.call_count, 1)
+        done = next(event for event in job.events.queue if event["type"] == "done")
+        self.assertTrue(done["success"])
 
     @patch("app.main.run_capture")
     def test_verifies_management_token_with_short_timeout(self, run_capture) -> None:
