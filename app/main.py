@@ -209,17 +209,26 @@ def refresh_process_path() -> None:
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
     command = INSTALL_COMMANDS[tool_id]
+    job.emit("tool_status", tool_id=tool_id, status="installing")
     job.emit("output", line=f"Installing {tool_id}...")
     success, _ = run_process(job, command)
     if not success:
+        job.emit("tool_status", tool_id=tool_id, status="failed")
         return False
 
     refresh_process_path()
     tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
     if tool.installed:
+        job.emit(
+            "tool_status",
+            tool_id=tool_id,
+            status="ready",
+            version=tool.version,
+        )
         job.emit("output", line=f"{tool.name} {tool.version or ''} is ready.")
         return True
 
+    job.emit("tool_status", tool_id=tool_id, status="failed")
     job.emit(
         "error",
         message=(

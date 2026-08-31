@@ -178,6 +178,7 @@ function setInstallerButtonsDisabled(disabled) {
 function renderTool(tool) {
   const row = document.createElement("div");
   row.className = `tool ${tool.installed ? "ok" : tool.required ? "" : "optional"}`;
+  row.dataset.toolId = tool.id;
   const status = document.createElement("span");
   status.className = "status";
   status.textContent = tool.installed ? "OK" : tool.required ? "!" : "i";
@@ -218,6 +219,31 @@ function renderTool(tool) {
   return row;
 }
 
+function updateToolStatus(event) {
+  const row = prereqList.querySelector(`[data-tool-id="${event.tool_id}"]`);
+  if (!row) return;
+
+  const status = row.querySelector(".status");
+  const version = row.querySelector(".version");
+  row.classList.remove("ok", "optional", "installing", "failed");
+  if (event.status === "installing") {
+    row.classList.add("installing");
+    status.textContent = "...";
+    version.textContent = "Installing...";
+    return;
+  }
+  if (event.status === "ready") {
+    row.classList.add("ok");
+    status.textContent = "OK";
+    version.textContent = event.version || "Installed";
+    row.querySelector(".install")?.classList.add("hidden");
+    return;
+  }
+  row.classList.add("failed");
+  status.textContent = "!";
+  version.textContent = "Install failed";
+}
+
 async function installTool(tool, button, progress) {
   installInProgress = true;
   setInstallerButtonsDisabled(true);
@@ -228,7 +254,9 @@ async function installTool(tool, button, progress) {
     const response = await apiPost(`/api/install/${tool.id}`);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start installation");
-    const completed = await streamJob(result.job_id, progress);
+    const completed = await streamJob(result.job_id, progress, {
+      onEvent: updateToolStatus,
+    });
     if (completed.success) {
       progress.textContent += "\nInstallation completed. Re-checking prerequisites...\n";
       installInProgress = false;
@@ -255,7 +283,9 @@ async function installAll() {
     const response = await apiPost("/api/install/all");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start installation");
-    const completed = await streamJob(result.job_id, installAllProgress);
+    const completed = await streamJob(result.job_id, installAllProgress, {
+      onEvent: updateToolStatus,
+    });
     installAllProgress.textContent += completed.success
       ? "\nDependency installation completed. Re-checking prerequisites...\n"
       : "\nSome dependencies could not be installed. Review the output above and retry them individually.\n";
@@ -293,6 +323,7 @@ async function startAuth(kind) {
     const events = new EventSource(`/api/jobs/${result.job_id}/events`);
     events.onmessage = ({ data }) => {
       const event = JSON.parse(data);
+      if (options.onEvent) options.onEvent(event);
       if (event.type === "output") {
         log.textContent += `${event.line}\n`;
         log.scrollTop = log.scrollHeight;

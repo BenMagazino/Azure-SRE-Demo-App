@@ -27,6 +27,8 @@ header p, .panel p { color: #9fb0c4; }
 .tool { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem; padding: 1rem; background: #122337; border-radius: 8px; border-left: 4px solid #d97706; }
 .tool.ok { border-left-color: #22c55e; }
 .tool.optional { border-left-color: #4ba3ff; }
+.tool.installing { border-left-color: #4ba3ff; background: #15304d; }
+.tool.failed { border-left-color: #ef4444; }
 .tool .status { font-size: 1.25rem; }
 .tool .version { color: #8fa4bb; }
 .install { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }

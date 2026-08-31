@@ -155,6 +155,22 @@ class PrerequisiteTests(unittest.TestCase):
         )
         self.assertEqual(refresh_process_path.call_count, len(INSTALL_ORDER))
         events = list(job.events.queue)
+        tool_events = [
+            event
+            for event in events
+            if event["type"] == "tool_status"
+        ]
+        self.assertEqual(
+            [
+                (event["tool_id"], event["status"])
+                for event in tool_events
+            ],
+            [
+                pair
+                for tool_id in INSTALL_ORDER
+                for pair in ((tool_id, "installing"), (tool_id, "ready"))
+            ],
+        )
         self.assertTrue(events[-1]["success"])
 
     @patch("app.main.subprocess.run")
