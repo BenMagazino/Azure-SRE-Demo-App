@@ -573,7 +573,12 @@ def run_process(
             job.emit("output", line=line)
             device = parse_device_code(line)
             if device:
-                job.emit("device_code", **device)
+                browser_opened = open_browser_url(device["verification_url"])
+                job.emit(
+                    "device_code",
+                    **device,
+                    browser_opened=browser_opened,
+                )
         exit_code = process.wait()
     finally:
         job.clear_process(process)
@@ -1538,6 +1543,19 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         LOGGER.info("HTTP action POST path=%s client=%s", path, self.client_address[0])
+        if path == "/api/client-log":
+            try:
+                message = str(self.read_json().get("message", ""))[:2000]
+            except (ValueError, json.JSONDecodeError):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            LOGGER.error(
+                "Browser client error client=%s message=%s",
+                self.client_address[0],
+                redact_text(message),
+            )
+            self.send_json({"logged": True})
+            return
         commands = {
             "/api/auth/azure-cli": [
                 "az",

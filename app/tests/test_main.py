@@ -331,6 +331,33 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    @patch("app.main.open_browser_url", return_value=True)
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.resolved_process_command")
+    def test_device_code_event_opens_browser_from_backend(
+        self,
+        resolved_process_command,
+        popen,
+        open_browser_url,
+    ) -> None:
+        resolved_process_command.return_value = ["az", "login", "--use-device-code"]
+        process = popen.return_value
+        process.pid = 1234
+        process.stdout = [
+            "Open https://login.microsoft.com/device and enter the code ABCD-EFGH\n"
+        ]
+        process.wait.return_value = 0
+        job = Job()
+
+        success, _ = run_process(job, ["az", "login", "--use-device-code"])
+
+        self.assertTrue(success)
+        open_browser_url.assert_called_once_with("https://login.microsoft.com/device")
+        events = list(job.events.queue)
+        device_event = next(event for event in events if event["type"] == "device_code")
+        self.assertEqual(device_event["code"], "ABCD-EFGH")
+        self.assertTrue(device_event["browser_opened"])
+
     @patch("app.main.Path.is_file")
     @patch("app.main.shutil.which")
     def test_resolves_azure_cli_to_its_python_process(self, which, is_file) -> None:

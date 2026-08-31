@@ -26,6 +26,21 @@ function apiPost(path, body) {
   return fetch(path, options);
 }
 
+function reportClientError(message) {
+  if (!sessionToken) return;
+  void apiPost("/api/client-log", {
+    message: String(message).slice(0, 2000),
+  }).catch(() => {});
+}
+
+window.addEventListener("error", (event) => {
+  reportClientError(`${event.message} at ${event.filename}:${event.lineno}:${event.colno}`);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportClientError(`Unhandled promise rejection: ${event.reason}`);
+});
+
 function showPanel(id) {
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
   document.querySelector(`#${id}`).classList.remove("hidden");
@@ -86,23 +101,12 @@ async function showDeviceCode(device, event) {
   link.href = event.verification_url;
   link.target = "_blank";
   link.rel = "noreferrer";
-  link.textContent = "Microsoft sign-in opens in 3 seconds";
+  link.textContent = event.browser_opened
+    ? "Microsoft sign-in opened in your browser"
+    : "Open Microsoft sign-in";
   actions.append(copy, link);
   device.replaceChildren(code, notice, actions);
   device.classList.remove("hidden");
-
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  try {
-    const response = await apiPost("/api/open-device-login", {
-      url: event.verification_url,
-    });
-    const result = await response.json();
-    link.textContent = response.ok && result.opened
-      ? "Microsoft sign-in opened in your browser"
-      : "Open Microsoft sign-in";
-  } catch {
-    link.textContent = "Open Microsoft sign-in";
-  }
 }
 
 function showMfaNotice(device) {
@@ -353,38 +357,64 @@ async function startAuth(kind) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start sign-in");
     const events = new EventSource(`/api/jobs/${result.job_id}/events`);
+    let completed = false;
     events.onmessage = ({ data }) => {
-      const event = JSON.parse(data);
-      if (options.onEvent) options.onEvent(event);
-      if (event.type === "output") {
-        log.textContent += `${event.line}\n`;
-        log.scrollTop = log.scrollHeight;
-        if (/AADSTS50076|continue the login in the pop-up window/i.test(event.line)) {
-          showMfaNotice(device);
+      try {
+        const event = JSON.parse(data);
+        if (event.type === "output") {
+          log.textContent += `${event.line}\n`;
+          log.scrollTop = log.scrollHeight;
+          if (/AADSTS50076|continue the login in the pop-up window/i.test(event.line)) {
+            showMfaNotice(device);
+          }
         }
-      }
-      if (event.type === "device_code") {
-        void showDeviceCode(device, event);
-      }
-      if (event.type === "auth_phase") {
-        const notice = device.querySelector(".device-notice");
-        if (notice) notice.textContent = event.message;
-        device.classList.remove("hidden");
-      }
-      if (event.type === "done") {
-        log.textContent += event.success
-          ? "\nSign-in completed.\n"
-          : `\nSign-in failed (exit ${event.exit_code}).\n`;
-        authStatus[kind] = event.success;
-        document.querySelector("#continue-to-configure").disabled =
-          !Object.values(authStatus).every(Boolean);
-        if (event.success) {
-          showAuthComplete(device, button, kind);
-        } else {
+        if (event.type === "device_code") {
+          void showDeviceCode(device, event).catch((error) => {
+            log.textContent += `Unable to display the device code: ${error}\n`;
+            reportClientError(`Unable to display the device code: ${error}`);
+          });
+        }
+        if (event.type === "auth_phase") {
+          const notice = device.querySelector(".device-notice");
+          if (notice) notice.textContent = event.message;
+          device.classList.remove("hidden");
+        }
+        if (event.type === "error") {
+          log.textContent += `ERROR: ${event.message}\n`;
+        }
+        if (event.type === "done") {
+          completed = true;
+          log.textContent += event.success
+            ? "\nSign-in completed.\n"
+            : `\nSign-in failed (exit ${event.exit_code}).\n`;
+          authStatus[kind] = event.success;
+          document.querySelector("#continue-to-configure").disabled =
+            !Object.values(authStatus).every(Boolean);
+          if (event.success) {
+            showAuthComplete(device, button, kind);
+          } else {
+            button.disabled = false;
+          }
+          events.close();
+        }
+      } catch (error) {
+        completed = true;
+        log.textContent += `Sign-in event processing failed: ${error}\n`;
+        reportClientError(`Sign-in event processing failed: ${error}`);
+        events.close();
+        if (!authStatus[kind]) {
           button.disabled = false;
         }
-        events.close();
       }
+    };
+    events.onerror = () => {
+      if (completed) return;
+      completed = true;
+      log.textContent +=
+        "Sign-in event stream was interrupted. Review the diagnostic log and retry.\n";
+      reportClientError(`Sign-in event stream interrupted for ${kind}`);
+      events.close();
+      if (!authStatus[kind]) button.disabled = false;
     };
   } catch (error) {
     log.textContent += `Failed to start sign-in: ${error}\n`;
