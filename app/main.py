@@ -447,6 +447,13 @@ def azure_login_worker(job: Job) -> None:
         if parsed:
             challenge.update(parsed)
             job.emit(
+                "auth_phase",
+                message=(
+                    "Your organization requires one additional Microsoft sign-in "
+                    "to satisfy management-plane MFA. Complete the second browser tab."
+                ),
+            )
+            job.emit(
                 "output",
                 line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
             )
@@ -455,6 +462,13 @@ def azure_login_worker(job: Job) -> None:
             selected = cached_azure_context()
             if selected:
                 discovered_context.update(selected)
+                job.emit(
+                    "auth_phase",
+                    message=(
+                        "Your organization requires one additional Microsoft sign-in "
+                        "to finish authentication for the selected subscription."
+                    ),
+                )
                 job.emit(
                     "output",
                     line="The selected Azure account is ready. Finishing sign-in for that subscription...",

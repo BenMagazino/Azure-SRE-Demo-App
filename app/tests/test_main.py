@@ -8,6 +8,7 @@ from app.main import (
     Job,
     ToolStatus,
     authentication_statuses,
+    azure_login_worker,
     command_version,
     http_json,
     install_all_worker,
@@ -86,6 +87,42 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--tenant", command)
         self.assertIn("--subscription", command)
         self.assertIn("--skip-subscription-discovery", command)
+
+    @patch("app.main.run_capture")
+    @patch("app.main.run_process")
+    @patch("app.main.cached_azure_context")
+    def test_explains_conditional_access_retry(
+        self,
+        cached_azure_context,
+        run_process,
+        run_capture,
+    ) -> None:
+        cached_azure_context.return_value = None
+
+        def login(job, _command, **kwargs):
+            interceptor = kwargs.get("line_interceptor")
+            if interceptor:
+                interceptor(
+                    'az login --tenant "00000000-0000-0000-0000-000000000000" '
+                    '--scope "https://management.core.windows.net//.default" '
+                    '--claims-challenge "encoded-claims-value"'
+                )
+                return False, ""
+            return True, ""
+
+        run_process.side_effect = login
+        run_capture.return_value = True, ""
+        job = Job(["az", "login"])
+
+        azure_login_worker(job)
+
+        phases = [
+            event
+            for event in job.events.queue
+            if event["type"] == "auth_phase"
+        ]
+        self.assertEqual(len(phases), 1)
+        self.assertIn("one additional Microsoft sign-in", phases[0]["message"])
 
 
 class PrerequisiteTests(unittest.TestCase):

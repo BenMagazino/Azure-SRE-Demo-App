@@ -129,7 +129,7 @@ function showAuthComplete(device, button, kind, existingSession = false) {
       : "An existing Azure Developer CLI session is ready. azd stores its sign-in separately from Azure CLI.";
   } else {
     detail.textContent = kind === "azure-cli"
-      ? "Azure CLI authentication completed successfully."
+      ? "Azure CLI authentication completed successfully. You can close any Microsoft login success or documentation tabs."
       : "Azure Developer CLI authentication completed successfully.";
   }
   device.replaceChildren(title, detail);
@@ -341,7 +341,7 @@ async function startAuth(kind) {
     notice.className = "device-notice";
     notice.setAttribute("role", "status");
     notice.textContent =
-      "Complete the Microsoft sign-in page in your browser. Your organization may require MFA.";
+      "Complete the Microsoft sign-in page in your browser. Conditional Access may require one additional browser pass for management-plane MFA.";
     device.replaceChildren(notice);
     device.classList.remove("hidden");
   } else {
@@ -365,6 +365,11 @@ async function startAuth(kind) {
       }
       if (event.type === "device_code") {
         void showDeviceCode(device, event);
+      }
+      if (event.type === "auth_phase") {
+        const notice = device.querySelector(".device-notice");
+        if (notice) notice.textContent = event.message;
+        device.classList.remove("hidden");
       }
       if (event.type === "done") {
         log.textContent += event.success
