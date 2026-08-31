@@ -397,7 +397,15 @@ def resolved_process_command(command: list[str]) -> Optional[list[str]]:
     if command[0].lower() == "az" and Path(resolved).suffix.lower() == ".cmd":
         azure_python = Path(resolved).parent.parent / "python.exe"
         if azure_python.is_file():
-            return [str(azure_python), "-IBm", "azure.cli", *command[1:]]
+            return [
+                str(azure_python),
+                "-I",
+                "-B",
+                "-u",
+                "-m",
+                "azure.cli",
+                *command[1:],
+            ]
     return [resolved, *command[1:]]
 
 

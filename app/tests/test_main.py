@@ -302,7 +302,10 @@ class ProcessTests(unittest.TestCase):
         self.assertIsNotNone(command)
         assert command is not None
         self.assertTrue(command[0].endswith(r"CLI2\python.exe"))
-        self.assertEqual(command[1:], ["-IBm", "azure.cli", "login"])
+        self.assertEqual(
+            command[1:],
+            ["-I", "-B", "-u", "-m", "azure.cli", "login"],
+        )
 
     @patch("app.main.subprocess.run")
     @patch("app.main.resolved_process_command")
