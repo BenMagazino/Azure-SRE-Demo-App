@@ -89,10 +89,16 @@ class ClaimsChallengeTests(unittest.TestCase):
 
 
 class PrerequisiteTests(unittest.TestCase):
+    @patch("app.main.refresh_process_path")
     @patch("app.main.command_version")
-    def test_reports_each_configured_tool(self, command_version) -> None:
+    def test_reports_each_configured_tool(
+        self,
+        command_version,
+        refresh_process_path,
+    ) -> None:
         command_version.return_value = "1.2.3"
         statuses = prerequisite_statuses()
+        refresh_process_path.assert_called_once_with()
         self.assertEqual([item.id for item in statuses], ["winget", "az", "azd", "git"])
         self.assertTrue(all(item.installed for item in statuses))
         self.assertFalse(statuses[0].required)
@@ -111,14 +117,12 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertIn("winget", command)
             self.assertIn("--disable-interactivity", command)
 
-    @patch("app.main.refresh_process_path")
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_install_all_runs_missing_tools_sequentially(
         self,
         prerequisite_statuses,
         run_process,
-        refresh_process_path,
     ) -> None:
         installed = set()
 
@@ -154,7 +158,6 @@ class PrerequisiteTests(unittest.TestCase):
             [call.args[1] for call in run_process.call_args_list],
             [INSTALL_COMMANDS[tool_id] for tool_id in INSTALL_ORDER],
         )
-        self.assertEqual(refresh_process_path.call_count, len(INSTALL_ORDER))
         events = list(job.events.queue)
         tool_events = [
             event

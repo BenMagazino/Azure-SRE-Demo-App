@@ -173,6 +173,7 @@ def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
 
 
 def prerequisite_statuses() -> list[ToolStatus]:
+    refresh_process_path()
     return [
         ToolStatus(
             id=tool_id,
@@ -192,19 +193,35 @@ def refresh_process_path() -> None:
         return
     try:
         import winreg
+    except ImportError:
+        return
 
-        paths = []
-        keys = (
-            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-            (winreg.HKEY_CURRENT_USER, r"Environment"),
-        )
-        for hive, key_path in keys:
+    registry_paths = []
+    keys = (
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+    )
+    for hive, key_path in keys:
+        try:
             with winreg.OpenKey(hive, key_path) as key:
                 value, _ = winreg.QueryValueEx(key, "Path")
-                paths.append(os.path.expandvars(value))
-        os.environ["PATH"] = os.pathsep.join(paths)
-    except (OSError, ImportError):
+                registry_paths.extend(os.path.expandvars(value).split(os.pathsep))
+        except OSError:
+            continue
+
+    if not registry_paths:
         return
+
+    current_paths = os.environ.get("PATH", "").split(os.pathsep)
+    paths = []
+    seen = set()
+    for path in [*registry_paths, *current_paths]:
+        normalized = os.path.normcase(path.strip().strip('"'))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        paths.append(path)
+    os.environ["PATH"] = os.pathsep.join(paths)
 
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
@@ -216,7 +233,6 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
         job.emit("tool_status", tool_id=tool_id, status="failed")
         return False
 
-    refresh_process_path()
     tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
     if tool.installed:
         job.emit(
