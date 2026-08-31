@@ -84,9 +84,38 @@ class Job:
         self.id = str(uuid.uuid4())
         self.command = command or []
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
+        self.process: Optional[subprocess.Popen[str]] = None
+        self.process_lock = threading.Lock()
+        self.finish_lock = threading.Lock()
+        self.finished = False
 
     def emit(self, event_type: str, **payload: Any) -> None:
         self.events.put({"type": event_type, **payload})
+
+    def set_process(self, process: subprocess.Popen[str]) -> None:
+        with self.process_lock:
+            self.process = process
+
+    def clear_process(self, process: subprocess.Popen[str]) -> None:
+        with self.process_lock:
+            if self.process is process:
+                self.process = None
+
+    def terminate_process(self) -> None:
+        with self.process_lock:
+            process = self.process
+        if process and process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                return
+
+    def finish(self, success: bool, exit_code: Optional[int]) -> None:
+        with self.finish_lock:
+            if self.finished:
+                return
+            self.finished = True
+        self.emit("done", success=success, exit_code=exit_code)
 
 
 JOBS: dict[str, Job] = {}
@@ -315,8 +344,8 @@ def run_process(
 ) -> tuple[bool, str]:
     if emit_command:
         job.emit("command", command=command)
-    resolved = shutil.which(command[0])
-    if resolved is None:
+    process_command = resolved_process_command(command)
+    if process_command is None:
         job.emit("error", message=f"Command not found: {command[0]}")
         return False, ""
     environment = None
@@ -328,7 +357,7 @@ def run_process(
             environment["BROWSER"] = f'"{edge}" %s'
     try:
         process = subprocess.Popen(
-            [resolved, *command[1:]],
+            process_command,
             cwd=str(cwd) if cwd else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -343,24 +372,35 @@ def run_process(
         job.emit("error", message=str(error))
         return False, ""
 
+    job.set_process(process)
     captured: list[str] = []
-    assert process.stdout is not None
-    for raw_line in process.stdout:
-        line = raw_line.rstrip()
-        captured.append(line)
-        if line_interceptor and line_interceptor(line):
-            try:
-                process.terminate()
-            except OSError:
-                pass
-            break
-        job.emit("output", line=line)
-        device = parse_device_code(line)
-        if device:
-            job.emit("device_code", **device)
-
-    exit_code = process.wait()
+    try:
+        assert process.stdout is not None
+        for raw_line in process.stdout:
+            line = raw_line.rstrip()
+            captured.append(line)
+            if line_interceptor and line_interceptor(line):
+                job.terminate_process()
+                break
+            job.emit("output", line=line)
+            device = parse_device_code(line)
+            if device:
+                job.emit("device_code", **device)
+        exit_code = process.wait()
+    finally:
+        job.clear_process(process)
     return exit_code == 0, "\n".join(captured)
+
+
+def resolved_process_command(command: list[str]) -> Optional[list[str]]:
+    resolved = shutil.which(command[0])
+    if resolved is None:
+        return None
+    if command[0].lower() == "az" and Path(resolved).suffix.lower() == ".cmd":
+        azure_python = Path(resolved).parent.parent / "python.exe"
+        if azure_python.is_file():
+            return [str(azure_python), "-IBm", "azure.cli", *command[1:]]
+    return [resolved, *command[1:]]
 
 
 def stream_process(job: Job) -> None:
@@ -447,86 +487,130 @@ def claims_challenge_login_command(
     return command
 
 
+def azure_cli_management_authenticated() -> bool:
+    success, _ = run_capture(
+        [
+            "az",
+            "account",
+            "get-access-token",
+            "--resource",
+            "https://management.azure.com/",
+            "--output",
+            "none",
+            "--only-show-errors",
+        ],
+        timeout=10,
+    )
+    return success
+
+
 def azure_login_worker(job: Job) -> None:
     challenge: dict[str, str] = {}
     challenge_context: dict[str, str] = {}
     discovered_context: dict[str, str] = {}
+    authenticated = threading.Event()
+    stop_monitor = threading.Event()
 
-    context = cached_azure_context()
-    if context:
-        job.emit(
-            "output",
-            line="Using the previously selected Azure tenant and subscription...",
-        )
-        success, _ = run_process(
-            job,
-            scoped_azure_login_command(context),
-            emit_command=False,
-        )
-        job.emit("done", success=success, exit_code=0 if success else 1)
-        return
+    def monitor_authentication() -> None:
+        while not stop_monitor.wait(1.5):
+            if azure_cli_management_authenticated():
+                authenticated.set()
+                job.emit(
+                    "output",
+                    line="Azure management authentication verified.",
+                )
+                job.finish(success=True, exit_code=0)
+                job.terminate_process()
+                return
 
-    def intercept_claims_challenge(line: str) -> bool:
-        parsed = parse_claims_challenge_login(line)
-        if parsed:
-            challenge.update(parsed)
-            selected = cached_azure_context()
-            if selected and selected["tenant"].lower() == parsed["tenant"].lower():
-                challenge_context.update(selected)
-            job.emit(
-                "auth_phase",
-                message=(
-                    "Your organization requires one additional Microsoft sign-in "
-                    "to satisfy management-plane MFA. Complete the second browser tab; "
-                    "the app will then validate the selected subscription."
-                ),
-            )
+    monitor = threading.Thread(target=monitor_authentication, daemon=True)
+    monitor.start()
+
+    try:
+        context = cached_azure_context()
+        if context:
             job.emit(
                 "output",
-                line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
+                line="Using the previously selected Azure tenant and subscription...",
             )
-            return True
-        if "AADSTS50076" in line:
-            selected = cached_azure_context()
-            if selected:
-                discovered_context.update(selected)
+            success, _ = run_process(
+                job,
+                scoped_azure_login_command(context),
+                emit_command=False,
+            )
+            success = authenticated.is_set() or (
+                success and azure_cli_management_authenticated()
+            )
+            job.finish(success=success, exit_code=0 if success else 1)
+            return
+
+        def intercept_claims_challenge(line: str) -> bool:
+            parsed = parse_claims_challenge_login(line)
+            if parsed:
+                challenge.update(parsed)
+                selected = cached_azure_context()
+                if selected and selected["tenant"].lower() == parsed["tenant"].lower():
+                    challenge_context.update(selected)
                 job.emit(
                     "auth_phase",
                     message=(
                         "Your organization requires one additional Microsoft sign-in "
-                        "to finish authentication for the selected subscription."
+                        "to satisfy management-plane MFA. Complete the second browser tab; "
+                        "the app will then validate the selected subscription."
                     ),
                 )
                 job.emit(
                     "output",
-                    line="The selected Azure account is ready. Finishing sign-in for that subscription...",
+                    line="Conditional Access requested tenant-specific MFA. Retrying once for that tenant...",
                 )
                 return True
-        return False
+            if "AADSTS50076" in line:
+                selected = cached_azure_context()
+                if selected:
+                    discovered_context.update(selected)
+                    job.emit(
+                        "auth_phase",
+                        message=(
+                            "Your organization requires one additional Microsoft sign-in "
+                            "to finish authentication for the selected subscription."
+                        ),
+                    )
+                    job.emit(
+                        "output",
+                        line="The selected Azure account is ready. Finishing sign-in for that subscription...",
+                    )
+                    return True
+            return False
 
-    success, _ = run_process(
-        job,
-        job.command,
-        line_interceptor=intercept_claims_challenge,
-    )
-    if challenge:
-        logged_out, logout_output = run_capture(["az", "logout"])
-        if not logged_out:
-            job.emit("error", message=logout_output or "Unable to reset the partial Azure login.")
-            job.emit("done", success=False, exit_code=1)
-            return
         success, _ = run_process(
             job,
-            claims_challenge_login_command(challenge, challenge_context or None),
-            emit_command=False,
+            job.command,
+            line_interceptor=intercept_claims_challenge,
         )
-    elif discovered_context:
-        success, _ = run_process(
-            job,
-            scoped_azure_login_command(discovered_context),
-            emit_command=False,
+        if not authenticated.is_set() and challenge:
+            logged_out, logout_output = run_capture(["az", "logout"])
+            if not logged_out:
+                job.emit("error", message=logout_output or "Unable to reset the partial Azure login.")
+                job.finish(success=False, exit_code=1)
+                return
+            success, _ = run_process(
+                job,
+                claims_challenge_login_command(challenge, challenge_context or None),
+                emit_command=False,
+            )
+        elif not authenticated.is_set() and discovered_context:
+            success, _ = run_process(
+                job,
+                scoped_azure_login_command(discovered_context),
+                emit_command=False,
+            )
+        success = authenticated.is_set() or (
+            success and azure_cli_management_authenticated()
         )
-    job.emit("done", success=success, exit_code=0 if success else 1)
+        job.finish(success=success, exit_code=0 if success else 1)
+    finally:
+        stop_monitor.set()
+        monitor.join(timeout=2)
 
 
 def parse_device_code(line: str) -> Optional[dict[str, str]]:
@@ -617,7 +701,11 @@ def save_state(state: dict[str, Any]) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def run_capture(command: list[str], cwd: Optional[Path] = None) -> tuple[bool, str]:
+def run_capture(
+    command: list[str],
+    cwd: Optional[Path] = None,
+    timeout: int = 60,
+) -> tuple[bool, str]:
     resolved = shutil.which(command[0])
     if resolved is None:
         return False, f"Command not found: {command[0]}"
@@ -629,7 +717,7 @@ def run_capture(command: list[str], cwd: Optional[Path] = None) -> tuple[bool, s
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=60,
+            timeout=timeout,
             creationflags=CREATE_NO_WINDOW,
             check=False,
         )
@@ -639,14 +727,7 @@ def run_capture(command: list[str], cwd: Optional[Path] = None) -> tuple[bool, s
 
 
 def authentication_statuses() -> dict[str, bool]:
-    azure_cli, _ = run_capture([
-        "az",
-        "account",
-        "show",
-        "--output",
-        "none",
-        "--only-show-errors",
-    ])
+    azure_cli = azure_cli_management_authenticated()
     azd_command_succeeded, azd_output = run_capture([
         "azd",
         "auth",

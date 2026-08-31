@@ -8,6 +8,7 @@ from app.main import (
     Job,
     ToolStatus,
     authentication_statuses,
+    azure_cli_management_authenticated,
     azure_login_worker,
     claims_challenge_login_command,
     command_version,
@@ -18,6 +19,7 @@ from app.main import (
     parse_claims_challenge_login,
     parse_device_code,
     prerequisite_statuses,
+    resolved_process_command,
     run_process,
     scoped_azure_login_command,
 )
@@ -150,6 +152,16 @@ class ClaimsChallengeTests(unittest.TestCase):
         retry_command = run_process.call_args_list[-1].args[1]
         self.assertIn("--skip-subscription-discovery", retry_command)
 
+    @patch("app.main.run_capture")
+    def test_verifies_management_token_with_short_timeout(self, run_capture) -> None:
+        run_capture.return_value = True, ""
+
+        self.assertTrue(azure_cli_management_authenticated())
+
+        command = run_capture.call_args.args[0]
+        self.assertIn("get-access-token", command)
+        self.assertEqual(run_capture.call_args.kwargs["timeout"], 10)
+
 
 class PrerequisiteTests(unittest.TestCase):
     @patch("app.main.refresh_process_path")
@@ -250,6 +262,19 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    @patch("app.main.Path.is_file")
+    @patch("app.main.shutil.which")
+    def test_resolves_azure_cli_to_its_python_process(self, which, is_file) -> None:
+        which.return_value = r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"
+        is_file.return_value = True
+
+        command = resolved_process_command(["az", "login"])
+
+        self.assertIsNotNone(command)
+        assert command is not None
+        self.assertTrue(command[0].endswith(r"CLI2\python.exe"))
+        self.assertEqual(command[1:], ["-IBm", "azure.cli", "login"])
+
     @patch("app.main.subprocess.Popen")
     @patch("app.main.shutil.which")
     def test_azure_login_disables_windows_broker(self, which, popen) -> None:
@@ -264,22 +289,31 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"], "false")
 
     @patch("app.main.run_capture")
-    def test_reports_cached_authentication_status(self, run_capture) -> None:
-        run_capture.side_effect = [
-            (True, ""),
-            (True, '{"status":"unauthenticated"}'),
-        ]
+    @patch("app.main.azure_cli_management_authenticated")
+    def test_reports_cached_authentication_status(
+        self,
+        azure_cli_management_authenticated,
+        run_capture,
+    ) -> None:
+        azure_cli_management_authenticated.return_value = True
+        run_capture.return_value = True, '{"status":"unauthenticated"}'
 
         statuses = authentication_statuses()
 
         self.assertEqual(statuses, {"azure-cli": True, "azd": False})
 
     @patch("app.main.run_capture")
-    def test_reports_valid_azd_authentication_status(self, run_capture) -> None:
-        run_capture.side_effect = [
-            (False, "not logged in"),
-            (True, '{"status":"success","expiresOn":"2026-08-31T03:24:40Z"}'),
-        ]
+    @patch("app.main.azure_cli_management_authenticated")
+    def test_reports_valid_azd_authentication_status(
+        self,
+        azure_cli_management_authenticated,
+        run_capture,
+    ) -> None:
+        azure_cli_management_authenticated.return_value = False
+        run_capture.return_value = (
+            True,
+            '{"status":"success","expiresOn":"2026-08-31T03:24:40Z"}',
+        )
 
         statuses = authentication_statuses()
 
