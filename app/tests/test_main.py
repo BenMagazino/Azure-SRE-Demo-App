@@ -25,6 +25,8 @@ from app.main import (
     prerequisite_statuses,
     redact_command,
     redact_text,
+    response_plan_payload,
+    response_plan_status_is_retryable,
     resolved_process_command,
     run_capture,
     run_process,
@@ -744,6 +746,21 @@ class RequestAuthenticationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
+
+
+class ResponsePlanTests(unittest.TestCase):
+    def test_payload_uses_current_incident_filter_schema(self) -> None:
+        payload = response_plan_payload()
+
+        self.assertEqual(payload["handlingAgent"], "incident-handler")
+        self.assertEqual(payload["agentMode"], "autonomous")
+        self.assertNotIn("maxAttempts", payload)
+
+    def test_retries_only_transient_response_plan_failures(self) -> None:
+        for status in (0, 404, 408, 425, 429, 500, 502, 503, 504):
+            self.assertTrue(response_plan_status_is_retryable(status))
+        for status in (400, 401, 403, 422):
+            self.assertFalse(response_plan_status_is_retryable(status))
 
 
 if __name__ == "__main__":

@@ -1363,6 +1363,21 @@ def refresh_app_url(job: Job, app_name: str, resource_group: str) -> str:
     return f"https://{output.strip()}" if success and output.strip() else ""
 
 
+def response_plan_payload() -> dict[str, Any]:
+    return {
+        "id": "grubify-http-errors",
+        "name": "Grubify HTTP Errors",
+        "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
+        "titleContains": "",
+        "handlingAgent": "incident-handler",
+        "agentMode": "autonomous",
+    }
+
+
+def response_plan_status_is_retryable(status: int) -> bool:
+    return status in {0, 404, 408, 425, 429, 500, 502, 503, 504}
+
+
 def post_provision(job: Job, environment: str) -> bool:
     values = azd_values(environment)
     required = (
@@ -1544,15 +1559,7 @@ def post_provision(job: Job, environment: str) -> bool:
 
     job.emit("output", line="Waiting 30 seconds for Azure Monitor initialization...")
     time.sleep(30)
-    response_plan = {
-        "id": "grubify-http-errors",
-        "name": "Grubify HTTP Errors",
-        "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
-        "titleContains": "",
-        "handlingAgent": "incident-handler",
-        "agentMode": "autonomous",
-        "maxAttempts": 3,
-    }
+    response_plan = response_plan_payload()
     for attempt in range(1, 6):
         success, token = run_capture(
             [
@@ -1571,6 +1578,14 @@ def post_provision(job: Job, environment: str) -> bool:
         )
         if status in (200, 201, 202, 409):
             return True
+        if not response_plan_status_is_retryable(status):
+            job.emit(
+                "output",
+                line=f"Response-plan creation failed: HTTP {status} {response[:300]}",
+            )
+            return False
+        if attempt == 5:
+            break
         job.emit(
             "output",
             line=f"Response plan attempt {attempt}/5 returned HTTP {status}; retrying...",
