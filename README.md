@@ -36,6 +36,16 @@ Python installation URL.
 
 The browser opens automatically at <http://127.0.0.1:8765>.
 
+## Windows Sandbox diagnostics
+
+Each application launch writes a timestamped diagnostic log containing startup,
+prerequisite, HTTP, job, subprocess, and authentication details. Device codes,
+claims challenges, and tokens are redacted.
+
+`AzureSREAgentDemo.wsb` maps the host `sandbox-logs` directory into the Sandbox
+as `AzureSREAgentDemoLogs`. Logs therefore remain available in
+`sandbox-logs\AzureSREAgentDemo-*.log` after the Sandbox is closed.
+
 ## Build the Windows executable
 
 ```powershell

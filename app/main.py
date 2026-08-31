@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
@@ -41,6 +42,127 @@ HOST = "127.0.0.1"
 PORT = 8765
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 SESSION_TOKEN = uuid.uuid4().hex
+LOGGER = logging.getLogger("AzureSREAgentDemo")
+LOG_FILE: Optional[Path] = None
+
+
+def redact_text(value: str) -> str:
+    redacted = re.sub(
+        r"(?i)(enter\s+(?:the\s+)?code\s+)([A-Z0-9-]{6,12})",
+        r"\1<redacted-device-code>",
+        value,
+    )
+    redacted = re.sub(
+        r'(?i)(--claims-challenge\s+)(?:"[^"]*"|\S+)',
+        r"\1<redacted-claims-challenge>",
+        redacted,
+    )
+    redacted = re.sub(
+        r'(?i)("(?:accessToken|refreshToken|clientSecret|password)"\s*:\s*)"[^"]*"',
+        r'\1"<redacted>"',
+        redacted,
+    )
+    return re.sub(
+        r"(?i)(authorization:\s*bearer\s+)\S+",
+        r"\1<redacted>",
+        redacted,
+    )
+
+
+def redact_command(command: list[str]) -> list[str]:
+    sensitive_options = {
+        "--access-token",
+        "--claims-challenge",
+        "--client-secret",
+        "--password",
+    }
+    redacted = list(command)
+    for index, argument in enumerate(command[:-1]):
+        if argument.lower() in sensitive_options:
+            redacted[index + 1] = "<redacted>"
+    return redacted
+
+
+def safe_log_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sensitive_keys = {
+        "access_token",
+        "authorization",
+        "claims_challenge",
+        "client_secret",
+        "code",
+        "password",
+        "refresh_token",
+        "token",
+    }
+
+    def sanitize(key: str, value: Any) -> Any:
+        if key.lower() in sensitive_keys:
+            return "<redacted>"
+        if key.lower() == "command" and isinstance(value, list):
+            return redact_command(value)
+        if isinstance(value, str):
+            return redact_text(value)
+        if isinstance(value, list):
+            return [redact_text(item) if isinstance(item, str) else item for item in value]
+        if isinstance(value, dict):
+            return {
+                nested_key: sanitize(str(nested_key), nested_value)
+                for nested_key, nested_value in value.items()
+            }
+        return value
+
+    return {key: sanitize(key, value) for key, value in payload.items()}
+
+
+def diagnostic_log_directory() -> Path:
+    configured = os.environ.get("AZURE_SRE_AGENT_LOG_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    sandbox_directory = Path.home() / "Desktop" / "AzureSREAgentDemoLogs"
+    if (
+        os.name == "nt"
+        and os.environ.get("USERNAME", "").lower() == "wdagutilityaccount"
+        and sandbox_directory.is_dir()
+    ):
+        return sandbox_directory
+    return STATE_DIR / "logs"
+
+
+def configure_logging() -> Path:
+    global LOG_FILE
+    if LOG_FILE is not None:
+        return LOG_FILE
+
+    log_directory = diagnostic_log_directory()
+    try:
+        log_directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        log_directory = STATE_DIR / "logs"
+        log_directory.mkdir(parents=True, exist_ok=True)
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    LOG_FILE = log_directory / f"AzureSREAgentDemo-{timestamp}-{os.getpid()}.log"
+    formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03d %(levelname)-8s [%(threadName)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    try:
+        file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    except OSError:
+        log_directory = STATE_DIR / "logs"
+        log_directory.mkdir(parents=True, exist_ok=True)
+        LOG_FILE = log_directory / f"AzureSREAgentDemo-{timestamp}-{os.getpid()}.log"
+        file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    LOGGER.setLevel(logging.DEBUG)
+    LOGGER.propagate = False
+    LOGGER.addHandler(file_handler)
+    LOGGER.addHandler(console_handler)
+    return LOG_FILE
 
 
 @dataclass
@@ -90,24 +212,38 @@ class Job:
         self.finished = False
 
     def emit(self, event_type: str, **payload: Any) -> None:
+        LOGGER.debug(
+            "job=%s event=%s payload=%s",
+            self.id,
+            event_type,
+            safe_log_payload(payload),
+        )
         self.events.put({"type": event_type, **payload})
 
     def set_process(self, process: subprocess.Popen[str]) -> None:
         with self.process_lock:
             self.process = process
+        LOGGER.debug("job=%s tracking process pid=%s", self.id, process.pid)
 
     def clear_process(self, process: subprocess.Popen[str]) -> None:
         with self.process_lock:
             if self.process is process:
                 self.process = None
+        LOGGER.debug("job=%s released process pid=%s", self.id, process.pid)
 
     def terminate_process(self) -> None:
         with self.process_lock:
             process = self.process
         if process and process.poll() is None:
             try:
+                LOGGER.info("job=%s terminating process pid=%s", self.id, process.pid)
                 process.terminate()
             except OSError:
+                LOGGER.exception(
+                    "job=%s could not terminate process pid=%s",
+                    self.id,
+                    process.pid,
+                )
                 return
 
     def finish(self, success: bool, exit_code: Optional[int]) -> None:
@@ -115,6 +251,12 @@ class Job:
             if self.finished:
                 return
             self.finished = True
+        LOGGER.info(
+            "job=%s finished success=%s exit_code=%s",
+            self.id,
+            success,
+            exit_code,
+        )
         self.emit("done", success=success, exit_code=exit_code)
 
 
@@ -183,7 +325,10 @@ INSTALL_ORDER = tuple(INSTALL_COMMANDS)
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
     resolved = shutil.which(executable)
     if resolved is None:
+        LOGGER.debug("Prerequisite executable not found: %s", executable)
         return None
+    LOGGER.debug("Checking prerequisite: %s resolved=%s", executable, resolved)
+    started = time.monotonic()
     try:
         result = subprocess.run(
             [resolved, *args],
@@ -194,16 +339,25 @@ def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
+        LOGGER.exception("Prerequisite check failed: %s", executable)
         return None
 
     text = f"{result.stdout}\n{result.stderr}"
     match = re.search(r"\d+\.\d+(?:\.\d+)?", text)
-    return match.group(0) if match else "installed"
+    version = match.group(0) if match else "installed"
+    LOGGER.debug(
+        "Prerequisite check complete: %s exit_code=%s version=%s duration=%.3fs",
+        executable,
+        result.returncode,
+        version,
+        time.monotonic() - started,
+    )
+    return version
 
 
 def prerequisite_statuses() -> list[ToolStatus]:
     refresh_process_path()
-    return [
+    statuses = [
         ToolStatus(
             id=tool_id,
             name=name,
@@ -215,6 +369,14 @@ def prerequisite_statuses() -> list[ToolStatus]:
         )
         for tool_id, name, args, install_command, install_url, required in TOOLS
     ]
+    LOGGER.info(
+        "Prerequisite status: %s",
+        ", ".join(
+            f"{tool.id}={'ready ' + str(tool.version) if tool.installed else 'missing'}"
+            for tool in statuses
+        ),
+    )
+    return statuses
 
 
 def refresh_process_path() -> None:
@@ -239,6 +401,7 @@ def refresh_process_path() -> None:
             continue
 
     if not registry_paths:
+        LOGGER.debug("PATH refresh skipped because no registry PATH values were available")
         return
 
     current_paths = os.environ.get("PATH", "").split(os.pathsep)
@@ -251,6 +414,11 @@ def refresh_process_path() -> None:
         seen.add(normalized)
         paths.append(path)
     os.environ["PATH"] = os.pathsep.join(paths)
+    LOGGER.debug(
+        "Refreshed process PATH: registry_entries=%s total_entries=%s",
+        len(registry_paths),
+        len(paths),
+    )
 
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
@@ -346,6 +514,7 @@ def run_process(
         job.emit("command", command=command)
     process_command = resolved_process_command(command)
     if process_command is None:
+        LOGGER.error("job=%s command not found: %s", job.id, command[0])
         job.emit("error", message=f"Command not found: {command[0]}")
         return False, ""
     environment = None
@@ -353,6 +522,14 @@ def run_process(
         # Disable WAM so explicit device-code login can use any organizational account.
         environment = os.environ.copy()
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
+    started = time.monotonic()
+    LOGGER.info(
+        "job=%s starting command=%s resolved=%s cwd=%s",
+        job.id,
+        redact_command(command),
+        redact_command(process_command),
+        str(cwd) if cwd else os.getcwd(),
+    )
     try:
         process = subprocess.Popen(
             process_command,
@@ -367,17 +544,30 @@ def run_process(
             env=environment,
         )
     except OSError as error:
+        LOGGER.exception("job=%s process launch failed", job.id)
         job.emit("error", message=str(error))
         return False, ""
 
     job.set_process(process)
+    LOGGER.info("job=%s process started pid=%s", job.id, process.pid)
     captured: list[str] = []
     try:
         assert process.stdout is not None
         for raw_line in process.stdout:
             line = raw_line.rstrip()
             captured.append(line)
+            LOGGER.debug(
+                "job=%s pid=%s output=%s",
+                job.id,
+                process.pid,
+                redact_text(line),
+            )
             if line_interceptor and line_interceptor(line):
+                LOGGER.info(
+                    "job=%s pid=%s output interceptor requested termination",
+                    job.id,
+                    process.pid,
+                )
                 job.terminate_process()
                 break
             job.emit("output", line=line)
@@ -387,6 +577,14 @@ def run_process(
         exit_code = process.wait()
     finally:
         job.clear_process(process)
+    LOGGER.info(
+        "job=%s process exited pid=%s exit_code=%s duration=%.3fs lines=%s",
+        job.id,
+        process.pid,
+        exit_code,
+        time.monotonic() - started,
+        len(captured),
+    )
     return exit_code == 0, "\n".join(captured)
 
 
@@ -509,10 +707,12 @@ def azure_cli_management_authenticated() -> bool:
         ],
         timeout=10,
     )
+    LOGGER.debug("Azure management token probe authenticated=%s", success)
     return success
 
 
 def azure_login_worker(job: Job) -> None:
+    LOGGER.info("job=%s Azure CLI authentication worker started", job.id)
     challenge: dict[str, str] = {}
     challenge_context: dict[str, str] = {}
     discovered_context: dict[str, str] = {}
@@ -520,6 +720,11 @@ def azure_login_worker(job: Job) -> None:
     stop_monitor = threading.Event()
 
     stale_context = cached_azure_context()
+    LOGGER.debug(
+        "job=%s cached Azure context present=%s",
+        job.id,
+        stale_context is not None,
+    )
     if stale_context:
         job.emit(
             "output",
@@ -535,8 +740,17 @@ def azure_login_worker(job: Job) -> None:
             return
 
     def monitor_authentication() -> None:
+        poll_count = 0
         while not stop_monitor.wait(1.5):
-            if azure_cli_management_authenticated():
+            poll_count += 1
+            is_authenticated = azure_cli_management_authenticated()
+            LOGGER.debug(
+                "job=%s authentication monitor poll=%s authenticated=%s",
+                job.id,
+                poll_count,
+                is_authenticated,
+            )
+            if is_authenticated:
                 authenticated.set()
                 job.emit(
                     "output",
@@ -547,6 +761,7 @@ def azure_login_worker(job: Job) -> None:
                 return
 
     monitor = threading.Thread(target=monitor_authentication, daemon=True)
+    monitor.name = f"auth-monitor-{job.id[:8]}"
     monitor.start()
 
     try:
@@ -593,6 +808,15 @@ def azure_login_worker(job: Job) -> None:
             job.command,
             line_interceptor=intercept_claims_challenge,
         )
+        LOGGER.info(
+            "job=%s initial Azure login ended success=%s authenticated=%s "
+            "claims_challenge=%s discovered_context=%s",
+            job.id,
+            success,
+            authenticated.is_set(),
+            bool(challenge),
+            bool(discovered_context),
+        )
         if not authenticated.is_set() and challenge:
             logged_out, logout_output = run_capture(["az", "logout"])
             if not logged_out:
@@ -617,6 +841,7 @@ def azure_login_worker(job: Job) -> None:
     finally:
         stop_monitor.set()
         monitor.join(timeout=2)
+        LOGGER.info("job=%s Azure CLI authentication worker stopped", job.id)
 
 
 def parse_device_code(line: str) -> Optional[dict[str, str]]:
@@ -665,20 +890,26 @@ def find_edge() -> Optional[Path]:
 
 
 def open_browser_url(url: str) -> bool:
+    LOGGER.info("Opening browser URL: %s", url)
     if is_windows_sandbox():
         edge = find_edge()
+        LOGGER.debug("Windows Sandbox Edge path: %s", edge)
         if edge:
             try:
-                subprocess.Popen(
+                process = subprocess.Popen(
                     [str(edge), url],
                     creationflags=CREATE_NO_WINDOW,
                 )
+                LOGGER.info("Opened Edge directly pid=%s", process.pid)
                 return True
             except OSError:
-                pass
+                LOGGER.exception("Unable to open Edge directly")
     try:
-        return webbrowser.open_new_tab(url)
+        opened = webbrowser.open_new_tab(url)
+        LOGGER.info("Default browser open result=%s", opened)
+        return opened
     except webbrowser.Error:
+        LOGGER.exception("Default browser could not open URL")
         return False
 
 
@@ -690,7 +921,18 @@ def create_job(
     with JOBS_LOCK:
         JOBS[job.id] = job
     target = worker or stream_process
-    threading.Thread(target=target, args=(job,), daemon=True).start()
+    LOGGER.info(
+        "Created job=%s worker=%s command=%s",
+        job.id,
+        getattr(target, "__name__", target.__class__.__name__),
+        redact_command(job.command),
+    )
+    threading.Thread(
+        target=target,
+        args=(job,),
+        daemon=True,
+        name=f"job-{job.id[:8]}",
+    ).start()
     return job
 
 
@@ -714,11 +956,20 @@ def run_capture(
 ) -> tuple[bool, str]:
     process_command = resolved_process_command(command)
     if process_command is None:
+        LOGGER.error("Capture command not found: %s", command[0])
         return False, f"Command not found: {command[0]}"
     environment = None
     if command[0].lower() == "az":
         environment = os.environ.copy()
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
+    started = time.monotonic()
+    LOGGER.debug(
+        "Starting capture command=%s resolved=%s cwd=%s timeout=%ss",
+        redact_command(command),
+        redact_command(process_command),
+        str(cwd) if cwd else os.getcwd(),
+        timeout,
+    )
     try:
         result = subprocess.run(
             process_command,
@@ -733,8 +984,17 @@ def run_capture(
             env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
+        LOGGER.exception("Capture command failed: %s", redact_command(command))
         return False, str(error)
-    return result.returncode == 0, (result.stdout or result.stderr).strip()
+    output = (result.stdout or result.stderr).strip()
+    LOGGER.debug(
+        "Capture command complete command=%s exit_code=%s duration=%.3fs output=%s",
+        redact_command(command),
+        result.returncode,
+        time.monotonic() - started,
+        redact_text(output),
+    )
+    return result.returncode == 0, output
 
 
 def authentication_statuses() -> dict[str, bool]:
@@ -754,10 +1014,14 @@ def authentication_statuses() -> dict[str, bool]:
             if isinstance(azd_status, dict):
                 azd_authenticated = azd_status.get("status") == "success"
             else:
-                print("[auth] Azure Developer CLI returned an unexpected status response.")
+                LOGGER.warning(
+                    "Azure Developer CLI returned an unexpected status response"
+                )
         except json.JSONDecodeError as error:
-            print(f"[auth] Unable to parse Azure Developer CLI status: {error}")
-    return {"azure-cli": azure_cli, "azd": azd_authenticated}
+            LOGGER.warning("Unable to parse Azure Developer CLI status: %s", error)
+    statuses = {"azure-cli": azure_cli, "azd": azd_authenticated}
+    LOGGER.info("Authentication status: %s", statuses)
+    return statuses
 
 
 def azd_values(environment: str) -> dict[str, str]:
@@ -1194,7 +1458,11 @@ class AppHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def log_message(self, format_string: str, *args: Any) -> None:
-        print(f"[web] {format_string % args}")
+        LOGGER.info(
+            "HTTP client=%s %s",
+            self.client_address[0],
+            format_string % args,
+        )
 
     def end_headers(self) -> None:
         self.send_header("Cache-Control", "no-store")
@@ -1216,6 +1484,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        LOGGER.debug("HTTP GET path=%s", path)
         if path == "/api/health":
             self.send_json({"status": "ok"})
             return
@@ -1251,14 +1520,24 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.headers.get("X-SRE-Session") != SESSION_TOKEN:
+            LOGGER.warning(
+                "Rejected POST with invalid session token from client=%s",
+                self.client_address[0],
+            )
             self.send_json({"error": "Invalid local session token"}, HTTPStatus.FORBIDDEN)
             return
         origin = self.headers.get("Origin")
         allowed_origins = {f"http://{HOST}:{PORT}", f"http://localhost:{PORT}"}
         if origin and origin not in allowed_origins:
+            LOGGER.warning(
+                "Rejected POST with untrusted origin=%s client=%s",
+                origin,
+                self.client_address[0],
+            )
             self.send_json({"error": "Untrusted request origin"}, HTTPStatus.FORBIDDEN)
             return
         path = urlparse(self.path).path
+        LOGGER.info("HTTP action POST path=%s client=%s", path, self.client_address[0])
         commands = {
             "/api/auth/azure-cli": [
                 "az",
@@ -1393,6 +1672,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         with JOBS_LOCK:
             job = JOBS.get(job_id)
         if job is None:
+            LOGGER.warning("SSE requested unknown job=%s", job_id)
             self.send_json({"error": "Unknown job"}, HTTPStatus.NOT_FOUND)
             return
 
@@ -1401,6 +1681,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
         self.end_headers()
+        LOGGER.info("SSE connected job=%s client=%s", job_id, self.client_address[0])
 
         while True:
             event = job.events.get()
@@ -1409,22 +1690,76 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(message)
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
+                LOGGER.warning("SSE disconnected job=%s before completion", job_id)
                 return
             if event["type"] == "done":
+                LOGGER.info("SSE completed job=%s", job_id)
                 return
 
 
 def main() -> None:
-    server = ThreadingHTTPServer((HOST, PORT), AppHandler)
+    log_file = configure_logging()
+
+    def log_unhandled_exception(
+        exception_type: type[BaseException],
+        exception: BaseException,
+        exception_traceback: Any,
+    ) -> None:
+        LOGGER.critical(
+            "Unhandled application exception",
+            exc_info=(exception_type, exception, exception_traceback),
+        )
+
+    def log_thread_exception(args: Any) -> None:
+        LOGGER.critical(
+            "Unhandled exception in thread=%s",
+            args.thread.name if args.thread else "<unknown>",
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    sys.excepthook = log_unhandled_exception
+    threading.excepthook = log_thread_exception
+    LOGGER.info(
+        "Application starting pid=%s frozen=%s executable=%s python=%s cwd=%s",
+        os.getpid(),
+        FROZEN,
+        sys.executable,
+        sys.version.replace("\n", " "),
+        os.getcwd(),
+    )
+    LOGGER.info(
+        "Paths root=%s static=%s state=%s vendor=%s diagnostics=%s",
+        ROOT,
+        STATIC_DIR,
+        STATE_DIR,
+        VENDOR_DIR,
+        log_file,
+    )
+    LOGGER.debug(
+        "Runtime environment username=%s computer=%s sandbox=%s argv=%s",
+        os.environ.get("USERNAME", ""),
+        os.environ.get("COMPUTERNAME", ""),
+        is_windows_sandbox(),
+        sys.argv,
+    )
+    try:
+        server = ThreadingHTTPServer((HOST, PORT), AppHandler)
+    except OSError:
+        LOGGER.exception("Unable to bind web server to %s:%s", HOST, PORT)
+        raise
     url = f"http://{HOST}:{PORT}"
-    print(f"SRE Agent onboarding wizard: {url}")
-    threading.Timer(0.6, lambda: open_browser_url(url)).start()
+    LOGGER.info("SRE Agent onboarding wizard ready: %s", url)
+    LOGGER.info("Diagnostic log: %s", log_file)
+    browser_timer = threading.Timer(0.6, lambda: open_browser_url(url))
+    browser_timer.name = "browser-launch"
+    browser_timer.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopping server.")
+        LOGGER.info("Stopping server after keyboard interrupt")
     finally:
         server.server_close()
+        LOGGER.info("Application stopped")
 
 
 if __name__ == "__main__":

@@ -19,9 +19,12 @@ from app.main import (
     parse_claims_challenge_login,
     parse_device_code,
     prerequisite_statuses,
+    redact_command,
+    redact_text,
     resolved_process_command,
     run_capture,
     run_process,
+    safe_log_payload,
     scoped_azure_login_command,
 )
 
@@ -62,6 +65,43 @@ class DeviceCodeTests(unittest.TestCase):
         self.assertTrue(is_device_login_url("https://login.microsoft.com/device"))
         self.assertTrue(is_device_login_url("https://microsoft.com/devicelogin"))
         self.assertFalse(is_device_login_url("https://example.com/device"))
+
+
+class DiagnosticRedactionTests(unittest.TestCase):
+    def test_redacts_device_code_from_process_output(self) -> None:
+        line = (
+            "Open https://microsoft.com/devicelogin and enter the code "
+            "ABCD-EFGH to authenticate."
+        )
+
+        redacted = redact_text(line)
+
+        self.assertNotIn("ABCD-EFGH", redacted)
+        self.assertIn("<redacted-device-code>", redacted)
+
+    def test_redacts_claims_challenge_from_commands(self) -> None:
+        command = [
+            "az",
+            "login",
+            "--claims-challenge",
+            "sensitive-claims-value",
+            "--use-device-code",
+        ]
+
+        self.assertEqual(
+            redact_command(command),
+            [
+                "az",
+                "login",
+                "--claims-challenge",
+                "<redacted>",
+                "--use-device-code",
+            ],
+        )
+        self.assertEqual(
+            safe_log_payload({"command": command})["command"][3],
+            "<redacted>",
+        )
 
 
 class ClaimsChallengeTests(unittest.TestCase):
