@@ -9,6 +9,7 @@ from app.main import (
     ToolStatus,
     activate_azure_context,
     authentication_statuses,
+    azd_login_command,
     azure_context_is_available,
     azure_cli_management_authenticated,
     azure_login_worker,
@@ -71,6 +72,15 @@ class DeviceCodeTests(unittest.TestCase):
             },
         )
 
+    def test_parses_azd_device_code_without_url(self) -> None:
+        self.assertEqual(
+            parse_device_code("Start by copying the next code: FD9EAW26Z"),
+            {
+                "verification_url": "https://microsoft.com/devicelogin",
+                "code": "FD9EAW26Z",
+            },
+        )
+
     def test_only_allows_known_device_login_urls(self) -> None:
         self.assertTrue(is_device_login_url("https://login.microsoft.com/device"))
         self.assertTrue(is_device_login_url("https://microsoft.com/devicelogin"))
@@ -87,6 +97,12 @@ class DiagnosticRedactionTests(unittest.TestCase):
         redacted = redact_text(line)
 
         self.assertNotIn("ABCD-EFGH", redacted)
+        self.assertIn("<redacted-device-code>", redacted)
+
+    def test_redacts_azd_device_code_from_process_output(self) -> None:
+        redacted = redact_text("Start by copying the next code: FD9EAW26Z")
+
+        self.assertNotIn("FD9EAW26Z", redacted)
         self.assertIn("<redacted-device-code>", redacted)
 
     def test_redacts_claims_challenge_from_commands(self) -> None:
@@ -444,6 +460,17 @@ class AzureContextTests(unittest.TestCase):
         self.assertIsNone(active)
         azure_context_catalog.assert_not_called()
 
+    def test_scopes_noninteractive_azd_login_to_selected_tenant(self) -> None:
+        command = azd_login_command({
+            "tenant": TENANT_A,
+            "subscription": SUBSCRIPTION_A,
+        })
+
+        self.assertEqual(command[0:3], ["azd", "auth", "login"])
+        self.assertIn("--use-device-code", command)
+        self.assertIn("--no-prompt", command)
+        self.assertEqual(command[command.index("--tenant-id") + 1], TENANT_A)
+
 
 class PrerequisiteTests(unittest.TestCase):
     @patch("app.main.refresh_process_path")
@@ -576,6 +603,35 @@ class ProcessTests(unittest.TestCase):
         device_event = next(event for event in events if event["type"] == "device_code")
         self.assertEqual(device_event["code"], "ABCD-EFGH")
         self.assertTrue(device_event["browser_opened"])
+
+    @patch("app.main.open_browser_url", return_value=True)
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.resolved_process_command")
+    def test_azd_code_event_opens_browser_without_terminal_input(
+        self,
+        resolved_process_command,
+        popen,
+        open_browser_url,
+    ) -> None:
+        resolved_process_command.return_value = azd_login_command()
+        process = popen.return_value
+        process.pid = 1234
+        process.stdout = ["Start by copying the next code: FD9EAW26Z\n"]
+        process.wait.return_value = 0
+        job = Job()
+
+        success, _ = run_process(job, azd_login_command())
+
+        self.assertTrue(success)
+        open_browser_url.assert_called_once_with(
+            "https://microsoft.com/devicelogin"
+        )
+        device_event = next(
+            event
+            for event in job.events.queue
+            if event["type"] == "device_code"
+        )
+        self.assertEqual(device_event["code"], "FD9EAW26Z")
 
     @patch("app.main.Path.is_file")
     @patch("app.main.shutil.which")

@@ -45,6 +45,7 @@ AUTH_RETRY_GRACE_SECONDS = 4.0
 SESSION_TOKEN = uuid.uuid4().hex
 LOGGER = logging.getLogger("AzureSREAgentDemo")
 LOG_FILE: Optional[Path] = None
+AZURE_DEVICE_LOGIN_URL = "https://microsoft.com/devicelogin"
 AZURE_GUID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 )
@@ -55,6 +56,11 @@ def redact_text(value: str) -> str:
         r"(?i)(enter\s+(?:the\s+)?code\s+)([A-Z0-9-]{6,12})",
         r"\1<redacted-device-code>",
         value,
+    )
+    redacted = re.sub(
+        r"(?i)(start by copying the next code:\s*)([A-Z0-9-]{6,12})",
+        r"\1<redacted-device-code>",
+        redacted,
     )
     redacted = re.sub(
         r'(?i)(--claims-challenge\s+)(?:"[^"]*"|\S+)',
@@ -847,6 +853,21 @@ def scoped_azure_login_command(context: dict[str, str]) -> list[str]:
     ]
 
 
+def azd_login_command(
+    context: Optional[dict[str, str]] = None,
+) -> list[str]:
+    command = [
+        "azd",
+        "auth",
+        "login",
+        "--use-device-code",
+        "--no-prompt",
+    ]
+    if context:
+        command.extend(["--tenant-id", context["tenant"]])
+    return command
+
+
 def claims_challenge_login_command(
     challenge: dict[str, str],
     context: Optional[dict[str, str]] = None,
@@ -1052,6 +1073,17 @@ def azure_login_worker(job: Job) -> None:
 
 
 def parse_device_code(line: str) -> Optional[dict[str, str]]:
+    azd_code_match = re.search(
+        r"start by copying the next code:\s*([A-Z0-9-]{6,12})",
+        line,
+        re.IGNORECASE,
+    )
+    if azd_code_match:
+        return {
+            "verification_url": AZURE_DEVICE_LOGIN_URL,
+            "code": azd_code_match.group(1).upper(),
+        }
+
     url_match = re.search(
         r"https://(?:microsoft\.com/devicelogin|login\.microsoft(?:online)?\.com/device)\S*",
         line,
@@ -1851,7 +1883,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/auth/azd":
             job = create_job(
-                ["azd", "auth", "login", "--use-device-code"],
+                azd_login_command(cached_azure_context()),
             )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
