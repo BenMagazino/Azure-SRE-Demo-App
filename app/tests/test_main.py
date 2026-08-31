@@ -9,6 +9,7 @@ from app.main import (
     ToolStatus,
     authentication_statuses,
     azure_login_worker,
+    claims_challenge_login_command,
     command_version,
     http_json,
     install_all_worker,
@@ -88,6 +89,23 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--subscription", command)
         self.assertIn("--skip-subscription-discovery", command)
 
+    def test_scopes_claims_retry_to_selected_subscription(self) -> None:
+        command = claims_challenge_login_command(
+            {
+                "tenant": "00000000-0000-0000-0000-000000000000",
+                "scope": "https://management.core.windows.net//.default",
+                "claims_challenge": "encoded-claims-value",
+            },
+            {
+                "tenant": "00000000-0000-0000-0000-000000000000",
+                "subscription": "11111111-1111-1111-1111-111111111111",
+            },
+        )
+
+        self.assertIn("--claims-challenge", command)
+        self.assertIn("--subscription", command)
+        self.assertIn("--skip-subscription-discovery", command)
+
     @patch("app.main.run_capture")
     @patch("app.main.run_process")
     @patch("app.main.cached_azure_context")
@@ -97,7 +115,13 @@ class ClaimsChallengeTests(unittest.TestCase):
         run_process,
         run_capture,
     ) -> None:
-        cached_azure_context.return_value = None
+        cached_azure_context.side_effect = [
+            None,
+            {
+                "tenant": "00000000-0000-0000-0000-000000000000",
+                "subscription": "11111111-1111-1111-1111-111111111111",
+            },
+        ]
 
         def login(job, _command, **kwargs):
             interceptor = kwargs.get("line_interceptor")
@@ -123,6 +147,8 @@ class ClaimsChallengeTests(unittest.TestCase):
         ]
         self.assertEqual(len(phases), 1)
         self.assertIn("one additional Microsoft sign-in", phases[0]["message"])
+        retry_command = run_process.call_args_list[-1].args[1]
+        self.assertIn("--skip-subscription-discovery", retry_command)
 
 
 class PrerequisiteTests(unittest.TestCase):

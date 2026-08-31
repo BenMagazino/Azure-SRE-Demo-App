@@ -424,8 +424,32 @@ def scoped_azure_login_command(context: dict[str, str]) -> list[str]:
     ]
 
 
+def claims_challenge_login_command(
+    challenge: dict[str, str],
+    context: Optional[dict[str, str]] = None,
+) -> list[str]:
+    command = [
+        "az",
+        "login",
+        "--tenant",
+        challenge["tenant"],
+        "--scope",
+        challenge["scope"],
+        "--claims-challenge",
+        challenge["claims_challenge"],
+    ]
+    if context and context["tenant"].lower() == challenge["tenant"].lower():
+        command.extend([
+            "--subscription",
+            context["subscription"],
+            "--skip-subscription-discovery",
+        ])
+    return command
+
+
 def azure_login_worker(job: Job) -> None:
     challenge: dict[str, str] = {}
+    challenge_context: dict[str, str] = {}
     discovered_context: dict[str, str] = {}
 
     context = cached_azure_context()
@@ -446,11 +470,15 @@ def azure_login_worker(job: Job) -> None:
         parsed = parse_claims_challenge_login(line)
         if parsed:
             challenge.update(parsed)
+            selected = cached_azure_context()
+            if selected and selected["tenant"].lower() == parsed["tenant"].lower():
+                challenge_context.update(selected)
             job.emit(
                 "auth_phase",
                 message=(
                     "Your organization requires one additional Microsoft sign-in "
-                    "to satisfy management-plane MFA. Complete the second browser tab."
+                    "to satisfy management-plane MFA. Complete the second browser tab; "
+                    "the app will then validate the selected subscription."
                 ),
             )
             job.emit(
@@ -489,16 +517,7 @@ def azure_login_worker(job: Job) -> None:
             return
         success, _ = run_process(
             job,
-            [
-                "az",
-                "login",
-                "--tenant",
-                challenge["tenant"],
-                "--scope",
-                challenge["scope"],
-                "--claims-challenge",
-                challenge["claims_challenge"],
-            ],
+            claims_challenge_login_command(challenge, challenge_context or None),
             emit_command=False,
         )
     elif discovered_context:
