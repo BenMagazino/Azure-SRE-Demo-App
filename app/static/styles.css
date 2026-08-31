@@ -13,10 +13,16 @@ button.secondary { color: #dbeafe; background: #203752; }
 button.danger { color: white; background: #c2413b; }
 a { color: #72bcff; }
 code { font-family: Consolas, monospace; }
+.button { display: inline-block; border-radius: 6px; padding: .7rem 1rem; background: #4ba3ff; color: #06101d; font-weight: 700; text-decoration: none; }
+.button.secondary { color: #dbeafe; background: #203752; }
 .shell { width: min(1000px, calc(100% - 2rem)); margin: 0 auto; padding: 3rem 0; }
 .eyebrow { color: #72bcff; font-size: .78rem; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; }
 h1 { margin: .35rem 0 .5rem; font-size: clamp(2rem, 4vw, 3.25rem); }
 header p, .panel p { color: #9fb0c4; }
+.diagnostics { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.25rem; padding: .8rem 1rem; border: 1px solid #28415f; border-radius: 8px; background: #0d1a2acc; }
+.diagnostics div { min-width: 0; }
+.diagnostics strong { display: block; margin-bottom: .25rem; color: #b9c9dc; }
+.diagnostics code { display: block; overflow: hidden; color: #8fa4bb; text-overflow: ellipsis; white-space: nowrap; }
 .steps { display: flex; gap: 1rem; flex-wrap: wrap; margin: 2rem 0 1rem; color: #60758e; }
 .steps .active { color: #72bcff; font-weight: 700; }
 .panel { border: 1px solid #28415f; background: #0d1a2aee; border-radius: 12px; padding: 1.5rem; box-shadow: 0 18px 50px #0006; }

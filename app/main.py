@@ -196,6 +196,7 @@ TOOLS = (
      "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
     ("git", "Git", ("--version",),
      "winget install --id Git.Git --exact --source winget "
+     "--scope user --silent --disable-interactivity "
      "--accept-source-agreements --accept-package-agreements",
      "https://git-scm.com/download/win", True),
 )
@@ -314,6 +315,9 @@ INSTALL_COMMANDS = {
         "--exact",
         "--source",
         "winget",
+        "--scope",
+        "user",
+        "--silent",
         "--accept-source-agreements",
         "--accept-package-agreements",
         "--disable-interactivity",
@@ -1481,6 +1485,34 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_diagnostic_log(self) -> None:
+        if LOG_FILE is None or not LOG_FILE.is_file():
+            self.send_json(
+                {"error": "The diagnostic log is not available."},
+                HTTPStatus.NOT_FOUND,
+            )
+            return
+        for handler in LOGGER.handlers:
+            handler.flush()
+        try:
+            data = LOG_FILE.read_bytes()
+        except OSError as error:
+            LOGGER.exception("Unable to read diagnostic log for download")
+            self.send_json(
+                {"error": str(error)},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="{LOG_FILE.name}"',
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         if length == 0:
@@ -1495,6 +1527,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/session":
             self.send_json({"token": SESSION_TOKEN})
+            return
+        if path == "/api/diagnostics":
+            self.send_json({
+                "path": str(LOG_FILE) if LOG_FILE else "",
+                "filename": LOG_FILE.name if LOG_FILE else "",
+            })
+            return
+        if path == "/api/diagnostics/download":
+            self.send_diagnostic_log()
             return
         if path == "/api/prerequisites":
             self.send_json([asdict(status) for status in prerequisite_statuses()])

@@ -46,6 +46,11 @@ claims challenges, and tokens are redacted.
 as `AzureSREAgentDemoLogs`. Logs therefore remain available in
 `sandbox-logs\AzureSREAgentDemo-*.log` after the Sandbox is closed.
 
+On a standard Windows or Hyper-V VM launch, logs are stored under
+`%LOCALAPPDATA%\AzureSREAgentDemo\logs`. The banner at the top of the application
+shows the exact active path and provides a **Download log** action in every
+environment.
+
 ## Build the Windows executable
 
 ```powershell

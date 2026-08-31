@@ -10,6 +10,7 @@ async function initialize() {
   const response = await fetch("/api/session");
   const session = await response.json();
   sessionToken = session.token;
+  await loadDiagnostics();
   await loadPrerequisites();
   await loadAuthStatus();
 }
@@ -40,6 +41,19 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   reportClientError(`Unhandled promise rejection: ${event.reason}`);
 });
+
+async function loadDiagnostics() {
+  try {
+    const response = await fetch("/api/diagnostics");
+    if (!response.ok) return;
+    const diagnostics = await response.json();
+    const path = document.querySelector("#diagnostic-path");
+    path.textContent = diagnostics.path || "Diagnostic log unavailable";
+    path.title = diagnostics.path || "";
+  } catch (error) {
+    reportClientError(`Unable to load diagnostic details: ${error}`);
+  }
+}
 
 function showPanel(id) {
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));

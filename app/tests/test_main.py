@@ -260,6 +260,12 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertIn("--source", command)
             self.assertIn("winget", command)
             self.assertIn("--disable-interactivity", command)
+        git_command = INSTALL_COMMANDS["git"]
+        self.assertIn("--silent", git_command)
+        self.assertEqual(
+            git_command[git_command.index("--scope") + 1],
+            "user",
+        )
 
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
