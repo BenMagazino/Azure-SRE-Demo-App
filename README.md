@@ -68,10 +68,13 @@ distribute the complete `dist\AzureSREAgentDemo` directory.
 
 1. Check Azure CLI, Azure Developer CLI, and Git.
 2. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
-3. Configure the Azure environment and region.
-4. Deploy the vendored starter lab.
-5. Run the Scenario 1 cart fault injection.
-6. Tear down the Azure environment.
+3. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
+   Azure CLI default is shown first, and cross-tenant selections are reauthenticated
+   with a tenant-scoped device-code flow when required.
+4. Configure the Azure environment and region.
+5. Deploy the vendored starter lab.
+6. Run the Scenario 1 cart fault injection.
+7. Tear down the Azure environment.
 
 All wizard steps are implemented in the Python backend. Deployment uses ACR Tasks
 to build Grubify remotely, so Docker Desktop and a local Grubify checkout are not

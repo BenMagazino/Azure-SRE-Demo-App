@@ -2,9 +2,16 @@ const prereqList = document.querySelector("#prereq-list");
 const continueButton = document.querySelector("#continue-to-auth");
 const installAllButton = document.querySelector("#install-all");
 const installAllProgress = document.querySelector("#install-all-progress");
+const azureContextCard = document.querySelector("#azure-context-card");
+const azureTenant = document.querySelector("#azure-tenant");
+const azureSubscription = document.querySelector("#azure-subscription");
+const azureContextStatus = document.querySelector("#azure-context-status");
+const applyAzureContextButton = document.querySelector("#apply-azure-context");
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
 let installInProgress = false;
+let azureContextCatalog = null;
+let azureContextApplied = false;
 
 async function initialize() {
   const response = await fetch("/api/session");
@@ -159,6 +166,131 @@ function showAuthComplete(device, button, kind, existingSession = false) {
   button.disabled = true;
 }
 
+function updateAuthenticationGate() {
+  document.querySelector("#continue-to-configure").disabled =
+    !Object.values(authStatus).every(Boolean) || !azureContextApplied;
+}
+
+function selectedAzureContext() {
+  if (!azureTenant.value || !azureSubscription.value) return null;
+  return {
+    tenant_id: azureTenant.value,
+    subscription_id: azureSubscription.value,
+  };
+}
+
+function azureOptionLabel(name, id) {
+  return name && name !== id ? `${name} (${id})` : id;
+}
+
+function populateSubscriptions(preferredSubscription = "") {
+  const tenant = azureContextCatalog?.tenants.find(
+    (item) => item.id === azureTenant.value
+  );
+  const subscriptions = tenant?.subscriptions || [];
+  azureSubscription.replaceChildren(...subscriptions.map((subscription) => {
+    const option = document.createElement("option");
+    option.value = subscription.id;
+    option.textContent = azureOptionLabel(subscription.name, subscription.id);
+    return option;
+  }));
+  if (subscriptions.some((item) => item.id === preferredSubscription)) {
+    azureSubscription.value = preferredSubscription;
+  }
+}
+
+function markAzureContextChanged() {
+  azureContextApplied = false;
+  azureContextStatus.className = "";
+  azureContextStatus.textContent = "Apply this selection before continuing.";
+  applyAzureContextButton.disabled = false;
+  applyAzureContextButton.textContent = "Use selected subscription";
+  updateAuthenticationGate();
+}
+
+async function loadAzureContexts() {
+  const response = await fetch("/api/azure-context", { cache: "no-store" });
+  const result = await response.json();
+  if (!response.ok) {
+    azureContextCatalog = null;
+    azureContextApplied = false;
+    azureContextCard.classList.toggle("hidden", !authStatus["azure-cli"]);
+    azureContextStatus.className = "warning";
+    azureContextStatus.textContent = result.error || "Unable to load Azure accounts.";
+    updateAuthenticationGate();
+    return;
+  }
+
+  azureContextCatalog = result;
+  azureContextCard.classList.remove("hidden");
+  azureTenant.replaceChildren(...result.tenants.map((tenant) => {
+    const option = document.createElement("option");
+    option.value = tenant.id;
+    option.textContent = azureOptionLabel(tenant.name, tenant.id);
+    return option;
+  }));
+
+  const active = result.active || {};
+  if (result.tenants.some((tenant) => tenant.id === active.tenant)) {
+    azureTenant.value = active.tenant;
+  }
+  populateSubscriptions(active.subscription || "");
+  const selected = selectedAzureContext();
+  azureContextApplied = Boolean(
+    selected
+    && selected.tenant_id === active.tenant
+    && selected.subscription_id === active.subscription
+    && authStatus["azure-cli"]
+  );
+  azureContextStatus.className = azureContextApplied ? "success" : "";
+  azureContextStatus.textContent = azureContextApplied
+    ? "Active and authenticated. This subscription will be used for deployment."
+    : "Choose and apply a subscription before continuing.";
+  applyAzureContextButton.disabled = azureContextApplied;
+  applyAzureContextButton.textContent = azureContextApplied
+    ? "Active subscription"
+    : "Use selected subscription";
+  updateAuthenticationGate();
+}
+
+async function applyAzureContext() {
+  const selected = selectedAzureContext();
+  if (!selected) return;
+  applyAzureContextButton.disabled = true;
+  azureContextStatus.className = "";
+  azureContextStatus.textContent = "Validating the selected subscription...";
+  try {
+    const response = await apiPost("/api/azure-context", selected);
+    const result = await response.json();
+    if (!response.ok) {
+      azureContextApplied = false;
+      azureContextStatus.className = "warning";
+      azureContextStatus.textContent = result.error || "Unable to apply the Azure context.";
+      if (result.requires_auth) {
+        authStatus["azure-cli"] = false;
+        const authButton = document.querySelector('[data-auth="azure-cli"]');
+        authButton.disabled = false;
+        authButton.textContent = "Authenticate selected tenant";
+      }
+      applyAzureContextButton.disabled = false;
+      updateAuthenticationGate();
+      return;
+    }
+    authStatus["azure-cli"] = true;
+    azureContextApplied = true;
+    azureContextStatus.className = "success";
+    azureContextStatus.textContent =
+      "Active and authenticated. This subscription will be used for deployment.";
+    applyAzureContextButton.textContent = "Active subscription";
+  } catch (error) {
+    azureContextApplied = false;
+    azureContextStatus.className = "warning";
+    azureContextStatus.textContent = `Unable to apply the Azure context: ${error}`;
+    applyAzureContextButton.disabled = false;
+  }
+  updateAuthenticationGate();
+}
+
 async function loadAuthStatus() {
   const response = await fetch("/api/auth/status");
   if (!response.ok) return;
@@ -170,8 +302,13 @@ async function loadAuthStatus() {
     const device = document.querySelector(`#${kind}-device`);
     showAuthComplete(device, button, kind, true);
   });
-  document.querySelector("#continue-to-configure").disabled =
-    !Object.values(authStatus).every(Boolean);
+  if (authStatus["azure-cli"]) {
+    await loadAzureContexts();
+  } else {
+    azureContextCard.classList.add("hidden");
+    azureContextApplied = false;
+  }
+  updateAuthenticationGate();
 }
 
 async function loadPrerequisites() {
@@ -352,6 +489,11 @@ async function startAuth(kind) {
   const log = document.querySelector(`#${kind}-log`);
   const device = document.querySelector(`#${kind}-device`);
   button.disabled = true;
+  if (kind === "azure-cli") {
+    authStatus[kind] = false;
+    azureContextApplied = false;
+    updateAuthenticationGate();
+  }
   device.classList.add("hidden");
   if (kind === "azure-cli") {
     log.textContent = "Starting secure Azure CLI device-code sign-in...\n";
@@ -367,7 +509,10 @@ async function startAuth(kind) {
   }
 
   try {
-    const response = await apiPost(`/api/auth/${kind}`);
+    const context = kind === "azure-cli" && !azureContextCard.classList.contains("hidden")
+      ? selectedAzureContext()
+      : undefined;
+    const response = await apiPost(`/api/auth/${kind}`, context);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start sign-in");
     const events = new EventSource(`/api/jobs/${result.job_id}/events`);
@@ -402,13 +547,19 @@ async function startAuth(kind) {
             ? "\nSign-in completed.\n"
             : `\nSign-in failed (exit ${event.exit_code}).\n`;
           authStatus[kind] = event.success;
-          document.querySelector("#continue-to-configure").disabled =
-            !Object.values(authStatus).every(Boolean);
           if (event.success) {
             showAuthComplete(device, button, kind);
+            if (kind === "azure-cli") {
+              void loadAzureContexts().catch((error) => {
+                azureContextStatus.className = "warning";
+                azureContextStatus.textContent = `Unable to load Azure accounts: ${error}`;
+                reportClientError(`Unable to load Azure accounts: ${error}`);
+              });
+            }
           } else {
             button.disabled = false;
           }
+          updateAuthenticationGate();
           events.close();
         }
       } catch (error) {
@@ -545,6 +696,18 @@ installAllButton.addEventListener("click", installAll);
 continueButton.addEventListener("click", () => showPanel("authentication"));
 document.querySelectorAll("[data-auth]").forEach((button) => {
   button.addEventListener("click", () => startAuth(button.dataset.auth));
+});
+azureTenant.addEventListener("change", () => {
+  populateSubscriptions();
+  markAzureContextChanged();
+});
+azureSubscription.addEventListener("change", markAzureContextChanged);
+applyAzureContextButton.addEventListener("click", applyAzureContext);
+document.querySelector("#refresh-azure-context").addEventListener("click", () => {
+  void loadAzureContexts().catch((error) => {
+    azureContextStatus.className = "warning";
+    azureContextStatus.textContent = `Unable to refresh Azure accounts: ${error}`;
+  });
 });
 document.querySelector("#continue-to-configure").addEventListener("click", () => showPanel("configuration"));
 document.querySelector("#configure-form").addEventListener("submit", configureEnvironment);

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260831.3">
+    <link rel="stylesheet" href="/styles.css?v=20260831.4">
   </head>
   <body>
     <main class="shell">
@@ -64,6 +64,29 @@
             <pre id="azd-log" class="log"></pre>
           </article>
         </div>
+        <section id="azure-context-card" class="context-card hidden" aria-labelledby="azure-context-heading">
+          <div class="context-heading">
+            <div>
+              <h3 id="azure-context-heading">Azure deployment context</h3>
+              <p>Choose the tenant and subscription where the demo will be deployed.</p>
+            </div>
+            <button id="refresh-azure-context" class="secondary" type="button">Refresh accounts</button>
+          </div>
+          <div class="context-grid">
+            <label>
+              Tenant
+              <select id="azure-tenant"></select>
+            </label>
+            <label>
+              Subscription
+              <select id="azure-subscription"></select>
+            </label>
+          </div>
+          <div class="context-actions">
+            <button id="apply-azure-context" type="button">Use selected subscription</button>
+            <p id="azure-context-status" aria-live="polite"></p>
+          </div>
+        </section>
         <button id="continue-to-configure" disabled>Continue to configuration</button>
       </section>
 
@@ -105,6 +128,6 @@
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260831.3"></script>
+    <script src="/app.js?v=20260831.4"></script>
   </body>
 </html>

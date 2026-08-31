@@ -54,6 +54,15 @@ header p, .panel p { color: #9fb0c4; }
 .auth-result-title { color: #86efac; font-size: 1.35rem; font-weight: 700; }
 .auth-result-title::before { content: "\2713\00a0"; }
 .device-card .auth-result-detail { margin: .4rem 0 0; color: #bbf7d0; }
+.context-card { margin: 1rem 0; padding: 1rem; border: 1px solid #36506d; border-radius: 8px; background: #102137; }
+.context-card h3, .context-card p { margin: 0; }
+.context-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.context-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 1rem 0; }
+.context-grid label { display: grid; gap: .4rem; color: #b9c9dc; }
+.context-actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.context-actions p { color: #9fb0c4; }
+.context-actions p.success { color: #86efac; }
+.context-actions p.warning { color: #fbbf24; }
 .form-grid { display: grid; gap: 1rem; max-width: 520px; }
 .form-grid label { display: grid; gap: .4rem; color: #b9c9dc; }
 input, select { width: 100%; padding: .75rem; border-radius: 6px; border: 1px solid #36506d; background: #08111f; color: #e8f0fa; }

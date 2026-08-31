@@ -7,9 +7,12 @@ from app.main import (
     INSTALL_ORDER,
     Job,
     ToolStatus,
+    activate_azure_context,
     authentication_statuses,
+    azure_context_is_available,
     azure_cli_management_authenticated,
     azure_login_worker,
+    build_azure_context_catalog,
     claims_challenge_login_command,
     command_version,
     http_json,
@@ -27,6 +30,13 @@ from app.main import (
     safe_log_payload,
     scoped_azure_login_command,
 )
+
+
+TENANT_A = "00000000-0000-0000-0000-000000000001"
+TENANT_B = "00000000-0000-0000-0000-000000000002"
+SUBSCRIPTION_A = "11111111-1111-1111-1111-111111111111"
+SUBSCRIPTION_B = "22222222-2222-2222-2222-222222222222"
+SUBSCRIPTION_C = "33333333-3333-3333-3333-333333333333"
 
 
 class DeviceCodeTests(unittest.TestCase):
@@ -269,6 +279,170 @@ class ClaimsChallengeTests(unittest.TestCase):
 
         self.assertEqual(run_capture.call_args_list[0].args[0], ["az", "logout"])
         self.assertEqual(run_process.call_args_list[0].args[1], command)
+
+
+class AzureContextTests(unittest.TestCase):
+    def test_groups_tenants_and_sorts_default_subscription_first(self) -> None:
+        accounts = [
+            {
+                "id": SUBSCRIPTION_A,
+                "name": "Alpha",
+                "tenantId": TENANT_A,
+                "tenantDisplayName": "Tenant A",
+                "isDefault": False,
+                "state": "Enabled",
+            },
+            {
+                "id": SUBSCRIPTION_C,
+                "name": "Charlie",
+                "tenantId": TENANT_B,
+                "tenantDisplayName": "Tenant B",
+                "isDefault": False,
+                "state": "Enabled",
+            },
+            {
+                "id": SUBSCRIPTION_B,
+                "name": "Beta",
+                "tenantId": TENANT_B,
+                "tenantDisplayName": "Tenant B",
+                "isDefault": True,
+                "state": "Enabled",
+            },
+        ]
+
+        catalog = build_azure_context_catalog(
+            accounts,
+            {"tenant": TENANT_B, "subscription": SUBSCRIPTION_B},
+        )
+
+        self.assertEqual(
+            [tenant["id"] for tenant in catalog["tenants"]],
+            [TENANT_B, TENANT_A],
+        )
+        self.assertEqual(
+            [
+                subscription["id"]
+                for subscription in catalog["tenants"][0]["subscriptions"]
+            ],
+            [SUBSCRIPTION_B, SUBSCRIPTION_C],
+        )
+        self.assertTrue(
+            catalog["tenants"][0]["subscriptions"][0]["is_default"]
+        )
+
+    def test_ignores_invalid_and_duplicate_subscription_records(self) -> None:
+        valid = {
+            "id": SUBSCRIPTION_A,
+            "name": "Alpha",
+            "tenantId": TENANT_A,
+            "tenantDefaultDomain": "tenant.example",
+            "isDefault": True,
+        }
+
+        catalog = build_azure_context_catalog([
+            valid,
+            valid.copy(),
+            {"id": "not-a-guid", "tenantId": TENANT_A},
+            "unexpected",
+        ])
+
+        self.assertEqual(len(catalog["tenants"]), 1)
+        self.assertEqual(len(catalog["tenants"][0]["subscriptions"]), 1)
+        self.assertEqual(catalog["tenants"][0]["name"], "tenant.example")
+        self.assertTrue(
+            azure_context_is_available(catalog, TENANT_A, SUBSCRIPTION_A)
+        )
+        self.assertFalse(
+            azure_context_is_available(catalog, TENANT_B, SUBSCRIPTION_A)
+        )
+
+    @patch("app.main.azure_cli_management_authenticated", return_value=True)
+    @patch("app.main.cached_azure_context")
+    @patch("app.main.run_capture")
+    @patch("app.main.azure_context_catalog")
+    def test_activates_and_verifies_selected_context(
+        self,
+        azure_context_catalog,
+        run_capture,
+        cached_azure_context,
+        azure_cli_management_authenticated,
+    ) -> None:
+        catalog = build_azure_context_catalog([{
+            "id": SUBSCRIPTION_A,
+            "name": "Alpha",
+            "tenantId": TENANT_A,
+            "isDefault": True,
+        }])
+        azure_context_catalog.return_value = catalog, ""
+        run_capture.return_value = True, ""
+        cached_azure_context.return_value = {
+            "tenant": TENANT_A,
+            "subscription": SUBSCRIPTION_A,
+        }
+
+        success, error, requires_auth, active = activate_azure_context(
+            TENANT_A,
+            SUBSCRIPTION_A,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(error, "")
+        self.assertFalse(requires_auth)
+        self.assertEqual(active["subscription"], SUBSCRIPTION_A)
+        self.assertEqual(
+            run_capture.call_args.args[0],
+            ["az", "account", "set", "--subscription", SUBSCRIPTION_A],
+        )
+
+    @patch("app.main.azure_cli_management_authenticated", return_value=False)
+    @patch("app.main.cached_azure_context")
+    @patch("app.main.run_capture")
+    @patch("app.main.azure_context_catalog")
+    def test_requests_scoped_auth_when_selected_tenant_needs_token(
+        self,
+        azure_context_catalog,
+        run_capture,
+        cached_azure_context,
+        azure_cli_management_authenticated,
+    ) -> None:
+        catalog = build_azure_context_catalog([{
+            "id": SUBSCRIPTION_A,
+            "name": "Alpha",
+            "tenantId": TENANT_A,
+            "isDefault": True,
+        }])
+        azure_context_catalog.return_value = catalog, ""
+        run_capture.return_value = True, ""
+        cached_azure_context.return_value = {
+            "tenant": TENANT_A,
+            "subscription": SUBSCRIPTION_A,
+        }
+
+        success, error, requires_auth, active = activate_azure_context(
+            TENANT_A,
+            SUBSCRIPTION_A,
+        )
+
+        self.assertFalse(success)
+        self.assertIn("additional device-code sign-in", error)
+        self.assertTrue(requires_auth)
+        self.assertEqual(active["tenant"], TENANT_A)
+
+    @patch("app.main.azure_context_catalog")
+    def test_rejects_invalid_context_ids_before_discovery(
+        self,
+        azure_context_catalog,
+    ) -> None:
+        success, error, requires_auth, active = activate_azure_context(
+            "not-a-tenant",
+            SUBSCRIPTION_A,
+        )
+
+        self.assertFalse(success)
+        self.assertIn("valid GUIDs", error)
+        self.assertFalse(requires_auth)
+        self.assertIsNone(active)
+        azure_context_catalog.assert_not_called()
 
 
 class PrerequisiteTests(unittest.TestCase):

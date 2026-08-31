@@ -45,6 +45,9 @@ AUTH_RETRY_GRACE_SECONDS = 4.0
 SESSION_TOKEN = uuid.uuid4().hex
 LOGGER = logging.getLogger("AzureSREAgentDemo")
 LOG_FILE: Optional[Path] = None
+AZURE_GUID_PATTERN = re.compile(
+    r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+)
 
 
 def redact_text(value: str) -> str:
@@ -265,6 +268,7 @@ class Job:
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 INSTALL_LOCK = threading.Lock()
+AZURE_CONTEXT_LOCK = threading.Lock()
 
 INSTALL_COMMANDS = {
     "winget": [
@@ -658,10 +662,174 @@ def cached_azure_context() -> Optional[dict[str, str]]:
         return None
     tenant = str(context.get("tenant", ""))
     subscription = str(context.get("subscription", ""))
-    guid = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
-    if not re.fullmatch(guid, tenant) or not re.fullmatch(guid, subscription):
+    if not is_azure_guid(tenant) or not is_azure_guid(subscription):
         return None
     return {"tenant": tenant, "subscription": subscription}
+
+
+def is_azure_guid(value: str) -> bool:
+    return AZURE_GUID_PATTERN.fullmatch(value) is not None
+
+
+def build_azure_context_catalog(
+    accounts: list[Any],
+    active: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    tenants: dict[str, dict[str, Any]] = {}
+    for account in accounts:
+        if not isinstance(account, dict):
+            continue
+        tenant_id = str(account.get("tenantId") or "").strip()
+        subscription_id = str(account.get("id") or "").strip()
+        if not is_azure_guid(tenant_id) or not is_azure_guid(subscription_id):
+            continue
+
+        tenant_name = str(
+            account.get("tenantDisplayName")
+            or account.get("tenantDefaultDomain")
+            or tenant_id
+        ).strip()
+        tenant = tenants.setdefault(
+            tenant_id.lower(),
+            {
+                "id": tenant_id,
+                "name": tenant_name,
+                "subscriptions": [],
+            },
+        )
+        if tenant["name"] == tenant["id"] and tenant_name != tenant_id:
+            tenant["name"] = tenant_name
+        if any(
+            subscription["id"].lower() == subscription_id.lower()
+            for subscription in tenant["subscriptions"]
+        ):
+            continue
+        tenant["subscriptions"].append({
+            "id": subscription_id,
+            "name": str(account.get("name") or subscription_id).strip(),
+            "is_default": account.get("isDefault") is True,
+            "state": str(account.get("state") or ""),
+        })
+
+    active_tenant = (active or {}).get("tenant", "").lower()
+    active_subscription = (active or {}).get("subscription", "").lower()
+    catalog_tenants = list(tenants.values())
+    for tenant in catalog_tenants:
+        tenant["subscriptions"].sort(
+            key=lambda subscription: (
+                not subscription["is_default"],
+                subscription["id"].lower() != active_subscription,
+                subscription["name"].casefold(),
+                subscription["id"].lower(),
+            )
+        )
+    catalog_tenants.sort(
+        key=lambda tenant: (
+            not any(
+                subscription["is_default"]
+                for subscription in tenant["subscriptions"]
+            ),
+            tenant["id"].lower() != active_tenant,
+            tenant["name"].casefold(),
+            tenant["id"].lower(),
+        )
+    )
+    return {
+        "tenants": catalog_tenants,
+        "active": active,
+    }
+
+
+def azure_context_catalog() -> tuple[Optional[dict[str, Any]], str]:
+    success, output = run_capture([
+        "az",
+        "account",
+        "list",
+        "--query",
+        (
+            "[].{id:id,name:name,tenantId:tenantId,"
+            "tenantDisplayName:tenantDisplayName,"
+            "tenantDefaultDomain:tenantDefaultDomain,"
+            "isDefault:isDefault,state:state}"
+        ),
+        "--output",
+        "json",
+        "--only-show-errors",
+    ])
+    if not success:
+        return None, output or "Unable to list Azure subscriptions."
+    try:
+        accounts = json.loads(output)
+    except json.JSONDecodeError:
+        return None, "Azure CLI returned an invalid subscription list."
+    if not isinstance(accounts, list):
+        return None, "Azure CLI returned an unexpected subscription list."
+
+    catalog = build_azure_context_catalog(accounts, cached_azure_context())
+    if not catalog["tenants"]:
+        return None, "No Azure subscriptions were discovered for this sign-in."
+    return catalog, ""
+
+
+def azure_context_is_available(
+    catalog: dict[str, Any],
+    tenant_id: str,
+    subscription_id: str,
+) -> bool:
+    return any(
+        tenant["id"].lower() == tenant_id.lower()
+        and any(
+            subscription["id"].lower() == subscription_id.lower()
+            for subscription in tenant["subscriptions"]
+        )
+        for tenant in catalog["tenants"]
+    )
+
+
+def activate_azure_context(
+    tenant_id: str,
+    subscription_id: str,
+) -> tuple[bool, str, bool, Optional[dict[str, str]]]:
+    if not is_azure_guid(tenant_id) or not is_azure_guid(subscription_id):
+        return False, "Tenant and subscription IDs must be valid GUIDs.", False, None
+
+    with AZURE_CONTEXT_LOCK:
+        catalog, error = azure_context_catalog()
+        if catalog is None:
+            return False, error, False, None
+        if not azure_context_is_available(catalog, tenant_id, subscription_id):
+            return (
+                False,
+                "The selected subscription was not discovered under that tenant.",
+                False,
+                None,
+            )
+
+        selected, output = run_capture([
+            "az",
+            "account",
+            "set",
+            "--subscription",
+            subscription_id,
+        ])
+        if not selected:
+            return False, output or "Unable to select the Azure subscription.", False, None
+
+        active = cached_azure_context()
+        if (
+            active is None
+            or active["tenant"].lower() != tenant_id.lower()
+            or active["subscription"].lower() != subscription_id.lower()
+        ):
+            return False, "Azure CLI did not activate the requested tenant and subscription.", False, active
+        if not azure_cli_management_authenticated():
+            return (
+                False,
+                "The selected tenant requires an additional device-code sign-in.",
+                True,
+                active,
+            )
+        return True, "", False, active
 
 
 def scoped_azure_login_command(context: dict[str, str]) -> list[str]:
@@ -741,7 +909,8 @@ def azure_login_worker(job: Job) -> None:
         job.id,
         stale_context is not None,
     )
-    if stale_context:
+    scoped_request = "--tenant" in job.command
+    if stale_context and not scoped_request:
         job.emit(
             "output",
             line="Clearing the previous Azure CLI account selection...",
@@ -1572,6 +1741,13 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/auth/status":
             self.send_json(authentication_statuses())
             return
+        if path == "/api/azure-context":
+            catalog, error = azure_context_catalog()
+            if catalog is None:
+                self.send_json({"error": error}, HTTPStatus.CONFLICT)
+                return
+            self.send_json(catalog)
+            return
         if path == "/api/summary":
             environment = load_state().get("environment")
             if not environment:
@@ -1626,19 +1802,57 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             self.send_json({"logged": True})
             return
-        commands = {
-            "/api/auth/azure-cli": [
-                "az",
-                "login",
-                "--scope",
-                "https://management.core.windows.net//.default",
-                "--use-device-code",
-            ],
-            "/api/auth/azd": ["azd", "auth", "login", "--use-device-code"],
-        }
-        if path in commands:
-            worker = azure_login_worker if path == "/api/auth/azure-cli" else None
-            job = create_job(commands[path], worker=worker)
+        if path == "/api/auth/azure-cli":
+            try:
+                payload = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            tenant_id = str(payload.get("tenant_id", "")).strip()
+            subscription_id = str(payload.get("subscription_id", "")).strip()
+            if tenant_id or subscription_id:
+                if not is_azure_guid(tenant_id) or not is_azure_guid(subscription_id):
+                    self.send_json(
+                        {"error": "Tenant and subscription IDs must be valid GUIDs."},
+                        HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                catalog, error = azure_context_catalog()
+                if (
+                    catalog is None
+                    or not azure_context_is_available(
+                        catalog,
+                        tenant_id,
+                        subscription_id,
+                    )
+                ):
+                    self.send_json(
+                        {
+                            "error": error
+                            or "The selected Azure context is not available."
+                        },
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
+                command = scoped_azure_login_command({
+                    "tenant": tenant_id,
+                    "subscription": subscription_id,
+                })
+            else:
+                command = [
+                    "az",
+                    "login",
+                    "--scope",
+                    "https://management.core.windows.net//.default",
+                    "--use-device-code",
+                ]
+            job = create_job(command, worker=azure_login_worker)
+            self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
+            return
+        if path == "/api/auth/azd":
+            job = create_job(
+                ["azd", "auth", "login", "--use-device-code"],
+            )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path == "/api/install/all":
@@ -1670,6 +1884,35 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.send_json({"error": "Unable to open the default browser"}, HTTPStatus.INTERNAL_SERVER_ERROR)
                 return
             self.send_json({"opened": True})
+            return
+        if path == "/api/azure-context":
+            try:
+                payload = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            tenant_id = str(payload.get("tenant_id", "")).strip()
+            subscription_id = str(payload.get("subscription_id", "")).strip()
+            success, error, requires_auth, active = activate_azure_context(
+                tenant_id,
+                subscription_id,
+            )
+            if not success:
+                status = (
+                    HTTPStatus.UNAUTHORIZED
+                    if requires_auth
+                    else HTTPStatus.CONFLICT
+                )
+                self.send_json(
+                    {
+                        "error": error,
+                        "requires_auth": requires_auth,
+                        "active": active,
+                    },
+                    status,
+                )
+                return
+            self.send_json({"active": active})
             return
         if path == "/api/configure":
             self.configure_environment()
@@ -1704,20 +1947,24 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": "Unsupported Azure region."}, HTTPStatus.BAD_REQUEST)
             return
 
-        success, subscription_id = run_capture(
-            ["az", "account", "show", "--query", "id", "-o", "tsv"]
-        )
-        if not success or not subscription_id:
+        context = cached_azure_context()
+        if context is None or not azure_cli_management_authenticated():
             self.send_json(
-                {"error": "Sign in with Azure CLI before configuring the environment."},
+                {
+                    "error": (
+                        "Select and authenticate an Azure tenant and subscription "
+                        "before configuring the environment."
+                    )
+                },
                 HTTPStatus.CONFLICT,
             )
             return
+        subscription_id = context["subscription"]
 
         new_command = [
             "azd", "env", "new", environment,
             "--location", location,
-            "--subscription", subscription_id.strip(),
+            "--subscription", subscription_id,
             "--no-prompt",
         ]
         created, output = run_capture(new_command, VENDOR_DIR)
@@ -1734,7 +1981,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         settings = (
             ("AZURE_LOCATION", location),
-            ("AZURE_SUBSCRIPTION_ID", subscription_id.strip()),
+            ("AZURE_SUBSCRIPTION_ID", subscription_id),
         )
         for key, value in settings:
             saved, save_output = run_capture(
@@ -1751,7 +1998,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         state = {
             "environment": environment,
             "location": location,
-            "subscription_id": subscription_id.strip(),
+            "tenant_id": context["tenant"],
+            "subscription_id": subscription_id,
         }
         save_state(state)
         self.send_json(state)
