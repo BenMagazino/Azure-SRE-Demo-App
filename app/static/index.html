@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260830.3">
+    <link rel="stylesheet" href="/styles.css?v=20260831.1">
   </head>
   <body>
     <main class="shell">
@@ -40,7 +40,7 @@
 
       <section id="authentication" class="panel hidden">
         <h2>Sign in to Azure</h2>
-        <p>Azure CLI opens Microsoft sign-in directly so organizational MFA can run. Conditional Access may require a second tenant-scoped browser pass.</p>
+        <p>Azure CLI and Azure Developer CLI use device-code sign-in. Codes are copied and opened automatically; no localhost OAuth callback is required.</p>
         <div class="auth-grid">
           <article>
             <h3>Azure CLI</h3>
@@ -96,6 +96,6 @@
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260830.3"></script>
+    <script src="/app.js?v=20260831.1"></script>
   </body>
 </html>

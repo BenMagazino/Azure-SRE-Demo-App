@@ -90,6 +90,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--tenant", command)
         self.assertIn("--subscription", command)
         self.assertIn("--skip-subscription-discovery", command)
+        self.assertIn("--use-device-code", command)
 
     def test_scopes_claims_retry_to_selected_subscription(self) -> None:
         command = claims_challenge_login_command(
@@ -107,6 +108,7 @@ class ClaimsChallengeTests(unittest.TestCase):
         self.assertIn("--claims-challenge", command)
         self.assertIn("--subscription", command)
         self.assertIn("--skip-subscription-discovery", command)
+        self.assertIn("--use-device-code", command)
 
     @patch("app.main.run_capture")
     @patch("app.main.run_process")
@@ -148,7 +150,7 @@ class ClaimsChallengeTests(unittest.TestCase):
             if event["type"] == "auth_phase"
         ]
         self.assertEqual(len(phases), 1)
-        self.assertIn("one additional Microsoft sign-in", phases[0]["message"])
+        self.assertIn("one additional device-code sign-in", phases[0]["message"])
         retry_command = run_process.call_args_list[-1].args[1]
         self.assertIn("--skip-subscription-discovery", retry_command)
 
@@ -318,30 +320,6 @@ class ProcessTests(unittest.TestCase):
         statuses = authentication_statuses()
 
         self.assertEqual(statuses, {"azure-cli": False, "azd": True})
-
-    @patch("app.main.subprocess.Popen")
-    @patch("app.main.find_edge")
-    @patch("app.main.is_windows_sandbox")
-    @patch("app.main.shutil.which")
-    def test_azure_login_launches_edge_directly_in_sandbox(
-        self,
-        which,
-        is_windows_sandbox,
-        find_edge,
-        popen,
-    ) -> None:
-        edge = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
-        which.return_value = r"C:\Tools\az.cmd"
-        is_windows_sandbox.return_value = True
-        find_edge.return_value = edge
-        popen.return_value.stdout = []
-        popen.return_value.wait.return_value = 0
-
-        success, _ = run_process(Job(), ["az", "login"])
-
-        self.assertTrue(success)
-        environment = popen.call_args.kwargs["env"]
-        self.assertEqual(environment["BROWSER"], f'"{edge}" %s')
 
     @patch("app.main.subprocess.Popen")
     @patch("app.main.find_edge")

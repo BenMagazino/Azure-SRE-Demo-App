@@ -129,7 +129,7 @@ function showAuthComplete(device, button, kind, existingSession = false) {
       : "An existing Azure Developer CLI session is ready. azd stores its sign-in separately from Azure CLI.";
   } else {
     detail.textContent = kind === "azure-cli"
-      ? "Azure CLI authentication completed successfully. You can close any Microsoft login success or documentation tabs."
+      ? "Azure CLI authentication completed successfully."
       : "Azure Developer CLI authentication completed successfully.";
   }
   device.replaceChildren(title, detail);
@@ -336,12 +336,12 @@ async function startAuth(kind) {
   button.disabled = true;
   device.classList.add("hidden");
   if (kind === "azure-cli") {
-    log.textContent = "Starting secure Azure CLI sign-in...\n";
+    log.textContent = "Starting secure Azure CLI device-code sign-in...\n";
     const notice = document.createElement("p");
     notice.className = "device-notice";
     notice.setAttribute("role", "status");
     notice.textContent =
-      "Complete the Microsoft sign-in page in your browser. Conditional Access may require one additional browser pass for management-plane MFA.";
+      "Waiting for an Azure CLI device code. It will be copied and opened automatically. Conditional Access may require one additional code.";
     device.replaceChildren(notice);
     device.classList.remove("hidden");
   } else {

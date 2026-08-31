@@ -350,11 +350,9 @@ def run_process(
         return False, ""
     environment = None
     if command[:2] == ["az", "login"]:
-        # Use browser authentication so work accounts absent from Windows WAM remain selectable.
+        # Disable WAM so explicit device-code login can use any organizational account.
         environment = os.environ.copy()
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
-        if is_windows_sandbox() and (edge := find_edge()):
-            environment["BROWSER"] = f'"{edge}" %s'
     try:
         process = subprocess.Popen(
             process_command,
@@ -461,6 +459,7 @@ def scoped_azure_login_command(context: dict[str, str]) -> list[str]:
         "--subscription",
         context["subscription"],
         "--skip-subscription-discovery",
+        "--use-device-code",
     ]
 
 
@@ -477,6 +476,7 @@ def claims_challenge_login_command(
         challenge["scope"],
         "--claims-challenge",
         challenge["claims_challenge"],
+        "--use-device-code",
     ]
     if context and context["tenant"].lower() == challenge["tenant"].lower():
         command.extend([
@@ -554,8 +554,8 @@ def azure_login_worker(job: Job) -> None:
                 job.emit(
                     "auth_phase",
                     message=(
-                        "Your organization requires one additional Microsoft sign-in "
-                        "to satisfy management-plane MFA. Complete the second browser tab; "
+                        "Your organization requires one additional device-code sign-in "
+                        "to satisfy management-plane MFA. Complete the second code; "
                         "the app will then validate the selected subscription."
                     ),
                 )
@@ -571,7 +571,7 @@ def azure_login_worker(job: Job) -> None:
                     job.emit(
                         "auth_phase",
                         message=(
-                            "Your organization requires one additional Microsoft sign-in "
+                            "Your organization requires one additional device-code sign-in "
                             "to finish authentication for the selected subscription."
                         ),
                     )
@@ -1254,6 +1254,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "login",
                 "--scope",
                 "https://management.core.windows.net//.default",
+                "--use-device-code",
             ],
             "/api/auth/azd": ["azd", "auth", "login", "--use-device-code"],
         }
