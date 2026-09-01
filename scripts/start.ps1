@@ -16,7 +16,7 @@ function Find-PythonRuntime {
 
   $commonPaths = @(
     (Join-Path $env:LOCALAPPDATA "Programs\Python\Launcher\py.exe"),
-    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe")
+    (Join-Path $env:LOCALAPPDATA "Programs\Python\Python314\python.exe")
   )
   foreach ($path in $commonPaths) {
     if (Test-Path $path) {
@@ -30,11 +30,16 @@ function Find-PythonRuntime {
     if ($LASTEXITCODE -ne 0) {
       continue
     }
-    $match = [regex]::Match($versionText, "Python\s+(\d+)\.(\d+)")
+    $match = [regex]::Match($versionText, "Python\s+(\d+)\.(\d+)\.(\d+)")
     if ($match.Success) {
       $major = [int]$match.Groups[1].Value
       $minor = [int]$match.Groups[2].Value
-      if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 9)) {
+      $patch = [int]$match.Groups[3].Value
+      if (
+        $major -gt 3 -or
+        ($major -eq 3 -and $minor -gt 14) -or
+        ($major -eq 3 -and $minor -eq 14 -and $patch -ge 7)
+      ) {
         $candidate | Add-Member -NotePropertyName Version -NotePropertyValue $versionText
         return $candidate
       }
@@ -49,21 +54,24 @@ if (-not $runtime) {
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if (-not $winget) {
     throw @"
-Python 3.9 or newer is required, and WinGet is unavailable.
+Python 3.14.7 or newer is required, and WinGet is unavailable.
 Install Python from https://www.python.org/downloads/windows/ and rerun this script.
 "@
   }
 
-  Write-Host "Python 3.9 or newer was not found." -ForegroundColor Yellow
-  Write-Host "Installing Python 3.12 for the current user..."
+  Write-Host "Python 3.14.7 or newer was not found." -ForegroundColor Yellow
+  Write-Host "Installing or updating Python 3.14.7 for the current user..."
   & $winget.Source install `
-    --id Python.Python.3.12 `
+    --id Python.Python.3.14 `
     --exact `
+    --version 3.14.7 `
     --scope user `
+    --force `
+    --disable-interactivity `
     --accept-package-agreements `
     --accept-source-agreements
   if ($LASTEXITCODE -ne 0) {
-    throw "WinGet was unable to install Python 3.12."
+    throw "WinGet was unable to install or update Python 3.14.7."
   }
 
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -71,7 +79,7 @@ Install Python from https://www.python.org/downloads/windows/ and rerun this scr
   $env:PATH = "$userPath;$machinePath"
   $runtime = Find-PythonRuntime
   if (-not $runtime) {
-    throw "Python was installed but could not be started. Open a new PowerShell window and rerun this script."
+    throw "Python was updated but could not be started. Open a new PowerShell window and rerun this script."
   }
 }
 

@@ -350,11 +350,11 @@ async function loadPrerequisites() {
     const response = await fetch("/api/prerequisites");
     const tools = await response.json();
     prereqList.replaceChildren(...tools.map(renderTool));
-    const missingRequired = tools
+    const unresolvedRequired = tools
       .filter((tool) => tool.required)
-      .filter((tool) => !tool.installed);
-    continueButton.disabled = missingRequired.length > 0;
-    installAllButton.classList.toggle("hidden", missingRequired.length === 0);
+      .filter((tool) => !tool.ready);
+    continueButton.disabled = unresolvedRequired.length > 0;
+    installAllButton.classList.toggle("hidden", unresolvedRequired.length === 0);
     setInstallerButtonsDisabled(installInProgress);
   } catch (error) {
     prereqList.textContent = `Unable to check prerequisites: ${error}`;
@@ -370,19 +370,27 @@ function setInstallerButtonsDisabled(disabled) {
 
 function renderTool(tool) {
   const row = document.createElement("div");
-  row.className = `tool ${tool.installed ? "ok" : tool.required ? "" : "optional"}`;
+  row.className = `tool ${tool.ready ? "ok" : tool.state}`;
   row.dataset.toolId = tool.id;
   const status = document.createElement("span");
   status.className = "status";
-  status.textContent = tool.installed ? "OK" : tool.required ? "!" : "i";
+  status.textContent = tool.ready ? "OK" : tool.state === "outdated" ? "UP" : "!";
   const name = document.createElement("strong");
   name.textContent = tool.name;
   const version = document.createElement("span");
   version.className = "version";
-  version.textContent = tool.version || (tool.required ? "Missing" : "Missing (recommended)");
+  if (tool.ready) {
+    version.textContent = `${tool.version} (minimum ${tool.minimum_version})`;
+  } else if (tool.state === "outdated") {
+    version.textContent = `${tool.version} installed; requires ${tool.minimum_version}+`;
+  } else if (tool.state === "invalid") {
+    version.textContent = `Version check failed; requires ${tool.minimum_version}+`;
+  } else {
+    version.textContent = `Missing; requires ${tool.minimum_version}+`;
+  }
   row.append(status, name, version);
 
-  if (!tool.installed) {
+  if (!tool.ready) {
     const install = document.createElement("div");
     install.className = "install";
     const code = document.createElement("code");
@@ -396,7 +404,11 @@ function renderTool(tool) {
     });
     const installButton = document.createElement("button");
     installButton.className = "install-tool";
-    installButton.textContent = "Install";
+    installButton.textContent = {
+      missing: "Install",
+      outdated: "Update",
+      invalid: "Repair",
+    }[tool.state];
     installButton.addEventListener("click", () => installTool(tool, installButton, progress));
     const link = document.createElement("a");
     link.href = tool.install_url;
@@ -418,11 +430,11 @@ function updateToolStatus(event) {
 
   const status = row.querySelector(".status");
   const version = row.querySelector(".version");
-  row.classList.remove("ok", "optional", "installing", "failed");
-  if (event.status === "installing") {
+  row.classList.remove("ok", "missing", "outdated", "invalid", "installing", "failed");
+  if (["installing", "updating", "repairing"].includes(event.status)) {
     row.classList.add("installing");
     status.textContent = "...";
-    version.textContent = "Installing...";
+    version.textContent = `${event.status[0].toUpperCase()}${event.status.slice(1)}...`;
     return;
   }
   if (event.status === "ready") {
@@ -443,7 +455,7 @@ async function refreshInstalledToolTiles() {
     if (!response.ok) return;
     const tools = await response.json();
     tools
-      .filter((tool) => tool.installed)
+      .filter((tool) => tool.ready)
       .forEach((tool) => updateToolStatus({
         tool_id: tool.id,
         status: "ready",
@@ -455,10 +467,15 @@ async function refreshInstalledToolTiles() {
 }
 
 async function installTool(tool, button, progress) {
+  const action = {
+    missing: "installation",
+    outdated: "update",
+    invalid: "repair",
+  }[tool.state];
   installInProgress = true;
   setInstallerButtonsDisabled(true);
-  button.textContent = "Installing...";
-  progress.textContent = `Starting ${tool.name} installation...\n`;
+  button.textContent = `${action[0].toUpperCase()}${action.slice(1)} in progress...`;
+  progress.textContent = `Starting ${tool.name} ${action}...\n`;
   progress.classList.remove("hidden");
   try {
     const response = await apiPost(`/api/install/${tool.id}`);
@@ -468,26 +485,26 @@ async function installTool(tool, button, progress) {
       onEvent: updateToolStatus,
     });
     if (completed.success) {
-      progress.textContent += "\nInstallation completed. Re-checking prerequisites...\n";
+      progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} completed. Re-checking prerequisites...\n`;
       installInProgress = false;
       await loadPrerequisites();
       return;
     }
-    progress.textContent += "\nInstallation failed. Review the output above or use the fallback command.\n";
+    progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} failed. Review the output above or use the fallback command.\n`;
   } catch (error) {
-    progress.textContent += `\nInstallation failed: ${error}\n`;
+    progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} failed: ${error}\n`;
   }
   installInProgress = false;
-  button.textContent = "Retry install";
+  button.textContent = `Retry ${action}`;
   setInstallerButtonsDisabled(false);
 }
 
 async function installAll() {
   installInProgress = true;
   setInstallerButtonsDisabled(true);
-  installAllButton.textContent = "Installing dependencies...";
+  installAllButton.textContent = "Updating dependencies...";
   installAllProgress.textContent =
-    "Installing missing dependencies sequentially. This may take several minutes...\n";
+    "Installing, repairing, or updating dependencies sequentially. This may take several minutes...\n";
   installAllProgress.classList.remove("hidden");
   try {
     const response = await apiPost("/api/install/all");
@@ -506,13 +523,13 @@ async function installAll() {
     }
     await refreshInstalledToolTiles();
     installAllProgress.textContent += completed.success
-      ? "\nDependency installation completed. Re-checking prerequisites...\n"
-      : "\nSome dependencies could not be installed. Review the output above and retry them individually.\n";
+      ? "\nDependency updates completed. Re-checking prerequisites...\n"
+      : "\nSome dependencies could not be installed or updated. Review the output above and retry them individually.\n";
   } catch (error) {
-    installAllProgress.textContent += `\nDependency installation failed: ${error}\n`;
+    installAllProgress.textContent += `\nDependency update failed: ${error}\n`;
   }
   installInProgress = false;
-  installAllButton.textContent = "Install all dependencies";
+  installAllButton.textContent = "Resolve all dependencies";
   await loadPrerequisites();
 }
 

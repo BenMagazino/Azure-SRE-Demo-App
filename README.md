@@ -4,21 +4,25 @@ A Windows-first local web application that reduces the setup friction for
 Microsoft's Azure SRE Agent starter lab. Version 1 focuses only on Scenario 1:
 deploy Grubify, trigger its cart memory leak, and observe the SRE Agent investigate.
 
-The app intentionally excludes GitHub integration and does not require Git Bash,
-Rust, MSYS2, MinGW, Node.js, or npm.
+The app intentionally excludes GitHub integration and does not require Git,
+Git Bash, Rust, MSYS2, MinGW, Node.js, or npm.
 
 ## Requirements
 
 - Windows 11
 - An Azure subscription where you can create resources and role assignments
 
-The portable Windows package includes Python. Python 3.9 or newer is required
+The portable Windows package includes Python. Python 3.14.7 or newer is required
 only when running directly from the source repository.
 
-Azure CLI, Azure Developer CLI, and Git are checked inside the app. If any are
-missing, the prerequisite screen can install them sequentially with one action.
-Individual install, copy-command, and official-documentation fallbacks remain
-available.
+The app requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0 or
+newer. WinGet 1.29.280 or newer is the recommended installer. The prerequisite
+screen verifies these versions and can install, repair, or update tools
+sequentially with one action. Individual remediation, copy-command, and
+official-documentation fallbacks remain available.
+
+These minimums were reviewed on September 1, 2026 and should be refreshed by
+December 1, 2026 to preserve the three-month tool-age policy.
 
 ## First run
 
@@ -30,11 +34,11 @@ From PowerShell in the repository root:
 
 The launcher uses a process-scoped PowerShell execution-policy bypass so it also
 works in Windows Sandbox without changing the machine policy. The start script
-checks for Python 3.9 or newer, installs Python 3.12 with WinGet when necessary,
-and launches the local application. It does not create a virtual environment or
-download Python packages because the application uses only the Python standard
-library. If both Python and WinGet are unavailable, it provides the direct
-Python installation URL.
+checks for Python 3.14.7 or newer, installs or updates Python 3.14.7 with WinGet
+when necessary, and launches the local application. It does not create a virtual
+environment or download Python packages because the application uses only the
+Python standard library. If both Python and WinGet are unavailable, it provides
+the direct Python installation URL.
 
 The browser opens automatically at <http://127.0.0.1:8765>.
 
@@ -73,7 +77,7 @@ folder must remain together.
 
 ## Current wizard flow
 
-1. Check Azure CLI, Azure Developer CLI, and Git.
+1. Verify the minimum Azure CLI, Azure Developer CLI, and WinGet versions.
 2. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
 3. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
    Azure CLI default is shown first, and cross-tenant selections are reauthenticated

@@ -204,6 +204,9 @@ class ToolStatus:
     name: str
     installed: bool
     version: Optional[str]
+    minimum_version: str
+    ready: bool
+    state: str
     install_command: str
     install_url: str
     required: bool
@@ -214,24 +217,14 @@ TOOLS = (
         "winget",
         "WinGet (recommended installer)",
         ("--version",),
-        "Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery; "
-        "Repair-WinGetPackageManager -Force -Latest",
+        "1.29.280",
         "https://learn.microsoft.com/windows/package-manager/winget/",
         False,
     ),
-    ("az", "Azure CLI", ("version",),
-     "winget install --id Microsoft.AzureCLI --exact --source winget "
-     "--accept-source-agreements --accept-package-agreements",
+    ("az", "Azure CLI", ("version",), "2.88.0",
      "https://learn.microsoft.com/cli/azure/install-azure-cli-windows", True),
-    ("azd", "Azure Developer CLI", ("version",),
-     "winget install --id Microsoft.Azd --exact --source winget "
-     "--accept-source-agreements --accept-package-agreements",
+    ("azd", "Azure Developer CLI", ("version",), "1.28.0",
      "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
-    ("git", "Git", ("--version",),
-     "winget install --id Git.Git --exact --source winget "
-     "--scope user --silent --disable-interactivity "
-     "--accept-source-agreements --accept-package-agreements",
-     "https://git-scm.com/download/win", True),
 )
 
 
@@ -341,35 +334,69 @@ INSTALL_COMMANDS = {
         "--accept-package-agreements",
         "--disable-interactivity",
     ],
-    "git": [
+}
+UPDATE_COMMANDS = {
+    "winget": INSTALL_COMMANDS["winget"],
+    "az": [
         "winget",
-        "install",
+        "upgrade",
         "--id",
-        "Git.Git",
+        "Microsoft.AzureCLI",
         "--exact",
         "--source",
         "winget",
-        "--scope",
-        "user",
-        "--silent",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ],
+    "azd": [
+        "winget",
+        "upgrade",
+        "--id",
+        "Microsoft.Azd",
+        "--exact",
+        "--source",
+        "winget",
         "--accept-source-agreements",
         "--accept-package-agreements",
         "--disable-interactivity",
     ],
 }
+REPAIR_COMMANDS = {
+    "winget": INSTALL_COMMANDS["winget"],
+    "az": [*INSTALL_COMMANDS["az"], "--force"],
+    "azd": [*INSTALL_COMMANDS["azd"], "--force"],
+}
 INSTALL_ORDER = tuple(INSTALL_COMMANDS)
+MINIMUM_VERSIONS = {
+    tool_id: minimum_version
+    for tool_id, _name, _args, minimum_version, _install_url, _required in TOOLS
+}
+
+
+def parse_version(value: str) -> Optional[tuple[int, int, int]]:
+    match = re.search(r"(?<!\d)(\d+)\.(\d+)(?:\.(\d+))?", value)
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())
+
+
+def version_meets_minimum(version: str, minimum_version: str) -> bool:
+    parsed = parse_version(version)
+    minimum = parse_version(minimum_version)
+    return parsed is not None and minimum is not None and parsed >= minimum
 
 
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
-    resolved = shutil.which(executable)
-    if resolved is None:
+    command = resolved_process_command([executable, *args])
+    if command is None:
         LOGGER.debug("Prerequisite executable not found: %s", executable)
         return None
-    LOGGER.debug("Checking prerequisite: %s resolved=%s", executable, resolved)
+    LOGGER.debug("Checking prerequisite: %s resolved=%s", executable, command[0])
     started = time.monotonic()
     try:
         result = subprocess.run(
-            [resolved, *args],
+            command,
             capture_output=True,
             text=True,
             timeout=15,
@@ -381,8 +408,23 @@ def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
         return None
 
     text = f"{result.stdout}\n{result.stderr}"
-    match = re.search(r"\d+\.\d+(?:\.\d+)?", text)
-    version = match.group(0) if match else "installed"
+    if result.returncode != 0:
+        LOGGER.warning(
+            "Prerequisite version check failed: %s exit_code=%s output=%s",
+            executable,
+            result.returncode,
+            redact_text(text.strip()),
+        )
+        return None
+    parsed = parse_version(text)
+    if parsed is None:
+        LOGGER.warning(
+            "Prerequisite version check returned no version: %s output=%s",
+            executable,
+            redact_text(text.strip()),
+        )
+        return None
+    version = ".".join(str(part) for part in parsed)
     LOGGER.debug(
         "Prerequisite check complete: %s exit_code=%s version=%s duration=%.3fs",
         executable,
@@ -395,22 +437,43 @@ def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
 
 def prerequisite_statuses() -> list[ToolStatus]:
     refresh_process_path()
-    statuses = [
-        ToolStatus(
-            id=tool_id,
-            name=name,
-            installed=(version := command_version(tool_id, args)) is not None,
-            version=version,
-            install_command=install_command,
-            install_url=install_url,
-            required=required,
+    statuses = []
+    for tool_id, name, args, minimum_version, install_url, required in TOOLS:
+        installed = shutil.which(tool_id) is not None
+        version = command_version(tool_id, args) if installed else None
+        if not installed:
+            state = "missing"
+        elif version is None:
+            state = "invalid"
+        elif version_meets_minimum(version, minimum_version):
+            state = "ready"
+        else:
+            state = "outdated"
+        remediation = {
+            "missing": INSTALL_COMMANDS,
+            "invalid": REPAIR_COMMANDS,
+            "outdated": UPDATE_COMMANDS,
+            "ready": INSTALL_COMMANDS,
+        }[state][tool_id]
+        statuses.append(
+            ToolStatus(
+                id=tool_id,
+                name=name,
+                installed=installed,
+                version=version,
+                minimum_version=minimum_version,
+                ready=state == "ready",
+                state=state,
+                install_command=subprocess.list2cmdline(remediation),
+                install_url=install_url,
+                required=required,
+            )
         )
-        for tool_id, name, args, install_command, install_url, required in TOOLS
-    ]
     LOGGER.info(
         "Prerequisite status: %s",
         ", ".join(
-            f"{tool.id}={'ready ' + str(tool.version) if tool.installed else 'missing'}"
+            f"{tool.id}={tool.state} version={tool.version or 'unknown'} "
+            f"minimum={tool.minimum_version}"
             for tool in statuses
         ),
     )
@@ -460,16 +523,38 @@ def refresh_process_path() -> None:
 
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
-    command = INSTALL_COMMANDS[tool_id]
-    job.emit("tool_status", tool_id=tool_id, status="installing")
-    job.emit("output", line=f"Installing {tool_id}...")
+    current = next(item for item in prerequisite_statuses() if item.id == tool_id)
+    if current.ready:
+        job.emit(
+            "tool_status",
+            tool_id=tool_id,
+            status="ready",
+            version=current.version,
+        )
+        job.emit("output", line=f"{current.name} {current.version} is already ready.")
+        return True
+
+    action, command = {
+        "missing": ("Installing", INSTALL_COMMANDS[tool_id]),
+        "outdated": ("Updating", UPDATE_COMMANDS[tool_id]),
+        "invalid": ("Repairing", REPAIR_COMMANDS[tool_id]),
+    }[current.state]
+    event_status = action.removesuffix("ing").lower() + "ing"
+    job.emit("tool_status", tool_id=tool_id, status=event_status)
+    job.emit(
+        "output",
+        line=(
+            f"{action} {current.name}; required version is "
+            f"{current.minimum_version} or newer..."
+        ),
+    )
     success, _ = run_process(job, command)
     if not success:
         job.emit("tool_status", tool_id=tool_id, status="failed")
         return False
 
     tool = next(item for item in prerequisite_statuses() if item.id == tool_id)
-    if tool.installed:
+    if tool.ready:
         job.emit(
             "tool_status",
             tool_id=tool_id,
@@ -483,8 +568,10 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
     job.emit(
         "error",
         message=(
-            "The installer completed, but the tool was not detected. "
-            "Restart the app and re-check prerequisites."
+            f"The update completed, but {tool.name} "
+            f"{tool.version or 'could not report a version'} does not meet "
+            f"the required minimum {tool.minimum_version}. "
+            "Restart the app and retry the update."
         ),
     )
     return False
@@ -493,7 +580,16 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
 def install_tool_worker(job: Job, tool_id: str) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=job.command)
-        success = run_tool_install(job, tool_id)
+        success = True
+        statuses = {tool.id: tool for tool in prerequisite_statuses()}
+        if tool_id != "winget" and not statuses["winget"].ready:
+            job.emit(
+                "output",
+                line="WinGet must be current before it can update other dependencies.",
+            )
+            success = run_tool_install(job, "winget")
+        if success:
+            success = run_tool_install(job, tool_id)
         job.emit("done", success=success, exit_code=0 if success else 1)
 
 
@@ -501,18 +597,18 @@ def install_all_worker(job: Job) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=[])
         statuses = {tool.id: tool for tool in prerequisite_statuses()}
-        missing_required = [
+        unresolved_required = [
             tool_id
             for tool_id in INSTALL_ORDER
-            if statuses[tool_id].required and not statuses[tool_id].installed
+            if statuses[tool_id].required and not statuses[tool_id].ready
         ]
-        if not missing_required:
-            job.emit("output", line="All required dependencies are already installed.")
+        if not unresolved_required:
+            job.emit("output", line="All required dependencies meet their minimum versions.")
             job.emit("done", success=True, exit_code=0)
             return
 
-        install_ids = missing_required
-        if not statuses["winget"].installed:
+        install_ids = unresolved_required
+        if not statuses["winget"].ready:
             install_ids = ["winget", *install_ids]
 
         failures = []
@@ -527,7 +623,7 @@ def install_all_worker(job: Job) -> None:
                     break
 
         ready = all(
-            tool.installed
+            tool.ready
             for tool in prerequisite_statuses()
             if tool.required
         )
@@ -536,7 +632,7 @@ def install_all_worker(job: Job) -> None:
         elif failures:
             job.emit(
                 "error",
-                message=f"Installation failed for: {', '.join(failures)}.",
+                message=f"Installation or update failed for: {', '.join(failures)}.",
             )
         job.emit("done", success=ready, exit_code=0 if ready else 1)
 
@@ -2174,12 +2270,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path.startswith("/api/install/"):
             tool_id = path.removeprefix("/api/install/").strip("/")
-            command = INSTALL_COMMANDS.get(tool_id)
-            if not command:
+            if tool_id not in INSTALL_COMMANDS:
                 self.send_json({"error": "Unsupported installer"}, HTTPStatus.NOT_FOUND)
                 return
             job = create_job(
-                command,
                 worker=lambda current_job: install_tool_worker(current_job, tool_id),
             )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)

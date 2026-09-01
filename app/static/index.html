@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260831.6">
+    <link rel="stylesheet" href="/styles.css?v=20260901.1">
   </head>
   <body>
     <main class="shell">
@@ -35,10 +35,10 @@
         <div class="panel-heading">
           <div>
             <h2>Prerequisites</h2>
-            <p>The app checks your machine and can install any missing dependencies for you.</p>
+            <p>The app verifies minimum tool versions and can install, repair, or update dependencies for you.</p>
           </div>
           <div class="prereq-actions">
-            <button id="install-all" class="hidden">Install all dependencies</button>
+            <button id="install-all" class="hidden">Resolve all dependencies</button>
             <button id="refresh-prereqs" class="secondary">Re-check</button>
           </div>
         </div>
@@ -148,6 +148,6 @@
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260831.6"></script>
+    <script src="/app.js?v=20260901.1"></script>
   </body>
 </html>

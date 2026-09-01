@@ -6,6 +6,9 @@ from unittest.mock import MagicMock, patch
 from app.main import (
     INSTALL_COMMANDS,
     INSTALL_ORDER,
+    MINIMUM_VERSIONS,
+    REPAIR_COMMANDS,
+    UPDATE_COMMANDS,
     Job,
     SRE_AGENT_REGIONS,
     STATIC_DIR,
@@ -40,12 +43,14 @@ from app.main import (
     resolved_process_command,
     run_capture,
     run_process,
+    run_tool_install,
     safe_log_payload,
     scoped_azure_login_command,
     should_open_browser,
     teardown_worker,
     upsert_response_plan,
     wait_for_request_metrics,
+    version_meets_minimum,
 )
 
 
@@ -491,37 +496,77 @@ class AzureContextTests(unittest.TestCase):
 class PrerequisiteTests(unittest.TestCase):
     @patch("app.main.refresh_process_path")
     @patch("app.main.command_version")
+    @patch("app.main.shutil.which", return_value=r"C:\Tools\tool.exe")
     def test_reports_each_configured_tool(
         self,
+        which,
         command_version,
         refresh_process_path,
     ) -> None:
-        command_version.return_value = "1.2.3"
+        versions = {
+            "winget": "1.29.290",
+            "az": "2.90.0",
+            "azd": "1.32.0",
+        }
+        command_version.side_effect = lambda executable, _args: versions[executable]
         statuses = prerequisite_statuses()
         refresh_process_path.assert_called_once_with()
-        self.assertEqual([item.id for item in statuses], ["winget", "az", "azd", "git"])
+        self.assertEqual([item.id for item in statuses], ["winget", "az", "azd"])
         self.assertTrue(all(item.installed for item in statuses))
+        self.assertTrue(all(item.ready for item in statuses))
+        self.assertTrue(all(item.state == "ready" for item in statuses))
         self.assertFalse(statuses[0].required)
         self.assertTrue(all(item.required for item in statuses[1:]))
-        for item in statuses[1:]:
-            self.assertIn("--source winget", item.install_command)
-            self.assertIn("--accept-source-agreements", item.install_command)
-            self.assertIn("--accept-package-agreements", item.install_command)
+        self.assertEqual(
+            MINIMUM_VERSIONS,
+            {"winget": "1.29.280", "az": "2.88.0", "azd": "1.28.0"},
+        )
+        which.assert_called()
 
     def test_install_commands_are_allowlisted_and_noninteractive(self) -> None:
-        self.assertEqual(set(INSTALL_COMMANDS), {"winget", "az", "azd", "git"})
-        self.assertEqual(INSTALL_ORDER, ("winget", "az", "azd", "git"))
-        for tool_id in ("az", "azd", "git"):
-            command = INSTALL_COMMANDS[tool_id]
-            self.assertIn("--source", command)
-            self.assertIn("winget", command)
-            self.assertIn("--disable-interactivity", command)
-        git_command = INSTALL_COMMANDS["git"]
-        self.assertIn("--silent", git_command)
-        self.assertEqual(
-            git_command[git_command.index("--scope") + 1],
-            "user",
-        )
+        expected = {"winget", "az", "azd"}
+        self.assertEqual(set(INSTALL_COMMANDS), expected)
+        self.assertEqual(set(UPDATE_COMMANDS), expected)
+        self.assertEqual(set(REPAIR_COMMANDS), expected)
+        self.assertEqual(INSTALL_ORDER, ("winget", "az", "azd"))
+        for commands in (INSTALL_COMMANDS, UPDATE_COMMANDS, REPAIR_COMMANDS):
+            for tool_id in ("az", "azd"):
+                command = commands[tool_id]
+                self.assertIn("--source", command)
+                self.assertIn("winget", command)
+                self.assertIn("--disable-interactivity", command)
+        self.assertEqual(UPDATE_COMMANDS["az"][1], "upgrade")
+        self.assertEqual(UPDATE_COMMANDS["azd"][1], "upgrade")
+        self.assertIn("--force", REPAIR_COMMANDS["az"])
+        self.assertIn("--force", REPAIR_COMMANDS["azd"])
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.command_version")
+    @patch("app.main.shutil.which", return_value=r"C:\Tools\tool.exe")
+    def test_marks_old_versions_outdated(
+        self,
+        _which,
+        command_version,
+        _refresh_process_path,
+    ) -> None:
+        command_version.side_effect = lambda executable, _args: {
+            "winget": "1.29.279",
+            "az": "2.87.0",
+            "azd": "1.27.1",
+        }[executable]
+
+        statuses = prerequisite_statuses()
+
+        self.assertTrue(all(item.installed for item in statuses))
+        self.assertTrue(all(not item.ready for item in statuses))
+        self.assertTrue(all(item.state == "outdated" for item in statuses))
+        self.assertTrue(all("upgrade" in item.install_command for item in statuses[1:]))
+
+    def test_compares_normalized_semantic_versions(self) -> None:
+        self.assertTrue(version_meets_minimum("2.88.0", "2.88.0"))
+        self.assertTrue(version_meets_minimum("2.90.1", "2.88.0"))
+        self.assertFalse(version_meets_minimum("2.87.9", "2.88.0"))
+        self.assertFalse(version_meets_minimum("installed", "2.88.0"))
 
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
@@ -539,6 +584,9 @@ class PrerequisiteTests(unittest.TestCase):
                     name=tool_id,
                     installed=tool_id in installed,
                     version="1.0" if tool_id in installed else None,
+                    minimum_version=MINIMUM_VERSIONS[tool_id],
+                    ready=tool_id in installed,
+                    state="ready" if tool_id in installed else "missing",
                     install_command="",
                     install_url="",
                     required=tool_id != "winget",
@@ -583,13 +631,66 @@ class PrerequisiteTests(unittest.TestCase):
         )
         self.assertTrue(events[-1]["success"])
 
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.prerequisite_statuses")
+    def test_updates_an_outdated_tool(
+        self,
+        prerequisite_statuses,
+        run_process,
+    ) -> None:
+        outdated = ToolStatus(
+            id="az",
+            name="Azure CLI",
+            installed=True,
+            version="2.87.0",
+            minimum_version="2.88.0",
+            ready=False,
+            state="outdated",
+            install_command="",
+            install_url="",
+            required=True,
+        )
+        ready = ToolStatus(
+            id="az",
+            name="Azure CLI",
+            installed=True,
+            version="2.90.0",
+            minimum_version="2.88.0",
+            ready=True,
+            state="ready",
+            install_command="",
+            install_url="",
+            required=True,
+        )
+        prerequisite_statuses.side_effect = [[outdated], [ready]]
+        job = Job()
+
+        self.assertTrue(run_tool_install(job, "az"))
+
+        run_process.assert_called_once_with(job, UPDATE_COMMANDS["az"])
+        events = list(job.events.queue)
+        self.assertEqual(events[0]["status"], "updating")
+        self.assertEqual(events[-2]["status"], "ready")
+
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")
     def test_runs_resolved_windows_command(self, which, run) -> None:
         which.return_value = r"C:\Tools\az.cmd"
-        run.return_value = MagicMock(stdout='{"azure-cli":"2.89.1"}', stderr="")
+        run.return_value = MagicMock(
+            stdout='{"azure-cli":"2.89.1"}',
+            stderr="",
+            returncode=0,
+        )
         self.assertEqual(command_version("az", ("version",)), "2.89.1")
         self.assertEqual(run.call_args.args[0][0], r"C:\Tools\az.cmd")
+
+    @patch("app.main.subprocess.run")
+    @patch("app.main.shutil.which", return_value=r"C:\Tools\az.cmd")
+    def test_rejects_failed_or_unparseable_version_commands(self, _which, run) -> None:
+        run.return_value = MagicMock(stdout="", stderr="broken", returncode=1)
+        self.assertIsNone(command_version("az", ("version",)))
+        run.return_value = MagicMock(stdout="installed", stderr="", returncode=0)
+        self.assertIsNone(command_version("az", ("version",)))
 
 
 class ProcessTests(unittest.TestCase):

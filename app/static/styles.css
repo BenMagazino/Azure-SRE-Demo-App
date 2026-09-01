@@ -35,7 +35,8 @@ header p, .panel p { color: #9fb0c4; }
 .tool-list { display: grid; gap: .75rem; margin: 1.25rem 0; }
 .tool { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .8rem; padding: 1rem; background: #122337; border-radius: 8px; border-left: 4px solid #d97706; }
 .tool.ok { border-left-color: #22c55e; }
-.tool.optional { border-left-color: #4ba3ff; }
+.tool.outdated { border-left-color: #f59e0b; }
+.tool.invalid, .tool.missing { border-left-color: #ef4444; }
 .tool.installing { border-left-color: #4ba3ff; background: #15304d; }
 .tool.failed { border-left-color: #ef4444; }
 .tool .status { font-size: 1.25rem; }
