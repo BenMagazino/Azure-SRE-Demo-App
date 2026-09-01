@@ -34,6 +34,7 @@ from app.main import (
     run_process,
     safe_log_payload,
     scoped_azure_login_command,
+    should_open_browser,
     teardown_worker,
 )
 
@@ -582,6 +583,14 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    @patch.dict("os.environ", {"AZURE_SRE_DEMO_NO_BROWSER": "true"})
+    def test_can_disable_automatic_browser_launch(self) -> None:
+        self.assertFalse(should_open_browser())
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_opens_browser_by_default(self) -> None:
+        self.assertTrue(should_open_browser())
+
     @patch("app.main.open_browser_url", return_value=True)
     @patch("app.main.subprocess.Popen")
     @patch("app.main.resolved_process_command")

@@ -13,13 +13,45 @@ let installInProgress = false;
 let azureContextCatalog = null;
 let azureContextApplied = false;
 
+async function loadSessionToken() {
+  const retryDelays = [0, 250, 500, 1000];
+  let lastError = new Error("Local application API did not respond.");
+  for (const delay of retryDelays) {
+    if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    try {
+      const response = await fetch("/api/session", { cache: "no-store" });
+      const contentType = response.headers.get("Content-Type") || "";
+      if (!response.ok || !contentType.includes("application/json")) {
+        throw new Error(
+          `/api/session returned HTTP ${response.status} with ${contentType || "unknown content"}`
+        );
+      }
+      const session = await response.json();
+      if (typeof session.token !== "string" || !session.token) {
+        throw new Error("/api/session returned an invalid session token.");
+      }
+      return session.token;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Local application API was not ready: ${lastError.message}`);
+}
+
 async function initialize() {
-  const response = await fetch("/api/session");
-  const session = await response.json();
-  sessionToken = session.token;
+  sessionToken = await loadSessionToken();
   await loadDiagnostics();
   await loadPrerequisites();
   await loadAuthStatus();
+}
+
+async function recheckApplication() {
+  if (!sessionToken) {
+    prereqList.textContent = "Reconnecting to the local application...";
+    await initialize();
+    return;
+  }
+  await loadPrerequisites();
 }
 
 function apiPost(path, body) {
@@ -718,7 +750,11 @@ async function runDemoAction(path, confirmation) {
   }
 }
 
-document.querySelector("#refresh-prereqs").addEventListener("click", loadPrerequisites);
+document.querySelector("#refresh-prereqs").addEventListener("click", () => {
+  void recheckApplication().catch((error) => {
+    prereqList.textContent = `Unable to reconnect to the app: ${error}`;
+  });
+});
 installAllButton.addEventListener("click", installAll);
 continueButton.addEventListener("click", () => showPanel("authentication"));
 document.querySelectorAll("[data-auth]").forEach((button) => {

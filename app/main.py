@@ -1152,6 +1152,14 @@ def open_browser_url(url: str) -> bool:
         return False
 
 
+def should_open_browser() -> bool:
+    return os.environ.get("AZURE_SRE_DEMO_NO_BROWSER", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def create_job(
     command: Optional[list[str]] = None,
     worker: Optional[Any] = None,
@@ -2164,9 +2172,12 @@ def main() -> None:
     url = f"http://{HOST}:{PORT}"
     LOGGER.info("SRE Agent onboarding wizard ready: %s", url)
     LOGGER.info("Diagnostic log: %s", log_file)
-    browser_timer = threading.Timer(0.6, lambda: open_browser_url(url))
-    browser_timer.name = "browser-launch"
-    browser_timer.start()
+    if should_open_browser():
+        browser_timer = threading.Timer(0.6, lambda: open_browser_url(url))
+        browser_timer.name = "browser-launch"
+        browser_timer.start()
+    else:
+        LOGGER.info("Automatic browser launch disabled by environment")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
