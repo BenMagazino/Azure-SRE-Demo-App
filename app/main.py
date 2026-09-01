@@ -1632,6 +1632,37 @@ def post_provision(job: Job, environment: str) -> bool:
     return False
 
 
+def restore_container_baseline(job: Job, environment: str) -> bool:
+    values = azd_values(environment)
+    required = "AZURE_RESOURCE_GROUP", "CONTAINER_APP_NAME", "FRONTEND_APP_NAME"
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        job.emit("output", line=f"Missing azd outputs: {', '.join(missing)}")
+        return False
+
+    resource_group = values["AZURE_RESOURCE_GROUP"]
+    baselines = (
+        (values["CONTAINER_APP_NAME"], "0.5", "1Gi"),
+        (values["FRONTEND_APP_NAME"], "0.25", "0.5Gi"),
+    )
+    job.emit("step", name="Restoring Container App CPU and memory baselines")
+    for app_name, cpu, memory in baselines:
+        success, _ = run_process(
+            job,
+            [
+                "az", "containerapp", "update",
+                "--name", app_name,
+                "--resource-group", resource_group,
+                "--cpu", cpu,
+                "--memory", memory,
+                "--output", "none",
+            ],
+        )
+        if not success:
+            return False
+    return True
+
+
 def reconcile_demo(job: Job, restoring: bool = False) -> None:
     state = load_state()
     environment = state.get("environment")
@@ -1676,6 +1707,8 @@ def reconcile_demo(job: Job, restoring: bool = False) -> None:
         ["azd", "up", "-e", environment, "--no-prompt"],
         VENDOR_DIR,
     )
+    if success and restoring:
+        success = restore_container_baseline(job, environment)
     if success:
         success = post_provision(job, environment)
     if success:

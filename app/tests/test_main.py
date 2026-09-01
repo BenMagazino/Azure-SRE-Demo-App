@@ -29,6 +29,7 @@ from app.main import (
     response_plan_payload,
     response_plan_status_is_retryable,
     restore_baseline_worker,
+    restore_container_baseline,
     resolved_process_command,
     run_capture,
     run_process,
@@ -815,12 +816,14 @@ class ResponsePlanTests(unittest.TestCase):
 class DeploymentRecoveryTests(unittest.TestCase):
     @patch("app.main.save_state")
     @patch("app.main.post_provision", return_value=True)
+    @patch("app.main.restore_container_baseline", return_value=True)
     @patch("app.main.run_process", return_value=(True, ""))
     @patch("app.main.load_state")
     def test_restore_reapplies_declared_baseline_and_post_provisioning(
         self,
         load_state,
         run_process,
+        restore_container_baseline,
         post_provision,
         save_state,
     ) -> None:
@@ -846,6 +849,7 @@ class DeploymentRecoveryTests(unittest.TestCase):
                 ["azd", "up", "-e", "sre-lab", "--no-prompt"],
             ],
         )
+        restore_container_baseline.assert_called_once_with(job, "sre-lab")
         post_provision.assert_called_once_with(job, "sre-lab")
         save_state.assert_called_once_with({
             "environment": "sre-lab",
@@ -853,6 +857,44 @@ class DeploymentRecoveryTests(unittest.TestCase):
         })
         done = list(job.events.queue)[-1]
         self.assertTrue(done["success"])
+
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.azd_values")
+    def test_restore_container_baseline_enforces_bicep_resources(
+        self,
+        azd_values,
+        run_process,
+    ) -> None:
+        azd_values.return_value = {
+            "AZURE_RESOURCE_GROUP": "rg-sre-lab",
+            "CONTAINER_APP_NAME": "api-app",
+            "FRONTEND_APP_NAME": "frontend-app",
+        }
+        job = Job()
+
+        self.assertTrue(restore_container_baseline(job, "sre-lab"))
+
+        self.assertEqual(
+            [call.args[1] for call in run_process.call_args_list],
+            [
+                [
+                    "az", "containerapp", "update",
+                    "--name", "api-app",
+                    "--resource-group", "rg-sre-lab",
+                    "--cpu", "0.5",
+                    "--memory", "1Gi",
+                    "--output", "none",
+                ],
+                [
+                    "az", "containerapp", "update",
+                    "--name", "frontend-app",
+                    "--resource-group", "rg-sre-lab",
+                    "--cpu", "0.25",
+                    "--memory", "0.5Gi",
+                    "--output", "none",
+                ],
+            ],
+        )
 
     @patch("app.main.save_state")
     @patch("app.main.post_provision", return_value=True)
