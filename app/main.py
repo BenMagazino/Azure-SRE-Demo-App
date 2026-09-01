@@ -13,6 +13,7 @@ import time
 import uuid
 import webbrowser
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1776,8 +1777,72 @@ def memory_pressure_observed(
     )
 
 
+def request_metrics_have_data(raw_metrics: str) -> bool:
+    try:
+        payload = json.loads(raw_metrics)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    for metric in payload.get("value", []):
+        for timeseries in metric.get("timeseries", []):
+            for sample in timeseries.get("data", []):
+                total = sample.get("total")
+                if isinstance(total, (int, float)) and total > 0:
+                    return True
+    return False
+
+
+def wait_for_request_metrics(
+    job: Job,
+    app_url: str,
+    resource_id: str,
+    attempts: int = 24,
+    delay_seconds: float = 15,
+) -> bool:
+    start_time = (
+        datetime.now(timezone.utc) - timedelta(minutes=15)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    metric_command = [
+        "az", "monitor", "metrics", "list",
+        "--resource", resource_id,
+        "--metric", "Requests",
+        "--interval", "PT1M",
+        "--start-time", start_time,
+        "--aggregation", "Total",
+        "--output", "json",
+    ]
+    success, output = run_capture(metric_command)
+    if success and request_metrics_have_data(output):
+        return True
+
+    job.emit("step", name="Waiting for Azure Monitor request metrics")
+    for attempt in range(1, attempts + 1):
+        probe = Request(
+            f"{app_url}/api/cart/monitor-probe-{uuid.uuid4().hex[:8]}",
+            method="GET",
+        )
+        try:
+            with urlopen(probe, timeout=15) as response:
+                if response.status != HTTPStatus.OK:
+                    return False
+        except (HTTPError, URLError, TimeoutError):
+            return False
+
+        time.sleep(delay_seconds)
+        success, output = run_capture(metric_command)
+        if success and request_metrics_have_data(output):
+            job.emit("output", line="Azure Monitor request metrics are ready.")
+            return True
+        if attempt % 4 == 0:
+            job.emit(
+                "output",
+                line=f"Still waiting for request metrics ({attempt}/{attempts})...",
+            )
+    return False
+
+
 def break_cart_worker(job: Job) -> None:
-    environment = load_state().get("environment")
+    state = load_state()
+    environment = state.get("environment")
     values = azd_values(environment) if environment else {}
     app_url = values.get("CONTAINER_APP_URL", "").rstrip("/")
     if not app_url:
@@ -1786,6 +1851,28 @@ def break_cart_worker(job: Job) -> None:
         return
 
     job.emit("started", command=["POST", f"{app_url}/api/cart/demo-user/items"])
+    subscription_id = state.get("subscription_id", "")
+    resource_group = values.get("AZURE_RESOURCE_GROUP", "")
+    app_name = values.get("CONTAINER_APP_NAME", "")
+    if not subscription_id or not resource_group or not app_name:
+        job.emit("error", message="The deployed Container App identity is unavailable.")
+        job.emit("done", success=False, exit_code=None)
+        return
+    resource_id = (
+        f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        f"/providers/Microsoft.App/containerApps/{app_name}"
+    )
+    if not wait_for_request_metrics(job, app_url, resource_id):
+        job.emit(
+            "error",
+            message=(
+                "Azure Monitor request metrics are not ready. Break Cart was "
+                "not started because its alert could not be observed reliably."
+            ),
+        )
+        job.emit("done", success=False, exit_code=1)
+        return
+
     successes = 0
     errors = 0
     consecutive_service_failures = 0

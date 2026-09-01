@@ -32,6 +32,7 @@ from app.main import (
     prerequisite_statuses,
     redact_command,
     redact_text,
+    request_metrics_have_data,
     response_plan_payload,
     response_plan_status_is_retryable,
     restore_baseline_worker,
@@ -44,6 +45,7 @@ from app.main import (
     should_open_browser,
     teardown_worker,
     upsert_response_plan,
+    wait_for_request_metrics,
 )
 
 
@@ -976,19 +978,61 @@ class BreakCartTests(unittest.TestCase):
     def test_memory_pressure_accepts_allocation_threshold(self) -> None:
         self.assertTrue(memory_pressure_observed(75, 0))
 
+    def test_detects_request_metric_data(self) -> None:
+        self.assertTrue(request_metrics_have_data(
+            '{"value":[{"timeseries":[{"data":[{"total":0},{"total":1}]}]}]}'
+        ))
+        self.assertFalse(request_metrics_have_data(
+            '{"value":[{"timeseries":[{"data":[{"total":0}]}]}]}'
+        ))
+        self.assertFalse(request_metrics_have_data("not-json"))
+
     @patch("app.main.time.sleep")
     @patch("app.main.urlopen")
+    @patch("app.main.run_capture")
+    def test_waits_for_a_probe_to_appear_in_request_metrics(
+        self,
+        run_capture,
+        urlopen,
+        _sleep,
+    ) -> None:
+        empty = '{"value":[{"timeseries":[{"data":[{"total":0}]}]}]}'
+        ready = '{"value":[{"timeseries":[{"data":[{"total":1}]}]}]}'
+        run_capture.side_effect = [(True, empty), (True, ready)]
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        urlopen.return_value = response
+
+        self.assertTrue(wait_for_request_metrics(
+            Job(),
+            "https://example.test",
+            "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/api",
+            attempts=1,
+            delay_seconds=0,
+        ))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.urlopen")
+    @patch("app.main.wait_for_request_metrics", return_value=True)
     @patch("app.main.azd_values")
     @patch("app.main.load_state")
     def test_break_cart_succeeds_when_service_stops_after_allocations(
         self,
         load_state,
         azd_values,
+        _wait_for_request_metrics,
         urlopen,
         _sleep,
     ) -> None:
-        load_state.return_value = {"environment": "sre-lab"}
-        azd_values.return_value = {"CONTAINER_APP_URL": "https://example.test"}
+        load_state.return_value = {
+            "environment": "sre-lab",
+            "subscription_id": "sub",
+        }
+        azd_values.return_value = {
+            "CONTAINER_APP_URL": "https://example.test",
+            "AZURE_RESOURCE_GROUP": "rg-sre-lab",
+            "CONTAINER_APP_NAME": "api-app",
+        }
         successful_response = MagicMock()
         successful_response.__enter__.return_value.status = 201
         urlopen.side_effect = (
