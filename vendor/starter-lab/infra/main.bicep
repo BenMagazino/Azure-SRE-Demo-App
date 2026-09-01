@@ -4,7 +4,26 @@ targetScope = 'subscription'
 param environmentName string
 
 @description('Primary location for all resources')
-@allowed(['swedencentral', 'eastus2', 'australiaeast'])
+@allowed([
+  'australiaeast'
+  'canadacentral'
+  'centralus'
+  'eastasia'
+  'eastus2'
+  'francecentral'
+  'italynorth'
+  'japaneast'
+  'koreacentral'
+  'northcentralus'
+  'southafricanorth'
+  'southeastasia'
+  'spaincentral'
+  'swedencentral'
+  'uksouth'
+  'westcentralus'
+  'westus2'
+  'westus3'
+])
 param location string = 'eastus2'
 
 @description('GitHub Personal Access Token (optional - enables GitHub integration)')

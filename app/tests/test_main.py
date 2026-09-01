@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -6,7 +7,10 @@ from app.main import (
     INSTALL_COMMANDS,
     INSTALL_ORDER,
     Job,
+    SRE_AGENT_REGIONS,
+    STATIC_DIR,
     ToolStatus,
+    VENDOR_DIR,
     activate_azure_context,
     authentication_statuses,
     azd_login_command,
@@ -1010,6 +1014,54 @@ class BreakCartTests(unittest.TestCase):
         self.assertEqual(done["successes"], 73)
         self.assertEqual(done["errors"], 127)
         self.assertEqual(done["max_consecutive_service_failures"], 127)
+
+
+class RegionConfigurationTests(unittest.TestCase):
+    EXPECTED_REGIONS = frozenset({
+        "australiaeast",
+        "canadacentral",
+        "centralus",
+        "eastasia",
+        "eastus2",
+        "francecentral",
+        "italynorth",
+        "japaneast",
+        "koreacentral",
+        "northcentralus",
+        "southafricanorth",
+        "southeastasia",
+        "spaincentral",
+        "swedencentral",
+        "uksouth",
+        "westcentralus",
+        "westus2",
+        "westus3",
+    })
+
+    def test_regions_match_microsoft_learn_supported_list(self) -> None:
+        self.assertEqual(SRE_AGENT_REGIONS, self.EXPECTED_REGIONS)
+
+    def test_region_dropdown_matches_backend_validation(self) -> None:
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        select = re.search(
+            r'<select id="azure-location">(.*?)</select>',
+            html,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(select)
+        options = frozenset(re.findall(r'<option value="([^"]+)"', select.group(1)))
+        self.assertEqual(options, SRE_AGENT_REGIONS)
+
+    def test_bicep_regions_match_backend_validation(self) -> None:
+        bicep = (VENDOR_DIR / "infra" / "main.bicep").read_text(encoding="utf-8")
+        allowed = re.search(
+            r"@allowed\(\[(.*?)\]\)\s*param location",
+            bicep,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(allowed)
+        locations = frozenset(re.findall(r"'([^']+)'", allowed.group(1)))
+        self.assertEqual(locations, SRE_AGENT_REGIONS)
 
 
 if __name__ == "__main__":

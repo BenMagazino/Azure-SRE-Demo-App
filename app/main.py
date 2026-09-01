@@ -49,6 +49,26 @@ AZURE_DEVICE_LOGIN_URL = "https://microsoft.com/devicelogin"
 AZURE_GUID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 )
+SRE_AGENT_REGIONS = frozenset({
+    "australiaeast",
+    "canadacentral",
+    "centralus",
+    "eastasia",
+    "eastus2",
+    "francecentral",
+    "italynorth",
+    "japaneast",
+    "koreacentral",
+    "northcentralus",
+    "southafricanorth",
+    "southeastasia",
+    "spaincentral",
+    "swedencentral",
+    "uksouth",
+    "westcentralus",
+    "westus2",
+    "westus3",
+})
 
 
 def redact_text(value: str) -> str:
@@ -2129,7 +2149,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST,
             )
             return
-        if location not in {"eastus2", "swedencentral", "australiaeast"}:
+        if location not in SRE_AGENT_REGIONS:
             self.send_json({"error": "Unsupported Azure region."}, HTTPStatus.BAD_REQUEST)
             return
 
