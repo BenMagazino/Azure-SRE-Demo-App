@@ -1,8 +1,12 @@
 # Azure SRE Agent Demo Setup
 
-A Windows-first local web application that reduces the setup friction for
-Microsoft's Azure SRE Agent starter lab. Version 1 focuses only on Scenario 1:
-deploy Grubify, trigger its cart memory leak, and observe the SRE Agent investigate.
+A Windows-first local web application that reduces setup friction for guided
+Azure SRE Agent labs. The workflow is driven by a lab catalog so each lab can
+declare its own dependencies and demo scenarios.
+
+The initial catalog includes the **Grubify Starter Lab** and its **Memory Leak**
+scenario: deploy Grubify, trigger cart memory pressure, and observe Azure SRE
+Agent investigate.
 
 The app intentionally excludes GitHub integration and does not require Git,
 Git Bash, Rust, MSYS2, MinGW, Node.js, or npm.
@@ -77,17 +81,18 @@ folder must remain together.
 
 ## Current wizard flow
 
-1. Verify the minimum Azure CLI, Azure Developer CLI, and WinGet versions.
-2. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
-3. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
+1. Choose a lab from the catalog.
+2. Verify the selected lab's minimum Azure CLI, Azure Developer CLI, and WinGet versions.
+3. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
+4. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
    Azure CLI default is shown first, and cross-tenant selections are reauthenticated
    with a tenant-scoped device-code flow when required.
-4. Configure the Azure environment and region.
-5. Deploy the vendored starter lab.
-6. Run the Scenario 1 cart fault injection.
-7. Restore the declared Bicep, application, and SRE Agent baseline when policy
+5. Configure the Azure environment and region.
+6. Deploy the selected lab.
+7. Choose and run a scenario supported by that lab.
+8. Restore the declared Bicep, application, and SRE Agent baseline when policy
    enforcement, autonomous remediation, or an outage causes configuration drift.
-8. Tear down the Azure environment and return to the deployment step for a clean
+9. Tear down the Azure environment and return to the deployment step for a clean
    redeployment.
 
 All wizard steps are implemented in the Python backend. Deployment uses ACR Tasks

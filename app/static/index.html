@@ -3,15 +3,23 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+      (() => {
+        const param = new URLSearchParams(window.location.search).get("scoutTheme");
+        const theme =
+          param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260901.1">
+    <link rel="stylesheet" href="/styles.css?v=20260901.2">
   </head>
   <body>
     <main class="shell">
       <header>
-        <span class="eyebrow">Scenario 1</span>
+        <span class="eyebrow">Guided labs</span>
         <h1>Azure SRE Agent Demo Setup</h1>
-        <p>Deploy the Grubify memory-leak demo without Git Bash or manual shell navigation.</p>
+        <p>Deploy an Azure SRE Agent lab without Git Bash or manual shell navigation.</p>
       </header>
       <aside class="diagnostics">
         <div>
@@ -24,18 +32,26 @@
       </aside>
 
       <nav class="steps" aria-label="Setup steps">
-        <span data-panel="prerequisites" class="active" aria-current="step">1. Prerequisites</span>
-        <span data-panel="authentication">2. Sign in</span>
-        <span data-panel="configuration">3. Configure</span>
-        <span data-panel="deployment">4. Deploy</span>
-        <span data-panel="summary">5. Demo</span>
+        <span data-panel="labs" class="active" aria-current="step">1. Lab Picker</span>
+        <span data-panel="prerequisites">2. Prerequisites</span>
+        <span data-panel="authentication">3. Sign in</span>
+        <span data-panel="configuration">4. Configure</span>
+        <span data-panel="deployment">5. Deploy</span>
+        <span data-panel="summary">6. Demo</span>
       </nav>
 
-      <section id="prerequisites" class="panel">
+      <section id="labs" class="panel">
+        <h2>Choose a lab</h2>
+        <p>Select an Azure SRE Agent experience. Its dependencies and demo scenarios will be loaded automatically.</p>
+        <div id="lab-picker" class="picker-grid" aria-live="polite"></div>
+        <button id="continue-lab" disabled>Use selected lab</button>
+      </section>
+
+      <section id="prerequisites" class="panel hidden">
         <div class="panel-heading">
           <div>
             <h2>Prerequisites</h2>
-            <p>The app verifies minimum tool versions and can install, repair, or update dependencies for you.</p>
+            <p id="prerequisite-copy">Select a lab to see its required tools.</p>
           </div>
           <div class="prereq-actions">
             <button id="install-all" class="hidden">Resolve all dependencies</button>
@@ -68,7 +84,7 @@
           <div class="context-heading">
             <div>
               <h3 id="azure-context-heading">Azure deployment context</h3>
-              <p>Choose the tenant and subscription where the demo will be deployed.</p>
+              <p>Choose the tenant and subscription where the lab will be deployed.</p>
             </div>
             <button id="refresh-azure-context" class="secondary" type="button">Refresh accounts</button>
           </div>
@@ -92,6 +108,7 @@
 
       <section id="configuration" class="panel hidden">
         <h2>Configure the Azure environment</h2>
+        <p id="configure-copy">Choose the Azure environment for the selected lab.</p>
         <form id="configure-form" class="form-grid">
           <label>
             Environment name
@@ -126,9 +143,9 @@
       </section>
 
       <section id="deployment" class="panel hidden">
-        <h2>Deploy and configure the demo</h2>
-        <p>Infrastructure deployment and agent configuration typically take 8-15 minutes.</p>
-        <button id="start-deploy">Deploy Scenario 1</button>
+        <h2 id="deploy-title">Deploy selected lab</h2>
+        <p id="deploy-copy">Infrastructure deployment and lab configuration typically take 8-15 minutes.</p>
+        <button id="start-deploy">Deploy lab</button>
         <p id="deploy-step"></p>
         <pre id="deploy-log" class="log large"></pre>
       </section>
@@ -136,18 +153,17 @@
       <section id="summary" class="panel hidden">
         <h2>Demo ready</h2>
         <div id="summary-links" class="summary-grid"></div>
-        <p>
-          If policy enforcement, autonomous remediation, or an outage changes the
-          demo, restore its declared infrastructure and application configuration.
-        </p>
+        <h3>Choose a scenario</h3>
+        <p>Run a scenario supported by this lab, then watch Azure SRE Agent investigate.</p>
+        <div id="scenario-picker" class="picker-grid" aria-live="polite"></div>
         <div class="demo-actions">
-          <button id="break-cart" class="danger">Break Cart</button>
+          <button id="run-scenario" class="danger" disabled>Run selected scenario</button>
           <button id="restore-baseline">Restore baseline</button>
           <button id="teardown" class="secondary">Tear down Azure resources</button>
         </div>
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260901.1"></script>
+    <script src="/app.js?v=20260901.2"></script>
   </body>
 </html>

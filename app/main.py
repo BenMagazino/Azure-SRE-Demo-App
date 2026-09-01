@@ -212,6 +212,24 @@ class ToolStatus:
     required: bool
 
 
+@dataclass(frozen=True)
+class ScenarioDefinition:
+    id: str
+    name: str
+    description: str
+    action_label: str
+    confirmation: str
+
+
+@dataclass(frozen=True)
+class LabDefinition:
+    id: str
+    name: str
+    description: str
+    dependency_ids: tuple[str, ...]
+    scenarios: tuple[ScenarioDefinition, ...]
+
+
 TOOLS = (
     (
         "winget",
@@ -226,6 +244,32 @@ TOOLS = (
     ("azd", "Azure Developer CLI", ("version",), "1.28.0",
      "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
 )
+LABS = (
+    LabDefinition(
+        id="grubify-starter-lab",
+        name="Grubify Starter Lab",
+        description=(
+            "Deploy Grubify to Azure Container Apps and observe Azure SRE Agent "
+            "investigate an application incident."
+        ),
+        dependency_ids=("winget", "az", "azd"),
+        scenarios=(
+            ScenarioDefinition(
+                id="memory-leak",
+                name="Memory Leak",
+                description=(
+                    "Apply sustained cart allocations until the API experiences "
+                    "managed memory pressure and HTTP failures."
+                ),
+                action_label="Run Memory Leak",
+                confirmation=(
+                    "Send cart requests to trigger the Grubify memory leak?"
+                ),
+            ),
+        ),
+    ),
+)
+LABS_BY_ID = {lab.id: lab for lab in LABS}
 
 
 class Job:
@@ -435,10 +479,24 @@ def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
     return version
 
 
-def prerequisite_statuses() -> list[ToolStatus]:
+def prerequisite_statuses(
+    tool_ids: Optional[tuple[str, ...]] = None,
+) -> list[ToolStatus]:
     refresh_process_path()
+    selected_ids = (
+        tool_ids
+        if tool_ids is not None
+        else tuple(MINIMUM_VERSIONS)
+    )
+    unknown_ids = set(selected_ids).difference(MINIMUM_VERSIONS)
+    if unknown_ids:
+        raise ValueError(
+            f"Unknown prerequisite tool IDs: {', '.join(sorted(unknown_ids))}"
+        )
     statuses = []
     for tool_id, name, args, minimum_version, install_url, required in TOOLS:
+        if tool_id not in selected_ids:
+            continue
         installed = shutil.which(tool_id) is not None
         version = command_version(tool_id, args) if installed else None
         if not installed:
@@ -478,6 +536,23 @@ def prerequisite_statuses() -> list[ToolStatus]:
         ),
     )
     return statuses
+
+
+def selected_lab(state: Optional[dict[str, Any]] = None) -> Optional[LabDefinition]:
+    current_state = state if state is not None else load_state()
+    return LABS_BY_ID.get(str(current_state.get("lab_id", "")))
+
+
+def lab_catalog_payload(state: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    current_state = state if state is not None else load_state()
+    active_lab = selected_lab(current_state)
+    return {
+        "labs": [asdict(lab) for lab in LABS],
+        "selected_lab_id": active_lab.id if active_lab else "",
+        "selected_scenario_id": (
+            str(current_state.get("scenario_id", "")) if active_lab else ""
+        ),
+    }
 
 
 def refresh_process_path() -> None:
@@ -577,12 +652,28 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
     return False
 
 
-def install_tool_worker(job: Job, tool_id: str) -> None:
+def install_tool_worker(
+    job: Job,
+    tool_id: str,
+    lab_id: Optional[str] = None,
+) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=job.command)
         success = True
-        statuses = {tool.id: tool for tool in prerequisite_statuses()}
-        if tool_id != "winget" and not statuses["winget"].ready:
+        lab = LABS_BY_ID.get(lab_id) if lab_id else None
+        tool_ids = lab.dependency_ids if lab else None
+        statuses = {
+            tool.id: tool
+            for tool in (
+                prerequisite_statuses(tool_ids)
+                if tool_ids
+                else prerequisite_statuses()
+            )
+        }
+        winget_status = statuses.get("winget")
+        if winget_status is None:
+            winget_status = prerequisite_statuses(("winget",))[0]
+        if tool_id != "winget" and not winget_status.ready:
             job.emit(
                 "output",
                 line="WinGet must be current before it can update other dependencies.",
@@ -593,14 +684,25 @@ def install_tool_worker(job: Job, tool_id: str) -> None:
         job.emit("done", success=success, exit_code=0 if success else 1)
 
 
-def install_all_worker(job: Job) -> None:
+def install_all_worker(job: Job, lab_id: Optional[str] = None) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=[])
-        statuses = {tool.id: tool for tool in prerequisite_statuses()}
+        lab = LABS_BY_ID.get(lab_id) if lab_id else None
+        tool_ids = lab.dependency_ids if lab else None
+        statuses = {
+            tool.id: tool
+            for tool in (
+                prerequisite_statuses(tool_ids)
+                if tool_ids
+                else prerequisite_statuses()
+            )
+        }
         unresolved_required = [
             tool_id
             for tool_id in INSTALL_ORDER
-            if statuses[tool_id].required and not statuses[tool_id].ready
+            if tool_id in statuses
+            and statuses[tool_id].required
+            and not statuses[tool_id].ready
         ]
         if not unresolved_required:
             job.emit("output", line="All required dependencies meet their minimum versions.")
@@ -608,7 +710,10 @@ def install_all_worker(job: Job) -> None:
             return
 
         install_ids = unresolved_required
-        if not statuses["winget"].ready:
+        winget_status = statuses.get("winget")
+        if winget_status is None:
+            winget_status = prerequisite_statuses(("winget",))[0]
+        if not winget_status.ready and "winget" not in install_ids:
             install_ids = ["winget", *install_ids]
 
         failures = []
@@ -624,7 +729,11 @@ def install_all_worker(job: Job) -> None:
 
         ready = all(
             tool.ready
-            for tool in prerequisite_statuses()
+            for tool in (
+                prerequisite_statuses(tool_ids)
+                if tool_ids
+                else prerequisite_statuses()
+            )
             if tool.required
         )
         if ready:
@@ -1628,7 +1737,7 @@ def post_provision(job: Job, environment: str) -> bool:
         return False
     token = token.strip()
 
-    job.emit("step", name="Uploading the Scenario 1 knowledge base")
+    job.emit("step", name="Uploading the Grubify lab knowledge base")
     status, response = upload_knowledge_base(endpoint, token)
     if status not in (200, 201):
         job.emit("output", line=f"Knowledge-base upload failed: HTTP {status} {response[:300]}")
@@ -1862,6 +1971,7 @@ def teardown_worker(job: Job) -> None:
     )
     if success:
         state["deployment_active"] = False
+        state.pop("scenario_id", None)
         save_state(state)
     job.emit("done", success=success, exit_code=0 if success else 1)
 
@@ -2065,6 +2175,11 @@ def break_cart_worker(job: Job) -> None:
     )
 
 
+SCENARIO_WORKERS: dict[tuple[str, str], Callable[[Job], None]] = {
+    ("grubify-starter-lab", "memory-leak"): break_cart_worker,
+}
+
+
 class AppHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -2140,8 +2255,21 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/diagnostics/download":
             self.send_diagnostic_log()
             return
+        if path == "/api/labs":
+            self.send_json(lab_catalog_payload())
+            return
         if path == "/api/prerequisites":
-            self.send_json([asdict(status) for status in prerequisite_statuses()])
+            lab = selected_lab()
+            if lab is None:
+                self.send_json(
+                    {"error": "Select a lab before checking prerequisites."},
+                    HTTPStatus.CONFLICT,
+                )
+                return
+            self.send_json([
+                asdict(status)
+                for status in prerequisite_statuses(lab.dependency_ids)
+            ])
             return
         if path == "/api/auth/status":
             self.send_json(authentication_statuses())
@@ -2163,7 +2291,10 @@ class AppHandler(SimpleHTTPRequestHandler):
                 self.send_json({"error": "Demo is not deployed"}, HTTPStatus.CONFLICT)
                 return
             values = azd_values(environment)
+            lab = selected_lab(state)
             self.send_json({
+                "lab_id": lab.id if lab else "",
+                "lab_name": lab.name if lab else "",
                 "environment": environment,
                 "resource_group": values.get("AZURE_RESOURCE_GROUP", ""),
                 "agent_portal_url": values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
@@ -2210,6 +2341,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 redact_text(message),
             )
             self.send_json({"logged": True})
+            return
+        if path == "/api/lab":
+            self.select_lab()
             return
         if path == "/api/auth/azure-cli":
             try:
@@ -2265,16 +2399,30 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path == "/api/install/all":
-            job = create_job(worker=install_all_worker)
+            lab = selected_lab()
+            if lab is None:
+                self.send_json({"error": "Select a lab first."}, HTTPStatus.CONFLICT)
+                return
+            job = create_job(
+                worker=lambda current_job: install_all_worker(current_job, lab.id)
+            )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path.startswith("/api/install/"):
             tool_id = path.removeprefix("/api/install/").strip("/")
-            if tool_id not in INSTALL_COMMANDS:
+            lab = selected_lab()
+            if lab is None:
+                self.send_json({"error": "Select a lab first."}, HTTPStatus.CONFLICT)
+                return
+            if tool_id not in lab.dependency_ids or tool_id not in INSTALL_COMMANDS:
                 self.send_json({"error": "Unsupported installer"}, HTTPStatus.NOT_FOUND)
                 return
             job = create_job(
-                worker=lambda current_job: install_tool_worker(current_job, tool_id),
+                worker=lambda current_job: install_tool_worker(
+                    current_job,
+                    tool_id,
+                    lab.id,
+                ),
             )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
@@ -2324,23 +2472,115 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/configure":
             self.configure_environment()
             return
+        if path == "/api/scenarios/run":
+            self.run_scenario()
+            return
         workers = {
             "/api/deploy": deploy_worker,
             "/api/restore-baseline": restore_baseline_worker,
-            "/api/break-cart": break_cart_worker,
             "/api/teardown": teardown_worker,
         }
         if path in workers:
+            if path != "/api/teardown" and selected_lab() is None:
+                self.send_json(
+                    {"error": "Select a supported lab before deploying."},
+                    HTTPStatus.CONFLICT,
+                )
+                return
             job = create_job(worker=workers[path])
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def select_lab(self) -> None:
+        try:
+            payload = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+            return
+        lab_id = str(payload.get("lab_id", "")).strip()
+        lab = LABS_BY_ID.get(lab_id)
+        if lab is None:
+            self.send_json({"error": "Unsupported lab."}, HTTPStatus.BAD_REQUEST)
+            return
+
+        state = load_state()
+        previous_lab_id = str(state.get("lab_id", ""))
+        if (
+            previous_lab_id
+            and previous_lab_id != lab.id
+            and state.get("deployment_active")
+        ):
+            self.send_json(
+                {"error": "Tear down the active lab before selecting another lab."},
+                HTTPStatus.CONFLICT,
+            )
+            return
+        if not previous_lab_id:
+            state["lab_id"] = lab.id
+        elif previous_lab_id != lab.id:
+            state = {
+                "lab_id": lab.id,
+                "deployment_active": False,
+            }
+        else:
+            state["lab_id"] = lab.id
+        save_state(state)
+        self.send_json({"lab": asdict(lab), "state": state})
+
+    def run_scenario(self) -> None:
+        try:
+            payload = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        state = load_state()
+        lab = selected_lab(state)
+        if lab is None:
+            self.send_json({"error": "Select a lab first."}, HTTPStatus.CONFLICT)
+            return
+        if not state.get("deployment_active"):
+            self.send_json(
+                {"error": "Deploy the lab before running a scenario."},
+                HTTPStatus.CONFLICT,
+            )
+            return
+        scenario_id = str(payload.get("scenario_id", "")).strip()
+        scenario = next(
+            (item for item in lab.scenarios if item.id == scenario_id),
+            None,
+        )
+        worker = SCENARIO_WORKERS.get((lab.id, scenario_id))
+        if scenario is None or worker is None:
+            self.send_json(
+                {"error": "Unsupported scenario for this lab."},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+
+        state["scenario_id"] = scenario.id
+        save_state(state)
+        job = create_job(worker=worker)
+        self.send_json(
+            {"job_id": job.id, "scenario": asdict(scenario)},
+            HTTPStatus.ACCEPTED,
+        )
 
     def configure_environment(self) -> None:
         try:
             payload = self.read_json()
         except (ValueError, json.JSONDecodeError):
             self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        state = load_state()
+        lab = selected_lab(state)
+        if lab is None:
+            self.send_json(
+                {"error": "Select a supported lab before configuring Azure."},
+                HTTPStatus.CONFLICT,
+            )
             return
 
         environment = str(payload.get("environment", "")).strip()
@@ -2403,13 +2643,15 @@ class AppHandler(SimpleHTTPRequestHandler):
                 )
                 return
 
-        state = {
+        state.update({
+            "lab_id": lab.id,
             "environment": environment,
             "location": location,
             "tenant_id": context["tenant"],
             "subscription_id": subscription_id,
             "deployment_active": False,
-        }
+        })
+        state.pop("scenario_id", None)
         save_state(state)
         self.send_json(state)
 

@@ -4,8 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.main import (
+    AppHandler,
     INSTALL_COMMANDS,
     INSTALL_ORDER,
+    LABS,
     MINIMUM_VERSIONS,
     REPAIR_COMMANDS,
     UPDATE_COMMANDS,
@@ -32,6 +34,7 @@ from app.main import (
     open_browser_url,
     parse_claims_challenge_login,
     parse_device_code,
+    lab_catalog_payload,
     prerequisite_statuses,
     redact_command,
     redact_text,
@@ -59,6 +62,104 @@ TENANT_B = "00000000-0000-0000-0000-000000000002"
 SUBSCRIPTION_A = "11111111-1111-1111-1111-111111111111"
 SUBSCRIPTION_B = "22222222-2222-2222-2222-222222222222"
 SUBSCRIPTION_C = "33333333-3333-3333-3333-333333333333"
+
+
+class LabWorkflowTests(unittest.TestCase):
+    def test_catalog_exposes_grubify_memory_leak_workflow(self) -> None:
+        payload = lab_catalog_payload({"lab_id": "grubify-starter-lab"})
+
+        self.assertEqual(len(LABS), 1)
+        self.assertEqual(payload["selected_lab_id"], "grubify-starter-lab")
+        self.assertEqual(len(payload["labs"]), 1)
+        self.assertEqual(payload["labs"][0]["dependency_ids"], ("winget", "az", "azd"))
+        self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
+
+    @patch("app.main.save_state")
+    @patch("app.main.load_state")
+    def test_selecting_lab_migrates_legacy_deployment_state(
+        self,
+        load_state,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "environment": "existing-lab",
+            "deployment_active": True,
+        }
+        handler = object.__new__(AppHandler)
+        handler.read_json = MagicMock(
+            return_value={"lab_id": "grubify-starter-lab"}
+        )
+        handler.send_json = MagicMock()
+
+        handler.select_lab()
+
+        state = save_state.call_args.args[0]
+        self.assertEqual(state["lab_id"], "grubify-starter-lab")
+        self.assertEqual(state["environment"], "existing-lab")
+        self.assertTrue(state["deployment_active"])
+
+    @patch("app.main.save_state")
+    @patch("app.main.run_capture", return_value=(True, ""))
+    @patch("app.main.azure_cli_management_authenticated", return_value=True)
+    @patch("app.main.cached_azure_context")
+    @patch("app.main.load_state")
+    def test_configuration_preserves_selected_lab(
+        self,
+        load_state,
+        cached_azure_context,
+        _management_authenticated,
+        _run_capture,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "lab_id": "grubify-starter-lab",
+            "scenario_id": "memory-leak",
+        }
+        cached_azure_context.return_value = {
+            "tenant": TENANT_A,
+            "subscription": SUBSCRIPTION_A,
+        }
+        handler = object.__new__(AppHandler)
+        handler.read_json = MagicMock(return_value={
+            "environment": "sre-lab",
+            "location": "eastus2",
+        })
+        handler.send_json = MagicMock()
+
+        handler.configure_environment()
+
+        state = save_state.call_args.args[0]
+        self.assertEqual(state["lab_id"], "grubify-starter-lab")
+        self.assertNotIn("scenario_id", state)
+        self.assertEqual(state["environment"], "sre-lab")
+
+    @patch("app.main.create_job")
+    @patch("app.main.save_state")
+    @patch("app.main.load_state")
+    def test_scenario_route_dispatches_selected_lab_worker(
+        self,
+        load_state,
+        save_state,
+        create_job,
+    ) -> None:
+        state = {
+            "lab_id": "grubify-starter-lab",
+            "deployment_active": True,
+        }
+        load_state.return_value = state
+        create_job.return_value.id = "job-1"
+        handler = object.__new__(AppHandler)
+        handler.read_json = MagicMock(return_value={"scenario_id": "memory-leak"})
+        handler.send_json = MagicMock()
+
+        handler.run_scenario()
+
+        self.assertEqual(
+            create_job.call_args.kwargs["worker"],
+            break_cart_worker,
+        )
+        self.assertEqual(save_state.call_args.args[0]["scenario_id"], "memory-leak")
+        self.assertEqual(handler.send_json.call_args.args[0]["job_id"], "job-1")
 
 
 class DeviceCodeTests(unittest.TestCase):
@@ -494,6 +595,19 @@ class AzureContextTests(unittest.TestCase):
 
 
 class PrerequisiteTests(unittest.TestCase):
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.command_version", return_value="2.90.0")
+    @patch("app.main.shutil.which", return_value=r"C:\Tools\az.exe")
+    def test_filters_tools_for_selected_lab(
+        self,
+        _which,
+        _command_version,
+        _refresh_process_path,
+    ) -> None:
+        statuses = prerequisite_statuses(("az",))
+
+        self.assertEqual([status.id for status in statuses], ["az"])
+
     @patch("app.main.refresh_process_path")
     @patch("app.main.command_version")
     @patch("app.main.shutil.which", return_value=r"C:\Tools\tool.exe")

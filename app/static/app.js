@@ -11,6 +11,10 @@ const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
 let installInProgress = false;
 let azureContextCatalog = null;
+let labCatalog = [];
+let persistedLabId = "";
+let selectedLabId = "";
+let selectedScenarioId = "";
 let azureContextApplied = false;
 
 async function loadSessionToken() {
@@ -41,7 +45,8 @@ async function loadSessionToken() {
 async function initialize() {
   sessionToken = await loadSessionToken();
   await loadDiagnostics();
-  await loadPrerequisites();
+  await loadLabs();
+  if (persistedLabId) await loadPrerequisites();
   await loadAuthStatus();
 }
 
@@ -49,6 +54,10 @@ async function recheckApplication() {
   if (!sessionToken) {
     prereqList.textContent = "Reconnecting to the local application...";
     await initialize();
+    return;
+  }
+  if (!persistedLabId) {
+    showPanel("labs");
     return;
   }
   await loadPrerequisites();
@@ -106,6 +115,70 @@ function showPanel(id) {
       step.removeAttribute("aria-current");
     }
   });
+}
+
+function currentLab() {
+  return labCatalog.find((lab) => lab.id === selectedLabId) || null;
+}
+
+function renderLabPicker() {
+  const picker = document.querySelector("#lab-picker");
+  picker.replaceChildren();
+  labCatalog.forEach((lab) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `picker-card${lab.id === selectedLabId ? " selected" : ""}`;
+    button.setAttribute("aria-pressed", lab.id === selectedLabId ? "true" : "false");
+    const title = document.createElement("span");
+    title.className = "picker-title";
+    title.textContent = lab.name;
+    const description = document.createElement("span");
+    description.className = "picker-description";
+    description.textContent = lab.description;
+    const meta = document.createElement("span");
+    meta.className = "picker-meta";
+    meta.textContent = `${lab.dependency_ids.length} dependencies · ${lab.scenarios.length} scenario${lab.scenarios.length === 1 ? "" : "s"}`;
+    button.append(title, description, meta);
+    button.addEventListener("click", () => {
+      selectedLabId = lab.id;
+      renderLabPicker();
+      document.querySelector("#continue-lab").disabled = false;
+    });
+    picker.append(button);
+  });
+  document.querySelector("#continue-lab").disabled = !selectedLabId;
+}
+
+function updateLabCopy() {
+  const lab = currentLab();
+  if (!lab) return;
+  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. The launcher can install, update, or repair them through WinGet.`;
+  document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}. No GitHub connection is required.`;
+  document.querySelector("#deploy-title").textContent = `Deploy ${lab.name}`;
+  document.querySelector("#deploy-copy").textContent = `${lab.description} Azure resources and lab automation are created automatically.`;
+}
+
+async function loadLabs() {
+  const response = await fetch("/api/labs", { cache: "no-store" });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Unable to load labs.");
+  labCatalog = payload.labs || [];
+  persistedLabId = payload.selected_lab_id || "";
+  selectedLabId = persistedLabId || labCatalog[0]?.id || "";
+  selectedScenarioId = payload.selected_scenario_id || "";
+  renderLabPicker();
+  updateLabCopy();
+}
+
+async function persistSelectedLab() {
+  const response = await apiPost("/api/lab", { lab_id: selectedLabId });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Unable to select the lab.");
+  persistedLabId = result.lab.id;
+  selectedLabId = result.lab.id;
+  updateLabCopy();
+  await loadPrerequisites();
+  showPanel("prerequisites");
 }
 
 async function copyToClipboard(text) {
@@ -349,6 +422,9 @@ async function loadPrerequisites() {
   try {
     const response = await fetch("/api/prerequisites");
     const tools = await response.json();
+    if (!response.ok) {
+      throw new Error(tools.error || "Unable to check prerequisites.");
+    }
     prereqList.replaceChildren(...tools.map(renderTool));
     const unresolvedRequired = tools
       .filter((tool) => tool.required)
@@ -706,7 +782,9 @@ async function startDeploy() {
 async function loadSummary() {
   const response = await fetch("/api/summary");
   const summary = await response.json();
+  if (!response.ok) throw new Error(summary.error || "Unable to load deployment summary.");
   const fields = [
+    ["Lab", summary.lab_name],
     ["Environment", summary.environment],
     ["Resource group", summary.resource_group],
     ["Agent portal", summary.agent_portal_url],
@@ -731,13 +809,67 @@ async function loadSummary() {
     item.append(heading, content);
     return item;
   }));
+  renderScenarioPicker();
 }
 
-async function runDemoAction(path, confirmation) {
+function renderScenarioPicker() {
+  const picker = document.querySelector("#scenario-picker");
+  const runButton = document.querySelector("#run-scenario");
+  const scenarios = currentLab()?.scenarios || [];
+  if (!scenarios.some((scenario) => scenario.id === selectedScenarioId)) {
+    selectedScenarioId = scenarios[0]?.id || "";
+  }
+  picker.replaceChildren(...scenarios.map((scenario) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `picker-card${scenario.id === selectedScenarioId ? " selected" : ""}`;
+    button.setAttribute(
+      "aria-pressed",
+      scenario.id === selectedScenarioId ? "true" : "false",
+    );
+    const title = document.createElement("span");
+    title.className = "picker-title";
+    title.textContent = scenario.name;
+    const description = document.createElement("span");
+    description.className = "picker-description";
+    description.textContent = scenario.description;
+    button.append(title, description);
+    button.addEventListener("click", () => {
+      selectedScenarioId = scenario.id;
+      renderScenarioPicker();
+    });
+    return button;
+  }));
+  const scenario = scenarios.find((item) => item.id === selectedScenarioId);
+  runButton.disabled = !scenario;
+  runButton.textContent = scenario?.action_label || "Run selected scenario";
+}
+
+async function runSelectedScenario() {
+  const scenario = currentLab()?.scenarios.find(
+    (item) => item.id === selectedScenarioId
+  );
+  if (!scenario) return;
+  await runDemoAction(
+    "scenarios/run",
+    scenario.confirmation,
+    { scenario_id: scenario.id },
+    "run-scenario",
+    scenario.name,
+  );
+}
+
+async function runDemoAction(
+  path,
+  confirmation,
+  payload = undefined,
+  buttonId = path,
+  actionName = path,
+) {
   if (confirmation && !window.confirm(confirmation)) return;
   const log = document.querySelector("#demo-log");
   const buttons = document.querySelectorAll(".demo-actions button");
-  const activeButton = document.getElementById(path);
+  const activeButton = document.getElementById(buttonId);
   const activeButtonLabel = activeButton?.textContent;
   buttons.forEach((button) => {
     button.disabled = true;
@@ -747,9 +879,9 @@ async function runDemoAction(path, confirmation) {
     activeButton.textContent = `${activeButtonLabel} running`;
   }
   log.setAttribute("aria-busy", "true");
-  log.textContent = `Starting ${path}...\n`;
+  log.textContent = `Starting ${actionName}...\n`;
   try {
-    const response = await apiPost(`/api/${path}`);
+    const response = await apiPost(`/api/${path}`, payload);
     const result = await response.json();
     if (!response.ok) {
       log.textContent += `${result.error || "Action did not start."}\n`;
@@ -769,7 +901,7 @@ async function runDemoAction(path, confirmation) {
       log.textContent = "";
       document.querySelector("#deploy-log").textContent = "";
       document.querySelector("#deploy-step").textContent =
-        "Azure resources removed. Select Deploy Scenario 1 to create the demo again.";
+        "Azure resources removed. Select Deploy lab to create the demo again.";
       showPanel("deployment");
     }
   } catch (error) {
@@ -791,6 +923,20 @@ document.querySelector("#refresh-prereqs").addEventListener("click", () => {
     prereqList.textContent = `Unable to reconnect to the app: ${error}`;
   });
 });
+document.querySelector("#continue-lab").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await persistSelectedLab();
+  } catch (error) {
+    const message = document.createElement("p");
+    message.className = "warning";
+    message.setAttribute("role", "alert");
+    message.textContent = `Unable to select the lab: ${error}`;
+    document.querySelector("#lab-picker").append(message);
+    button.disabled = false;
+  }
+});
 installAllButton.addEventListener("click", installAll);
 continueButton.addEventListener("click", () => showPanel("authentication"));
 document.querySelectorAll("[data-auth]").forEach((button) => {
@@ -811,10 +957,7 @@ document.querySelector("#refresh-azure-context").addEventListener("click", () =>
 document.querySelector("#continue-to-configure").addEventListener("click", () => showPanel("configuration"));
 document.querySelector("#configure-form").addEventListener("submit", configureEnvironment);
 document.querySelector("#start-deploy").addEventListener("click", startDeploy);
-document.querySelector("#break-cart").addEventListener("click", () => runDemoAction(
-  "break-cart",
-  "Send 200 cart requests to trigger the Scenario 1 memory leak?"
-));
+document.querySelector("#run-scenario").addEventListener("click", runSelectedScenario);
 document.querySelector("#restore-baseline").addEventListener("click", () => runDemoAction(
   "restore-baseline",
   "Reapply the declared Azure infrastructure, application images, and SRE Agent configuration? This can overwrite configuration drift."
@@ -825,5 +968,5 @@ document.querySelector("#teardown").addEventListener("click", () => runDemoActio
 ));
 
 initialize().catch((error) => {
-  prereqList.textContent = `Unable to initialize the app: ${error}`;
+  document.querySelector("#lab-picker").textContent = `Unable to initialize the app: ${error}`;
 });

@@ -12,6 +12,9 @@ The wizard requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0
 or newer. WinGet 1.29.280 or newer can install or update either tool. Git is
 not required.
 
+Start by choosing a lab. The initial catalog includes the Grubify Starter Lab
+and its Memory Leak demo scenario.
+
 If Windows marks files from the downloaded ZIP as internet-origin, right-click
 the ZIP before extracting it, select Properties, select Unblock, and then
 extract it again.
