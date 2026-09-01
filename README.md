@@ -74,7 +74,10 @@ distribute the complete `dist\AzureSREAgentDemo` directory.
 4. Configure the Azure environment and region.
 5. Deploy the vendored starter lab.
 6. Run the Scenario 1 cart fault injection.
-7. Tear down the Azure environment.
+7. Restore the declared Bicep, application, and SRE Agent baseline when policy
+   enforcement, autonomous remediation, or an outage causes configuration drift.
+8. Tear down the Azure environment and return to the deployment step for a clean
+   redeployment.
 
 All wizard steps are implemented in the Python backend. Deployment uses ACR Tasks
 to build Grubify remotely, so Docker Desktop and a local Grubify checkout are not

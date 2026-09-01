@@ -16,6 +16,7 @@ from app.main import (
     build_azure_context_catalog,
     claims_challenge_login_command,
     command_version,
+    deploy_worker,
     http_json,
     install_all_worker,
     is_device_login_url,
@@ -27,11 +28,13 @@ from app.main import (
     redact_text,
     response_plan_payload,
     response_plan_status_is_retryable,
+    restore_baseline_worker,
     resolved_process_command,
     run_capture,
     run_process,
     safe_log_payload,
     scoped_azure_login_command,
+    teardown_worker,
 )
 
 
@@ -761,6 +764,111 @@ class ResponsePlanTests(unittest.TestCase):
             self.assertTrue(response_plan_status_is_retryable(status))
         for status in (400, 401, 403, 422):
             self.assertFalse(response_plan_status_is_retryable(status))
+
+
+class DeploymentRecoveryTests(unittest.TestCase):
+    @patch("app.main.save_state")
+    @patch("app.main.post_provision", return_value=True)
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.load_state")
+    def test_restore_reapplies_declared_baseline_and_post_provisioning(
+        self,
+        load_state,
+        run_process,
+        post_provision,
+        save_state,
+    ) -> None:
+        state = {"environment": "sre-lab", "deployment_active": True}
+        load_state.return_value = state
+        job = Job()
+
+        restore_baseline_worker(job)
+
+        commands = [call.args[1] for call in run_process.call_args_list]
+        self.assertEqual(
+            commands,
+            [
+                [
+                    "az", "provider", "register",
+                    "--namespace", "Microsoft.App",
+                    "--wait", "--output", "none",
+                ],
+                [
+                    "azd", "provision", "--preview",
+                    "-e", "sre-lab", "--no-prompt",
+                ],
+                ["azd", "up", "-e", "sre-lab", "--no-prompt"],
+            ],
+        )
+        post_provision.assert_called_once_with(job, "sre-lab")
+        save_state.assert_called_once_with({
+            "environment": "sre-lab",
+            "deployment_active": True,
+        })
+        done = list(job.events.queue)[-1]
+        self.assertTrue(done["success"])
+
+    @patch("app.main.save_state")
+    @patch("app.main.post_provision", return_value=True)
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.load_state")
+    def test_deploy_marks_demo_active(
+        self,
+        load_state,
+        run_process,
+        post_provision,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "environment": "sre-lab",
+            "deployment_active": False,
+        }
+
+        deploy_worker(Job())
+
+        self.assertTrue(save_state.call_args.args[0]["deployment_active"])
+
+    @patch("app.main.save_state")
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.load_state")
+    def test_teardown_marks_demo_inactive(
+        self,
+        load_state,
+        run_process,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "environment": "sre-lab",
+            "deployment_active": True,
+        }
+        job = Job()
+
+        teardown_worker(job)
+
+        self.assertFalse(save_state.call_args.args[0]["deployment_active"])
+        done = list(job.events.queue)[-1]
+        self.assertTrue(done["success"])
+
+    @patch("app.main.save_state")
+    @patch("app.main.run_process", return_value=(False, "failed"))
+    @patch("app.main.load_state")
+    def test_failed_teardown_keeps_demo_active(
+        self,
+        load_state,
+        run_process,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "environment": "sre-lab",
+            "deployment_active": True,
+        }
+        job = Job()
+
+        teardown_worker(job)
+
+        save_state.assert_not_called()
+        done = list(job.events.queue)[-1]
+        self.assertFalse(done["success"])
 
 
 if __name__ == "__main__":

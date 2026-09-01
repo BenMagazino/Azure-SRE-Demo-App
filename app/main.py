@@ -1595,14 +1595,17 @@ def post_provision(job: Job, environment: str) -> bool:
     return False
 
 
-def deploy_worker(job: Job) -> None:
+def reconcile_demo(job: Job, restoring: bool = False) -> None:
     state = load_state()
     environment = state.get("environment")
     if not environment:
         job.emit("error", message="Configure an environment before deploying.")
         job.emit("done", success=False, exit_code=None)
         return
-    job.emit("started", command=["azd", "up"])
+    job.emit(
+        "started",
+        command=["azd", "up", "-e", environment, "--no-prompt"],
+    )
     job.emit("step", name="Registering the Microsoft.App resource provider")
     success, _ = run_process(
         job,
@@ -1615,7 +1618,14 @@ def deploy_worker(job: Job) -> None:
     if not success:
         job.emit("done", success=False, exit_code=1)
         return
-    job.emit("step", name="Deploying Azure infrastructure")
+    job.emit(
+        "step",
+        name=(
+            "Previewing baseline infrastructure reconciliation"
+            if restoring
+            else "Deploying Azure infrastructure"
+        ),
+    )
     success, _ = run_process(
         job,
         ["azd", "provision", "--preview", "-e", environment, "--no-prompt"],
@@ -1631,11 +1641,23 @@ def deploy_worker(job: Job) -> None:
     )
     if success:
         success = post_provision(job, environment)
+    if success:
+        state["deployment_active"] = True
+        save_state(state)
     job.emit("done", success=success, exit_code=0 if success else 1)
 
 
+def deploy_worker(job: Job) -> None:
+    reconcile_demo(job)
+
+
+def restore_baseline_worker(job: Job) -> None:
+    reconcile_demo(job, restoring=True)
+
+
 def teardown_worker(job: Job) -> None:
-    environment = load_state().get("environment")
+    state = load_state()
+    environment = state.get("environment")
     if not environment:
         job.emit("error", message="No configured environment.")
         job.emit("done", success=False, exit_code=None)
@@ -1649,6 +1671,9 @@ def teardown_worker(job: Job) -> None:
         ],
         VENDOR_DIR,
     )
+    if success:
+        state["deployment_active"] = False
+        save_state(state)
     job.emit("done", success=success, exit_code=0 if success else 1)
 
 
@@ -1796,9 +1821,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json(catalog)
             return
         if path == "/api/summary":
-            environment = load_state().get("environment")
+            state = load_state()
+            environment = state.get("environment")
             if not environment:
                 self.send_json({"error": "No configured environment"}, HTTPStatus.CONFLICT)
+                return
+            if not state.get("deployment_active"):
+                self.send_json({"error": "Demo is not deployed"}, HTTPStatus.CONFLICT)
                 return
             values = azd_values(environment)
             self.send_json({
@@ -1966,6 +1995,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         workers = {
             "/api/deploy": deploy_worker,
+            "/api/restore-baseline": restore_baseline_worker,
             "/api/break-cart": break_cart_worker,
             "/api/teardown": teardown_worker,
         }
@@ -2047,6 +2077,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             "location": location,
             "tenant_id": context["tenant"],
             "subscription_id": subscription_id,
+            "deployment_active": False,
         }
         save_state(state)
         self.send_json(state)

@@ -680,15 +680,42 @@ async function loadSummary() {
 async function runDemoAction(path, confirmation) {
   if (confirmation && !window.confirm(confirmation)) return;
   const log = document.querySelector("#demo-log");
+  const buttons = document.querySelectorAll(".demo-actions button");
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
   log.textContent = `Starting ${path}...\n`;
-  const response = await apiPost(`/api/${path}`);
-  const result = await response.json();
-  if (!response.ok) {
-    log.textContent += `${result.error || "Action did not start."}\n`;
-    return;
+  try {
+    const response = await apiPost(`/api/${path}`);
+    const result = await response.json();
+    if (!response.ok) {
+      log.textContent += `${result.error || "Action did not start."}\n`;
+      return;
+    }
+    const completed = await streamJob(result.job_id, log);
+    log.textContent += completed.success ? "\nCompleted.\n" : "\nAction failed.\n";
+    if (!completed.success) return;
+
+    if (path === "restore-baseline") {
+      await loadSummary();
+      log.textContent +=
+        "\nBaseline restored from the declared infrastructure and application configuration.\n";
+    }
+    if (path === "teardown") {
+      document.querySelector("#summary-links").replaceChildren();
+      log.textContent = "";
+      document.querySelector("#deploy-log").textContent = "";
+      document.querySelector("#deploy-step").textContent =
+        "Azure resources removed. Select Deploy Scenario 1 to create the demo again.";
+      showPanel("deployment");
+    }
+  } catch (error) {
+    log.textContent += `Action failed: ${error}\n`;
+  } finally {
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
   }
-  const completed = await streamJob(result.job_id, log);
-  log.textContent += completed.success ? "\nCompleted.\n" : "\nAction failed.\n";
 }
 
 document.querySelector("#refresh-prereqs").addEventListener("click", loadPrerequisites);
@@ -715,6 +742,10 @@ document.querySelector("#start-deploy").addEventListener("click", startDeploy);
 document.querySelector("#break-cart").addEventListener("click", () => runDemoAction(
   "break-cart",
   "Send 200 cart requests to trigger the Scenario 1 memory leak?"
+));
+document.querySelector("#restore-baseline").addEventListener("click", () => runDemoAction(
+  "restore-baseline",
+  "Reapply the declared Azure infrastructure, application images, and SRE Agent configuration? This can overwrite configuration drift."
 ));
 document.querySelector("#teardown").addEventListener("click", () => runDemoAction(
   "teardown",

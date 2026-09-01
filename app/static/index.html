@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260831.4">
+    <link rel="stylesheet" href="/styles.css?v=20260831.5">
   </head>
   <body>
     <main class="shell">
@@ -121,13 +121,18 @@
       <section id="summary" class="panel hidden">
         <h2>Demo ready</h2>
         <div id="summary-links" class="summary-grid"></div>
+        <p>
+          If policy enforcement, autonomous remediation, or an outage changes the
+          demo, restore its declared infrastructure and application configuration.
+        </p>
         <div class="demo-actions">
           <button id="break-cart" class="danger">Break Cart</button>
+          <button id="restore-baseline">Restore baseline</button>
           <button id="teardown" class="secondary">Tear down Azure resources</button>
         </div>
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260831.4"></script>
+    <script src="/app.js?v=20260831.5"></script>
   </body>
 </html>
