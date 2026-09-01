@@ -1372,14 +1372,23 @@ def refresh_app_url(job: Job, app_name: str, resource_group: str) -> str:
     return f"https://{output.strip()}" if success and output.strip() else ""
 
 
-def response_plan_payload(environment: str) -> dict[str, Any]:
+def response_plan_payload(
+    environment: str,
+    subscription_id: str,
+    resource_group: str,
+) -> dict[str, Any]:
     alert_name = f"alert-http-5xx-{environment}"
+    alert_id = (
+        f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        f"/providers/Microsoft.Insights/metricAlerts/{alert_name}"
+    )
     return {
         "id": "grubify-http-errors",
         "name": "Grubify HTTP Errors",
         "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
-        "titleContains": alert_name,
-        "titleNotContains": [f"{alert_name}-"],
+        "alertId": alert_id,
+        "titleContains": "",
+        "titleNotContains": [],
         "handlingAgent": "incident-handler",
         "agentMode": "autonomous",
     }
@@ -1581,7 +1590,11 @@ def post_provision(job: Job, environment: str) -> bool:
 
     job.emit("output", line="Waiting 30 seconds for Azure Monitor initialization...")
     time.sleep(30)
-    response_plan = response_plan_payload(environment)
+    response_plan = response_plan_payload(
+        environment,
+        subscription_id.strip(),
+        resource_group,
+    )
     for attempt in range(1, 6):
         success, token = run_capture(
             [

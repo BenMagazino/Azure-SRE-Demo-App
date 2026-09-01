@@ -764,24 +764,34 @@ class RequestAuthenticationTests(unittest.TestCase):
 
 class ResponsePlanTests(unittest.TestCase):
     def test_payload_uses_current_incident_filter_schema(self) -> None:
-        payload = response_plan_payload("sre-lab-auto-2")
+        payload = response_plan_payload(
+            "sre-lab-auto-2",
+            SUBSCRIPTION_A,
+            "rg-sre-lab-auto-2",
+        )
 
         self.assertEqual(payload["handlingAgent"], "incident-handler")
         self.assertEqual(payload["agentMode"], "autonomous")
         self.assertEqual(
-            payload["titleContains"],
-            "alert-http-5xx-sre-lab-auto-2",
+            payload["alertId"],
+            (
+                f"/subscriptions/{SUBSCRIPTION_A}/resourceGroups/rg-sre-lab-auto-2"
+                "/providers/Microsoft.Insights/metricAlerts/"
+                "alert-http-5xx-sre-lab-auto-2"
+            ),
         )
-        self.assertEqual(
-            payload["titleNotContains"],
-            ["alert-http-5xx-sre-lab-auto-2-"],
-        )
+        self.assertEqual(payload["titleContains"], "")
+        self.assertEqual(payload["titleNotContains"], [])
         self.assertNotIn("maxAttempts", payload)
 
     @patch("app.main.http_json")
     def test_updates_an_existing_response_plan(self, http_json) -> None:
         http_json.side_effect = [(409, "already exists"), (200, "updated")]
-        payload = response_plan_payload("sre-lab-auto-2")
+        payload = response_plan_payload(
+            "sre-lab-auto-2",
+            SUBSCRIPTION_A,
+            "rg-sre-lab-auto-2",
+        )
 
         status, response = upsert_response_plan(
             "https://example.test/filters/grubify-http-errors",
