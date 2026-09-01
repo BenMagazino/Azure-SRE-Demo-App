@@ -1,5 +1,9 @@
+import hashlib
+import io
 import re
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -31,6 +35,7 @@ from app.main import (
     discover_existing_environments,
     http_json,
     install_all_worker,
+    install_managed_azure_cli,
     is_device_login_url,
     memory_pressure_observed,
     open_browser_url,
@@ -49,6 +54,7 @@ from app.main import (
     run_capture,
     run_process,
     run_tool_install,
+    safe_extract_zip,
     safe_log_payload,
     scoped_azure_login_command,
     should_open_browser,
@@ -785,12 +791,14 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertFalse(version_meets_minimum("2.87.9", "2.88.0"))
         self.assertFalse(version_meets_minimum("installed", "2.88.0"))
 
+    @patch("app.main.install_managed_azure_cli")
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_install_all_runs_missing_tools_sequentially(
         self,
         prerequisite_statuses,
         run_process,
+        install_managed_azure_cli,
     ) -> None:
         installed = set()
 
@@ -819,16 +827,22 @@ class PrerequisiteTests(unittest.TestCase):
             ))
             return True, ""
 
+        def install_azure_cli(_job):
+            installed.add("az")
+            return True
+
         prerequisite_statuses.side_effect = statuses
         run_process.side_effect = install
+        install_managed_azure_cli.side_effect = install_azure_cli
         job = Job()
 
         install_all_worker(job)
 
         self.assertEqual(
             [call.args[1] for call in run_process.call_args_list],
-            [INSTALL_COMMANDS[tool_id] for tool_id in INSTALL_ORDER],
+            [INSTALL_COMMANDS["winget"], INSTALL_COMMANDS["azd"]],
         )
+        install_managed_azure_cli.assert_called_once_with(job)
         events = list(job.events.queue)
         tool_events = [
             event
@@ -848,12 +862,14 @@ class PrerequisiteTests(unittest.TestCase):
         )
         self.assertTrue(events[-1]["success"])
 
-    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.install_managed_azure_cli", return_value=True)
+    @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_updates_an_outdated_tool(
         self,
         prerequisite_statuses,
         run_process,
+        install_managed_azure_cli,
     ) -> None:
         outdated = ToolStatus(
             id="az",
@@ -884,10 +900,73 @@ class PrerequisiteTests(unittest.TestCase):
 
         self.assertTrue(run_tool_install(job, "az"))
 
-        run_process.assert_called_once_with(job, UPDATE_COMMANDS["az"])
+        run_process.assert_not_called()
+        install_managed_azure_cli.assert_called_once_with(job)
         events = list(job.events.queue)
         self.assertEqual(events[0]["status"], "updating")
         self.assertEqual(events[-2]["status"], "ready")
+
+    def test_safe_extract_zip_rejects_parent_traversal(self) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("../outside.txt", "unsafe")
+        archive_bytes.seek(0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with zipfile.ZipFile(archive_bytes) as archive:
+                with self.assertRaisesRegex(ValueError, "Unsafe ZIP entry"):
+                    safe_extract_zip(archive, Path(directory))
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.urlopen")
+    def test_installs_checksum_verified_azure_cli_in_user_profile(
+        self,
+        urlopen,
+        refresh_process_path,
+    ) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("bin/az.cmd", "@echo off")
+            archive.writestr("python.exe", "runtime")
+        payload = archive_bytes.getvalue()
+        urlopen.return_value = io.BytesIO(payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            cli_dir = tools_dir / "azure-cli"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.AZURE_CLI_DIR", cli_dir),
+                patch(
+                    "app.main.AZURE_CLI_SHA256",
+                    hashlib.sha256(payload).hexdigest().upper(),
+                ),
+            ):
+                job = Job()
+                self.assertTrue(install_managed_azure_cli(job))
+
+            self.assertTrue((cli_dir / "bin" / "az.cmd").is_file())
+            self.assertFalse((tools_dir / "azure-cli-staging").exists())
+            self.assertFalse(any(tools_dir.glob("*.zip")))
+        refresh_process_path.assert_called_once_with()
+
+    @patch("app.main.urlopen")
+    def test_rejects_azure_cli_download_with_wrong_checksum(self, urlopen) -> None:
+        urlopen.return_value = io.BytesIO(b"not the expected archive")
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            cli_dir = tools_dir / "azure-cli"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.AZURE_CLI_DIR", cli_dir),
+                patch("app.main.AZURE_CLI_SHA256", "0" * 64),
+            ):
+                job = Job()
+                self.assertFalse(install_managed_azure_cli(job))
+
+            self.assertFalse(cli_dir.exists())
+            self.assertFalse(any(tools_dir.glob("*.zip")))
 
     @patch("app.main.subprocess.run")
     @patch("app.main.shutil.which")
@@ -989,6 +1068,22 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(
             command[1:],
             ["-I", "-B", "-u", "-m", "azure.cli", "login"],
+        )
+
+    @patch("app.main.shutil.which")
+    def test_runs_managed_azure_cli_through_its_supported_cmd_entrypoint(
+        self,
+        which,
+    ) -> None:
+        cli_dir = Path(r"C:\Users\demo\AppData\Local\AzureSREAgentDemo\tools\azure-cli")
+        which.return_value = str(cli_dir / "bin" / "az.cmd")
+
+        with patch("app.main.AZURE_CLI_DIR", cli_dir):
+            command = resolved_process_command(["az", "account", "show"])
+
+        self.assertEqual(
+            command,
+            [str(cli_dir / "bin" / "az.cmd"), "account", "show"],
         )
 
     @patch("app.main.subprocess.run")

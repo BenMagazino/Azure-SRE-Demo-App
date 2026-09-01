@@ -157,7 +157,7 @@ function renderLabPicker() {
 function updateLabCopy() {
   const lab = currentLab();
   if (!lab) return;
-  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. The launcher can install, update, or repair them through WinGet.`;
+  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. Azure CLI is installed privately without administrator approval; WinGet handles other tool remediation.`;
   document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}. No GitHub connection is required.`;
   document.querySelector("#deploy-title").textContent = `Deploy ${lab.name}`;
   document.querySelector("#deploy-copy").textContent = `${lab.description} Azure resources and lab automation are created automatically.`;
@@ -481,7 +481,9 @@ function renderTool(tool) {
     const install = document.createElement("div");
     install.className = "install";
     const code = document.createElement("code");
-    code.textContent = tool.install_command;
+    code.textContent = tool.id === "az"
+      ? "App-managed user-profile installation (no UAC)"
+      : tool.install_command;
     const copy = document.createElement("button");
     copy.className = "secondary";
     copy.textContent = "Copy";
@@ -505,7 +507,9 @@ function renderTool(tool) {
     const progress = document.createElement("pre");
     progress.className = "install-progress hidden";
     progress.setAttribute("aria-live", "polite");
-    install.append(installButton, code, copy, link, progress);
+    install.append(installButton, code);
+    if (tool.id !== "az") install.append(copy);
+    install.append(link, progress);
     row.append(install);
   }
   return row;
@@ -577,7 +581,10 @@ async function installTool(tool, button, progress) {
       await loadPrerequisites();
       return;
     }
-    progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} failed. Review the output above or use the fallback command.\n`;
+    const fallback = tool.id === "az"
+      ? "review the installer documentation"
+      : "use the fallback command";
+    progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} failed. Review the output above or ${fallback}.\n`;
   } catch (error) {
     progress.textContent += `\n${action[0].toUpperCase()}${action.slice(1)} failed: ${error}\n`;
   }

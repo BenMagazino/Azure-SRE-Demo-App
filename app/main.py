@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -12,11 +13,12 @@ import threading
 import time
 import uuid
 import webbrowser
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -36,6 +38,20 @@ STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "state.json"
 ENVIRONMENT_CACHE_FILE = STATE_DIR / "environments.json"
+MANAGED_TOOLS_DIR = STATE_DIR / "tools"
+AZURE_CLI_VERSION = "2.90.0"
+AZURE_CLI_URL = (
+    "https://azcliprod.blob.core.windows.net/zip/"
+    f"azure-cli-{AZURE_CLI_VERSION}-x64.zip"
+)
+AZURE_CLI_SHA256 = (
+    "C4EF59B14F0EDD074427FD9981E57B0780965CCDCF6191C033FDF4B4361F33D7"
+)
+AZURE_CLI_DIR = MANAGED_TOOLS_DIR / "azure-cli"
+AZURE_CLI_DOCS_URL = (
+    "https://learn.microsoft.com/cli/azure/install-azure-cli-windows"
+    "?view=azure-cli-latest#zip-package"
+)
 if FROZEN or PORTABLE:
     VENDOR_DIR = STATE_DIR / "starter-lab"
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
@@ -241,7 +257,7 @@ TOOLS = (
         False,
     ),
     ("az", "Azure CLI", ("version",), "2.88.0",
-     "https://learn.microsoft.com/cli/azure/install-azure-cli-windows", True),
+     AZURE_CLI_DOCS_URL, True),
     ("azd", "Azure Developer CLI", ("version",), "1.28.0",
      "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
 )
@@ -769,32 +785,41 @@ def discover_existing_environments(
 def refresh_process_path() -> None:
     if os.name != "nt":
         return
+
+    managed_paths = []
+    managed_azure_cli_bin = AZURE_CLI_DIR / "bin"
+    if (managed_azure_cli_bin / "az.cmd").is_file():
+        managed_paths.append(str(managed_azure_cli_bin))
+
+    registry_paths = []
     try:
         import winreg
     except ImportError:
-        return
+        LOGGER.debug("Windows registry is unavailable during PATH refresh")
+    else:
+        keys = (
+            (
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            ),
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+        )
+        for hive, key_path in keys:
+            try:
+                with winreg.OpenKey(hive, key_path) as key:
+                    value, _ = winreg.QueryValueEx(key, "Path")
+                    registry_paths.extend(os.path.expandvars(value).split(os.pathsep))
+            except OSError:
+                continue
 
-    registry_paths = []
-    keys = (
-        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
-        (winreg.HKEY_CURRENT_USER, r"Environment"),
-    )
-    for hive, key_path in keys:
-        try:
-            with winreg.OpenKey(hive, key_path) as key:
-                value, _ = winreg.QueryValueEx(key, "Path")
-                registry_paths.extend(os.path.expandvars(value).split(os.pathsep))
-        except OSError:
-            continue
-
-    if not registry_paths:
-        LOGGER.debug("PATH refresh skipped because no registry PATH values were available")
+    if not managed_paths and not registry_paths:
+        LOGGER.debug("PATH refresh skipped because no updated PATH values were available")
         return
 
     current_paths = os.environ.get("PATH", "").split(os.pathsep)
     paths = []
     seen = set()
-    for path in [*registry_paths, *current_paths]:
+    for path in [*managed_paths, *registry_paths, *current_paths]:
         normalized = os.path.normcase(path.strip().strip('"'))
         if not normalized or normalized in seen:
             continue
@@ -802,10 +827,131 @@ def refresh_process_path() -> None:
         paths.append(path)
     os.environ["PATH"] = os.pathsep.join(paths)
     LOGGER.debug(
-        "Refreshed process PATH: registry_entries=%s total_entries=%s",
+        "Refreshed process PATH: managed_entries=%s registry_entries=%s total_entries=%s",
+        len(managed_paths),
         len(registry_paths),
         len(paths),
     )
+
+
+def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    destination_root = destination.resolve()
+    for member in archive.infolist():
+        member_path = PurePosixPath(member.filename.replace("\\", "/"))
+        if (
+            member_path.is_absolute()
+            or ".." in member_path.parts
+            or any(part.endswith(":") for part in member_path.parts)
+        ):
+            raise ValueError(f"Unsafe ZIP entry: {member.filename}")
+        target = (destination / Path(*member_path.parts)).resolve()
+        try:
+            target.relative_to(destination_root)
+        except ValueError as error:
+            raise ValueError(f"Unsafe ZIP entry: {member.filename}") from error
+    archive.extractall(destination)
+
+
+def install_managed_azure_cli(job: Job) -> bool:
+    MANAGED_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    archive_path = MANAGED_TOOLS_DIR / f"azure-cli-{AZURE_CLI_VERSION}.zip"
+    staging_dir = MANAGED_TOOLS_DIR / "azure-cli-staging"
+    backup_dir = MANAGED_TOOLS_DIR / "azure-cli-backup"
+
+    try:
+        archive_path.unlink(missing_ok=True)
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        if backup_dir.exists():
+            if not AZURE_CLI_DIR.exists():
+                backup_dir.replace(AZURE_CLI_DIR)
+            else:
+                shutil.rmtree(backup_dir)
+    except OSError as error:
+        LOGGER.exception("Managed Azure CLI staging cleanup failed")
+        job.emit(
+            "output",
+            line=f"Azure CLI installation could not prepare its staging folder: {error}",
+        )
+        return False
+
+    job.emit(
+        "output",
+        line=(
+            f"Downloading Azure CLI {AZURE_CLI_VERSION} to the current user "
+            "profile (no administrator approval required)..."
+        ),
+    )
+    digest = hashlib.sha256()
+    downloaded = 0
+    last_reported_megabytes = 0
+    request = Request(
+        AZURE_CLI_URL,
+        headers={"User-Agent": "AzureSREAgentDemo/1.0"},
+    )
+    try:
+        with urlopen(request, timeout=180) as response, archive_path.open("wb") as output:
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+                digest.update(chunk)
+                downloaded += len(chunk)
+                downloaded_megabytes = downloaded // (10 * 1024 * 1024) * 10
+                if downloaded_megabytes > last_reported_megabytes:
+                    last_reported_megabytes = downloaded_megabytes
+                    job.emit(
+                        "output",
+                        line=f"Downloaded {downloaded_megabytes} MB...",
+                    )
+
+        actual_hash = digest.hexdigest().upper()
+        if actual_hash != AZURE_CLI_SHA256:
+            raise ValueError(
+                "Azure CLI download checksum mismatch. "
+                f"Expected {AZURE_CLI_SHA256}, received {actual_hash}."
+            )
+
+        job.emit("output", line="Checksum verified. Extracting Azure CLI...")
+        staging_dir.mkdir()
+        with zipfile.ZipFile(archive_path) as archive:
+            safe_extract_zip(archive, staging_dir)
+        if not (staging_dir / "bin" / "az.cmd").is_file():
+            raise ValueError("Azure CLI archive does not contain bin\\az.cmd.")
+
+        if AZURE_CLI_DIR.exists():
+            AZURE_CLI_DIR.replace(backup_dir)
+        try:
+            staging_dir.replace(AZURE_CLI_DIR)
+        except OSError:
+            if backup_dir.exists() and not AZURE_CLI_DIR.exists():
+                backup_dir.replace(AZURE_CLI_DIR)
+            raise
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+        refresh_process_path()
+        job.emit(
+            "output",
+            line=f"Azure CLI installed privately at {AZURE_CLI_DIR}.",
+        )
+        return True
+    except (OSError, URLError, ValueError, zipfile.BadZipFile) as error:
+        LOGGER.exception("Managed Azure CLI installation failed")
+        job.emit("output", line=f"Azure CLI installation failed: {error}")
+        return False
+    finally:
+        try:
+            archive_path.unlink(missing_ok=True)
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir)
+        except OSError as cleanup_error:
+            LOGGER.warning(
+                "Managed Azure CLI temporary-file cleanup failed: %s",
+                cleanup_error,
+            )
+            job.emit(
+                "output",
+                line=f"Temporary-file cleanup needs attention: {cleanup_error}",
+            )
 
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
@@ -834,7 +980,10 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
             f"{current.minimum_version} or newer..."
         ),
     )
-    success, _ = run_process(job, command)
+    if tool_id == "az":
+        success = install_managed_azure_cli(job)
+    else:
+        success, _ = run_process(job, command)
     if not success:
         job.emit("tool_status", tool_id=tool_id, status="failed")
         return False
@@ -884,7 +1033,7 @@ def install_tool_worker(
         winget_status = statuses.get("winget")
         if winget_status is None:
             winget_status = prerequisite_statuses(("winget",))[0]
-        if tool_id != "winget" and not winget_status.ready:
+        if tool_id == "azd" and not winget_status.ready:
             job.emit(
                 "output",
                 line="WinGet must be current before it can update other dependencies.",
@@ -924,7 +1073,11 @@ def install_all_worker(job: Job, lab_id: Optional[str] = None) -> None:
         winget_status = statuses.get("winget")
         if winget_status is None:
             winget_status = prerequisite_statuses(("winget",))[0]
-        if not winget_status.ready and "winget" not in install_ids:
+        if (
+            "azd" in install_ids
+            and not winget_status.ready
+            and "winget" not in install_ids
+        ):
             install_ids = ["winget", *install_ids]
 
         failures = []
@@ -1052,6 +1205,11 @@ def resolved_process_command(command: list[str]) -> Optional[list[str]]:
     if resolved is None:
         return None
     if command[0].lower() == "az" and Path(resolved).suffix.lower() == ".cmd":
+        managed_azure_cli = AZURE_CLI_DIR / "bin" / "az.cmd"
+        if os.path.normcase(os.path.abspath(resolved)) == os.path.normcase(
+            os.path.abspath(managed_azure_cli)
+        ):
+            return [resolved, *command[1:]]
         azure_python = Path(resolved).parent.parent / "python.exe"
         if azure_python.is_file():
             return [

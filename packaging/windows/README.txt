@@ -9,8 +9,11 @@ official Python Software Foundation 3.14.7 embeddable runtime, so Python does
 not need to be installed on the workstation.
 
 The wizard requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0
-or newer. WinGet 1.29.280 or newer can install or update either tool. Git is
-not required.
+or newer. The wizard installs Azure CLI 2.90.0 privately in your local app-data
+folder from Microsoft's checksum-verified ZIP package, without a UAC prompt or
+machine PATH change. Microsoft currently marks the ZIP distribution as preview.
+WinGet 1.29.280 or newer installs or updates Azure Developer CLI. Git is not
+required.
 
 Start by choosing a lab. The initial catalog includes the Grubify Starter Lab
 and its Memory Leak demo scenario.

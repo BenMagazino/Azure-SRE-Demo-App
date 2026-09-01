@@ -20,10 +20,15 @@ The portable Windows package includes Python. Python 3.14.7 or newer is required
 only when running directly from the source repository.
 
 The app requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0 or
-newer. WinGet 1.29.280 or newer is the recommended installer. The prerequisite
-screen verifies these versions and can install, repair, or update tools
-sequentially with one action. Individual remediation, copy-command, and
-official-documentation fallbacks remain available.
+newer. The prerequisite screen verifies these versions and can install, repair,
+or update tools sequentially with one action. Azure CLI remediation uses
+Microsoft's 64-bit ZIP distribution, verifies its pinned SHA-256 checksum, and
+installs version 2.90.0 under
+`%LOCALAPPDATA%\AzureSREAgentDemo\tools\azure-cli`. This user-profile
+installation does not require administrator approval or change the machine
+`PATH`. The ZIP distribution is currently marked preview by Microsoft. WinGet
+1.29.280 or newer handles Azure Developer CLI remediation. Copy-command and
+official-documentation fallbacks remain available for WinGet-managed tools.
 
 These minimums were reviewed on September 1, 2026 and should be refreshed by
 December 1, 2026 to preserve the three-month tool-age policy.
