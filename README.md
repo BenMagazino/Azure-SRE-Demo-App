@@ -87,7 +87,9 @@ folder must remain together.
 4. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
    Azure CLI default is shown first, and cross-tenant selections are reauthenticated
    with a tenant-scoped device-code flow when required.
-5. Configure the Azure environment and region.
+5. Scan the selected subscription for compatible existing labs, or configure a
+   new Azure environment and region. Existing labs can be connected to the
+   local azd project and reconciled with the current lab definition.
 6. Deploy the selected lab.
 7. Choose and run a scenario supported by that lab.
 8. Restore the declared Bicep, application, and SRE Agent baseline when policy
@@ -98,3 +100,8 @@ folder must remain together.
 All wizard steps are implemented in the Python backend. Deployment uses ACR Tasks
 to build Grubify remotely, so Docker Desktop and a local Grubify checkout are not
 required.
+
+Environment discovery uses read-only Azure CLI subscription inventory as the
+source of truth and `azd env list` to identify environments already known on the
+workstation. The last successful scan is cached at
+`%LOCALAPPDATA%\AzureSREAgentDemo\environments.json` for offline fallback.

@@ -12,7 +12,7 @@
       })();
     </script>
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260901.3">
+    <link rel="stylesheet" href="/styles.css?v=20260901.4">
   </head>
   <body>
     <main class="shell">
@@ -109,6 +109,19 @@
       <section id="configuration" class="panel hidden">
         <h2>Configure the Azure environment</h2>
         <p id="configure-copy">Choose the Azure environment for the selected lab.</p>
+        <section class="context-card" aria-labelledby="existing-environments-heading">
+          <div class="context-heading">
+            <div>
+              <h3 id="existing-environments-heading">Existing lab environments</h3>
+              <p>Reuse and reconcile a lab already deployed in the selected subscription.</p>
+            </div>
+            <button id="refresh-environments" class="secondary" type="button">Scan subscription</button>
+          </div>
+          <p id="environment-discovery-status" aria-live="polite">
+            Scan the selected subscription for compatible labs.
+          </p>
+          <div id="existing-environment-list" class="environment-list"></div>
+        </section>
         <form id="configure-form" class="form-grid">
           <label>
             Environment name
@@ -164,6 +177,6 @@
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260901.3"></script>
+    <script src="/app.js?v=20260901.4"></script>
   </body>
 </html>

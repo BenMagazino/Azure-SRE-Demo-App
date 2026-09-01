@@ -16,6 +16,7 @@ let persistedLabId = "";
 let selectedLabId = "";
 let selectedScenarioId = "";
 let azureContextApplied = false;
+let selectedExistingEnvironment = null;
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -749,6 +750,102 @@ function streamJob(jobId, log, options = {}) {
   });
 }
 
+function azureLocationLabel(location) {
+  const option = [...document.querySelector("#azure-location").options]
+    .find((item) => item.value === location);
+  return option?.textContent || location;
+}
+
+function selectExistingEnvironment(environment) {
+  selectedExistingEnvironment = environment;
+  document.querySelector("#environment-name").value = environment.environment;
+  document.querySelector("#azure-location").value = environment.location;
+  document.querySelector("#configure-status").textContent =
+    `${environment.environment} selected. Save to connect it to this workstation, then reconcile the lab.`;
+  document.querySelectorAll(".environment-card").forEach((card) => {
+    const selected = card.dataset.environment === environment.environment;
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+}
+
+function renderExistingEnvironments(payload) {
+  const list = document.querySelector("#existing-environment-list");
+  const status = document.querySelector("#environment-discovery-status");
+  const environments = payload.environments || [];
+  list.replaceChildren(...environments.map((environment) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "picker-card environment-card";
+    button.dataset.environment = environment.environment;
+    button.setAttribute("aria-pressed", "false");
+
+    const title = document.createElement("span");
+    title.className = "picker-title";
+    title.textContent = environment.environment;
+    const description = document.createElement("span");
+    description.className = "picker-description";
+    description.textContent =
+      `${environment.resource_group} · ${azureLocationLabel(environment.location)}`;
+    const meta = document.createElement("span");
+    meta.className = "picker-meta";
+    const detection = environment.detection === "managed"
+      ? "Tagged lab"
+      : "Compatible legacy lab";
+    meta.textContent = environment.local
+      ? `${detection} · Known to local azd`
+      : `${detection} · Will be added to local azd`;
+    button.append(title, description, meta);
+    button.addEventListener("click", () => selectExistingEnvironment(environment));
+    return button;
+  }));
+
+  if (payload.warning) {
+    status.className = "warning";
+    status.textContent = payload.warning;
+  } else if (environments.length) {
+    status.className = "success";
+    status.textContent =
+      `${environments.length} compatible lab environment${environments.length === 1 ? "" : "s"} found in Azure.`;
+  } else {
+    status.className = "";
+    status.textContent =
+      "No compatible lab environments were found. Configure a new environment below.";
+  }
+}
+
+async function loadExistingEnvironments() {
+  const status = document.querySelector("#environment-discovery-status");
+  const refresh = document.querySelector("#refresh-environments");
+  refresh.disabled = true;
+  refresh.setAttribute("aria-busy", "true");
+  refresh.textContent = "Scanning";
+  selectedExistingEnvironment = null;
+  status.className = "";
+  status.textContent =
+    "Scanning the selected subscription and checking local azd environments...";
+  try {
+    const response = await fetch("/api/environments", { cache: "no-store" });
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error("Restart the local application to enable environment discovery.");
+    }
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Environment discovery failed.");
+    }
+    renderExistingEnvironments(payload);
+  } catch (error) {
+    status.className = "warning";
+    status.textContent = `Unable to scan for existing labs: ${error}`;
+    document.querySelector("#existing-environment-list").replaceChildren();
+  } finally {
+    refresh.disabled = false;
+    refresh.removeAttribute("aria-busy");
+    refresh.textContent = "Scan subscription";
+  }
+}
+
 async function configureEnvironment(event) {
   event.preventDefault();
   const status = document.querySelector("#configure-status");
@@ -756,13 +853,25 @@ async function configureEnvironment(event) {
   const response = await apiPost("/api/configure", {
     environment: document.querySelector("#environment-name").value,
     location: document.querySelector("#azure-location").value,
+    existing_environment: Boolean(selectedExistingEnvironment),
   });
   const result = await response.json();
   if (!response.ok) {
     status.textContent = result.error || "Configuration failed.";
     return;
   }
-  status.textContent = `Ready: ${result.environment} in ${result.location}`;
+  const deployButton = document.querySelector("#start-deploy");
+  if (result.existing_environment) {
+    status.textContent =
+      `Existing lab selected: ${result.environment} in ${result.location}.`;
+    deployButton.textContent = "Reconcile existing lab";
+    document.querySelector("#deploy-step").textContent =
+      "The existing Azure resources will be reconciled with the current lab definition.";
+  } else {
+    status.textContent = `Ready: ${result.environment} in ${result.location}`;
+    deployButton.textContent = "Deploy lab";
+    document.querySelector("#deploy-step").textContent = "";
+  }
   showPanel("deployment");
 }
 
@@ -964,7 +1073,38 @@ document.querySelector("#refresh-azure-context").addEventListener("click", () =>
     azureContextStatus.textContent = `Unable to refresh Azure accounts: ${error}`;
   });
 });
-document.querySelector("#continue-to-configure").addEventListener("click", () => showPanel("configuration"));
+document.querySelector("#continue-to-configure").addEventListener("click", () => {
+  showPanel("configuration");
+  void loadExistingEnvironments();
+});
+document.querySelector("#refresh-environments").addEventListener(
+  "click",
+  loadExistingEnvironments,
+);
+document.querySelector("#environment-name").addEventListener("input", (event) => {
+  if (
+    selectedExistingEnvironment
+    && event.target.value !== selectedExistingEnvironment.environment
+  ) {
+    selectedExistingEnvironment = null;
+    document.querySelectorAll(".environment-card").forEach((card) => {
+      card.classList.remove("selected");
+      card.setAttribute("aria-pressed", "false");
+    });
+  }
+});
+document.querySelector("#azure-location").addEventListener("change", (event) => {
+  if (
+    selectedExistingEnvironment
+    && event.target.value !== selectedExistingEnvironment.location
+  ) {
+    selectedExistingEnvironment = null;
+    document.querySelectorAll(".environment-card").forEach((card) => {
+      card.classList.remove("selected");
+      card.setAttribute("aria-pressed", "false");
+    });
+  }
+});
 document.querySelector("#configure-form").addEventListener("submit", configureEnvironment);
 document.querySelector("#start-deploy").addEventListener("click", startDeploy);
 document.querySelector("#run-scenario").addEventListener("click", runSelectedScenario);

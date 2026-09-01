@@ -23,10 +23,12 @@ from app.main import (
     azure_cli_management_authenticated,
     azure_login_worker,
     break_cart_worker,
+    build_existing_environment_catalog,
     build_azure_context_catalog,
     claims_challenge_login_command,
     command_version,
     deploy_worker,
+    discover_existing_environments,
     http_json,
     install_all_worker,
     is_device_login_url,
@@ -160,6 +162,107 @@ class LabWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(save_state.call_args.args[0]["scenario_id"], "memory-leak")
         self.assertEqual(handler.send_json.call_args.args[0]["job_id"], "job-1")
+
+    def test_builds_tagged_and_legacy_environment_catalog(self) -> None:
+        groups = [
+            {
+                "name": "rg-tagged-lab",
+                "location": "eastus2",
+                "tags": {
+                    "azure-sre-agent-lab-id": "grubify-starter-lab",
+                    "azure-sre-agent-environment": "tagged-lab",
+                },
+            },
+            {
+                "name": "rg-legacy-lab",
+                "location": "swedencentral",
+                "tags": {},
+            },
+            {
+                "name": "rg-unrelated",
+                "location": "eastus2",
+                "tags": {},
+            },
+            {
+                "name": "rg-incomplete",
+                "location": "eastus2",
+                "tags": {},
+            },
+        ]
+        agents = [
+            {"name": "sre-agent-a", "resourceGroup": "rg-legacy-lab"},
+            {"name": "sre-agent-b", "resourceGroup": "rg-unrelated"},
+            {"name": "sre-agent-c", "resourceGroup": "rg-incomplete"},
+        ]
+        container_apps = [
+            {"name": "ca-grubify-abc", "resourceGroup": "rg-legacy-lab"},
+            {"name": "ca-grubify-fe-abc", "resourceGroup": "rg-legacy-lab"},
+            {"name": "some-app", "resourceGroup": "rg-unrelated"},
+            {"name": "ca-grubify-fe-only", "resourceGroup": "rg-incomplete"},
+        ]
+
+        environments = build_existing_environment_catalog(
+            groups,
+            agents,
+            container_apps,
+            {"tagged-lab"},
+            "grubify-starter-lab",
+        )
+
+        self.assertEqual(
+            [
+                (
+                    item["environment"],
+                    item["detection"],
+                    item["local"],
+                )
+                for item in environments
+            ],
+            [
+                ("tagged-lab", "managed", True),
+                ("legacy-lab", "legacy", False),
+            ],
+        )
+
+    @patch("app.main.load_environment_cache")
+    @patch("app.main.run_capture", return_value=(False, "unavailable"))
+    @patch("app.main.local_azd_environment_names", return_value={"cached-lab"})
+    def test_uses_offline_environment_cache_when_azure_is_unavailable(
+        self,
+        _local_names,
+        _run_capture,
+        load_environment_cache,
+    ) -> None:
+        load_environment_cache.return_value = [{
+            "environment": "cached-lab",
+            "resource_group": "rg-cached-lab",
+            "location": "eastus2",
+            "detection": "managed",
+            "local": False,
+        }]
+
+        result = discover_existing_environments(
+            SUBSCRIPTION_A,
+            "grubify-starter-lab",
+        )
+
+        self.assertEqual(result["source"], "cache")
+        self.assertTrue(result["stale"])
+        self.assertTrue(result["environments"][0]["local"])
+
+    def test_resource_group_has_stable_discovery_tags(self) -> None:
+        bicep = (VENDOR_DIR / "infra" / "main.bicep").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "'azure-sre-agent-lab-id': 'grubify-starter-lab'",
+            bicep,
+        )
+        self.assertIn(
+            "'azure-sre-agent-environment': environmentName",
+            bicep,
+        )
 
 
 class DeviceCodeTests(unittest.TestCase):

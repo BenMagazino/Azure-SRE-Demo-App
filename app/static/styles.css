@@ -283,11 +283,20 @@ header p,
   margin: 1rem 0;
 }
 
-.picker-grid {
+.picker-grid,
+.environment-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1rem;
   margin: 1.25rem 0;
+}
+
+.environment-list:empty {
+  margin: 0;
+}
+
+.environment-card {
+  min-height: 120px;
 }
 
 .picker-card {

@@ -35,6 +35,7 @@ STATIC_DIR = ROOT / "static"
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "state.json"
+ENVIRONMENT_CACHE_FILE = STATE_DIR / "environments.json"
 if FROZEN or PORTABLE:
     VENDOR_DIR = STATE_DIR / "starter-lab"
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
@@ -270,6 +271,8 @@ LABS = (
     ),
 )
 LABS_BY_ID = {lab.id: lab for lab in LABS}
+LAB_ID_TAG = "azure-sre-agent-lab-id"
+LAB_ENVIRONMENT_TAG = "azure-sre-agent-environment"
 
 
 class Job:
@@ -552,6 +555,214 @@ def lab_catalog_payload(state: Optional[dict[str, Any]] = None) -> dict[str, Any
         "selected_scenario_id": (
             str(current_state.get("scenario_id", "")) if active_lab else ""
         ),
+    }
+
+
+def parse_json_records(output: str) -> Optional[list[dict[str, Any]]]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def local_azd_environment_names() -> set[str]:
+    success, output = run_capture(
+        ["azd", "env", "list", "--output", "json"],
+        VENDOR_DIR,
+    )
+    if not success:
+        return set()
+    records = parse_json_records(output)
+    if records is None:
+        return set()
+    names = set()
+    for record in records:
+        name = str(record.get("name") or record.get("Name") or "").strip()
+        if name:
+            names.add(name.casefold())
+    return names
+
+
+def build_existing_environment_catalog(
+    groups: list[dict[str, Any]],
+    agents: list[dict[str, Any]],
+    container_apps: list[dict[str, Any]],
+    local_environment_names: set[str],
+    lab_id: str,
+) -> list[dict[str, Any]]:
+    agent_groups = {
+        str(resource.get("resourceGroup") or "").casefold()
+        for resource in agents
+        if resource.get("resourceGroup")
+    }
+    apps_by_group: dict[str, set[str]] = {}
+    for resource in container_apps:
+        resource_group = str(resource.get("resourceGroup") or "").casefold()
+        name = str(resource.get("name") or "").casefold()
+        if resource_group and name:
+            apps_by_group.setdefault(resource_group, set()).add(name)
+
+    environments = []
+    for group in groups:
+        resource_group = str(group.get("name") or "").strip()
+        resource_group_key = resource_group.casefold()
+        if not resource_group:
+            continue
+        tags = {
+            str(key).casefold(): str(value).strip()
+            for key, value in (group.get("tags") or {}).items()
+        }
+        tagged_lab_id = tags.get(LAB_ID_TAG.casefold(), "")
+        if tagged_lab_id:
+            if tagged_lab_id.casefold() != lab_id.casefold():
+                continue
+            detection = "managed"
+        else:
+            app_names = apps_by_group.get(resource_group_key, set())
+            is_grubify_lab = (
+                resource_group_key.startswith("rg-")
+                and resource_group_key in agent_groups
+                and any(
+                    name.startswith("ca-grubify-")
+                    and not name.startswith("ca-grubify-fe-")
+                    for name in app_names
+                )
+                and any(name.startswith("ca-grubify-fe-") for name in app_names)
+            )
+            if not is_grubify_lab:
+                continue
+            detection = "legacy"
+
+        environment = (
+            tags.get(LAB_ENVIRONMENT_TAG.casefold(), "")
+            or resource_group.removeprefix("rg-")
+        )
+        location = str(group.get("location") or "").lower()
+        if (
+            not re.fullmatch(r"[a-zA-Z0-9-]{2,30}", environment)
+            or location not in SRE_AGENT_REGIONS
+        ):
+            continue
+        environments.append({
+            "environment": environment,
+            "resource_group": resource_group,
+            "location": location,
+            "detection": detection,
+            "local": environment.casefold() in local_environment_names,
+        })
+    return sorted(
+        environments,
+        key=lambda item: (not item["local"], item["environment"].casefold()),
+    )
+
+
+def load_environment_cache(
+    subscription_id: str,
+    lab_id: str,
+) -> list[dict[str, Any]]:
+    if not ENVIRONMENT_CACHE_FILE.is_file():
+        return []
+    try:
+        payload = json.loads(ENVIRONMENT_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if (
+        payload.get("subscription_id") != subscription_id
+        or payload.get("lab_id") != lab_id
+        or not isinstance(payload.get("environments"), list)
+    ):
+        return []
+    return [
+        item
+        for item in payload["environments"]
+        if isinstance(item, dict)
+    ]
+
+
+def save_environment_cache(
+    subscription_id: str,
+    lab_id: str,
+    environments: list[dict[str, Any]],
+) -> None:
+    try:
+        ENVIRONMENT_CACHE_FILE.write_text(
+            json.dumps({
+                "subscription_id": subscription_id,
+                "lab_id": lab_id,
+                "discovered_at": datetime.now(timezone.utc).isoformat(),
+                "environments": environments,
+            }, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        LOGGER.exception("Unable to save the environment discovery cache")
+
+
+def discover_existing_environments(
+    subscription_id: str,
+    lab_id: str,
+) -> dict[str, Any]:
+    local_names = local_azd_environment_names()
+    commands = (
+        [
+            "az", "group", "list",
+            "--subscription", subscription_id,
+            "--query", "[].{name:name,location:location,tags:tags}",
+            "--output", "json",
+        ],
+        [
+            "az", "resource", "list",
+            "--subscription", subscription_id,
+            "--resource-type", "Microsoft.App/agents",
+            "--query", "[].{name:name,resourceGroup:resourceGroup,location:location}",
+            "--output", "json",
+        ],
+        [
+            "az", "resource", "list",
+            "--subscription", subscription_id,
+            "--resource-type", "Microsoft.App/containerApps",
+            "--query", "[].{name:name,resourceGroup:resourceGroup,location:location}",
+            "--output", "json",
+        ],
+    )
+    records = []
+    for command in commands:
+        success, output = run_capture(command, timeout=60)
+        parsed = parse_json_records(output) if success else None
+        if parsed is None:
+            cached = load_environment_cache(subscription_id, lab_id)
+            for item in cached:
+                environment = str(item.get("environment") or "")
+                item["local"] = environment.casefold() in local_names
+            return {
+                "environments": cached,
+                "source": "cache",
+                "stale": True,
+                "warning": (
+                    "Azure discovery is unavailable. Showing the last successful "
+                    "subscription scan."
+                    if cached
+                    else "Azure discovery is unavailable and no offline cache exists."
+                ),
+            }
+        records.append(parsed)
+
+    environments = build_existing_environment_catalog(
+        records[0],
+        records[1],
+        records[2],
+        local_names,
+        lab_id,
+    )
+    save_environment_cache(subscription_id, lab_id, environments)
+    return {
+        "environments": environments,
+        "source": "azure",
+        "stale": False,
+        "warning": "",
     }
 
 
@@ -2281,6 +2492,24 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             self.send_json(catalog)
             return
+        if path == "/api/environments":
+            state = load_state()
+            lab = selected_lab(state)
+            context = cached_azure_context()
+            if lab is None:
+                self.send_json({"error": "Select a lab first."}, HTTPStatus.CONFLICT)
+                return
+            if context is None or not azure_cli_management_authenticated():
+                self.send_json(
+                    {"error": "Authenticate the selected Azure subscription first."},
+                    HTTPStatus.CONFLICT,
+                )
+                return
+            self.send_json(discover_existing_environments(
+                context["subscription"],
+                lab.id,
+            ))
+            return
         if path == "/api/summary":
             state = load_state()
             environment = state.get("environment")
@@ -2585,6 +2814,7 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         environment = str(payload.get("environment", "")).strip()
         location = str(payload.get("location", "")).strip().lower()
+        existing_environment = payload.get("existing_environment") is True
         if not re.fullmatch(r"[a-zA-Z0-9-]{2,30}", environment):
             self.send_json(
                 {"error": "Environment must be 2-30 letters, numbers, or hyphens."},
@@ -2650,6 +2880,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             "tenant_id": context["tenant"],
             "subscription_id": subscription_id,
             "deployment_active": False,
+            "existing_environment": existing_environment,
         })
         state.pop("scenario_id", None)
         save_state(state)

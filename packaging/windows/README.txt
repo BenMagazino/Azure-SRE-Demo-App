@@ -15,6 +15,9 @@ not required.
 Start by choosing a lab. The initial catalog includes the Grubify Starter Lab
 and its Memory Leak demo scenario.
 
+The Configure step scans the selected subscription for compatible existing labs.
+The last successful result is cached locally for offline fallback.
+
 If Windows marks files from the downloaded ZIP as internet-origin, right-click
 the ZIP before extracting it, select Properties, select Unblock, and then
 extract it again.

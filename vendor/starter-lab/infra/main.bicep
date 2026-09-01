@@ -36,6 +36,10 @@ var resourceGroupName = 'rg-${environmentName}'
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
   location: location
+  tags: {
+    'azure-sre-agent-lab-id': 'grubify-starter-lab'
+    'azure-sre-agent-environment': environmentName
+  }
 }
 
 // Deploy all resources into the resource group
