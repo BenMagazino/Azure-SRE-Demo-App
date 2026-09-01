@@ -13,6 +13,7 @@ from app.main import (
     azure_context_is_available,
     azure_cli_management_authenticated,
     azure_login_worker,
+    break_cart_worker,
     build_azure_context_catalog,
     claims_challenge_login_command,
     command_version,
@@ -20,6 +21,7 @@ from app.main import (
     http_json,
     install_all_worker,
     is_device_login_url,
+    memory_pressure_observed,
     open_browser_url,
     parse_claims_challenge_login,
     parse_device_code,
@@ -957,6 +959,57 @@ class DeploymentRecoveryTests(unittest.TestCase):
         save_state.assert_not_called()
         done = list(job.events.queue)[-1]
         self.assertFalse(done["success"])
+
+
+class BreakCartTests(unittest.TestCase):
+    def test_memory_pressure_accepts_sustained_service_failure(self) -> None:
+        self.assertTrue(memory_pressure_observed(73, 127))
+
+    def test_memory_pressure_rejects_insufficient_or_transient_failures(self) -> None:
+        self.assertFalse(memory_pressure_observed(49, 127))
+        self.assertFalse(memory_pressure_observed(73, 19))
+
+    def test_memory_pressure_accepts_allocation_threshold(self) -> None:
+        self.assertTrue(memory_pressure_observed(75, 0))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.urlopen")
+    @patch("app.main.azd_values")
+    @patch("app.main.load_state")
+    def test_break_cart_succeeds_when_service_stops_after_allocations(
+        self,
+        load_state,
+        azd_values,
+        urlopen,
+        _sleep,
+    ) -> None:
+        load_state.return_value = {"environment": "sre-lab"}
+        azd_values.return_value = {"CONTAINER_APP_URL": "https://example.test"}
+        successful_response = MagicMock()
+        successful_response.__enter__.return_value.status = 201
+        urlopen.side_effect = (
+            [successful_response] * 73
+            + [TimeoutError()] * 127
+        )
+        job = Job()
+
+        break_cart_worker(job)
+
+        events = list(job.events.queue)
+        self.assertFalse(any(event["type"] == "error" for event in events))
+        self.assertIn(
+            "Memory pressure observed",
+            "\n".join(
+                event["line"]
+                for event in events
+                if event["type"] == "output"
+            ),
+        )
+        done = events[-1]
+        self.assertTrue(done["success"])
+        self.assertEqual(done["successes"], 73)
+        self.assertEqual(done["errors"], 127)
+        self.assertEqual(done["max_consecutive_service_failures"], 127)
 
 
 if __name__ == "__main__":

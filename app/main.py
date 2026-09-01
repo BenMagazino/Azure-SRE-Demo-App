@@ -1747,6 +1747,15 @@ def teardown_worker(job: Job) -> None:
     job.emit("done", success=success, exit_code=0 if success else 1)
 
 
+def memory_pressure_observed(
+    successes: int,
+    max_consecutive_service_failures: int,
+) -> bool:
+    return successes >= 75 or (
+        successes >= 50 and max_consecutive_service_failures >= 20
+    )
+
+
 def break_cart_worker(job: Job) -> None:
     environment = load_state().get("environment")
     values = azd_values(environment) if environment else {}
@@ -1759,6 +1768,8 @@ def break_cart_worker(job: Job) -> None:
     job.emit("started", command=["POST", f"{app_url}/api/cart/demo-user/items"])
     successes = 0
     errors = 0
+    consecutive_service_failures = 0
+    max_consecutive_service_failures = 0
     body = json.dumps({"foodItemId": 1, "quantity": 1}).encode("utf-8")
     for index in range(1, 201):
         request = Request(
@@ -1771,26 +1782,53 @@ def break_cart_worker(job: Job) -> None:
             with urlopen(request, timeout=15) as response:
                 if response.status in (200, 201):
                     successes += 1
+                    consecutive_service_failures = 0
                 else:
                     errors += 1
-        except (HTTPError, URLError, TimeoutError):
+                    if response.status >= 500:
+                        consecutive_service_failures += 1
+                    else:
+                        consecutive_service_failures = 0
+        except HTTPError as error:
             errors += 1
+            if error.code >= 500:
+                consecutive_service_failures += 1
+            else:
+                consecutive_service_failures = 0
+        except (URLError, TimeoutError):
+            errors += 1
+            consecutive_service_failures += 1
+        max_consecutive_service_failures = max(
+            max_consecutive_service_failures,
+            consecutive_service_failures,
+        )
         if index % 10 == 0:
             job.emit(
                 "output",
                 line=f"{index}/200 requests: {successes} succeeded, {errors} failed",
             )
         time.sleep(0.5)
-    # Each successful request retains roughly 10 MiB in the demo API. Requiring
-    # 75 successes creates enough pressure against the 1 GiB container limit to
-    # make the intended alert plausible while allowing some transient failures.
-    triggered = successes >= 75
+    # Each success retains roughly 10 MiB. Either enough allocations or a
+    # sustained service failure after substantial allocation proves the break.
+    triggered = memory_pressure_observed(
+        successes,
+        max_consecutive_service_failures,
+    )
+    if triggered and max_consecutive_service_failures >= 20:
+        job.emit(
+            "output",
+            line=(
+                "Memory pressure observed: the service stopped accepting "
+                f"requests after {successes} successful allocations."
+            ),
+        )
     if not triggered:
         job.emit(
             "error",
             message=(
-                f"Only {successes} requests succeeded; at least 75 are required "
-                "to plausibly trigger the memory-pressure scenario."
+                f"Memory pressure was not confirmed: {successes} requests "
+                "succeeded and the longest service-failure streak was "
+                f"{max_consecutive_service_failures}."
             ),
         )
     job.emit(
@@ -1799,6 +1837,7 @@ def break_cart_worker(job: Job) -> None:
         exit_code=0 if triggered else 1,
         successes=successes,
         errors=errors,
+        max_consecutive_service_failures=max_consecutive_service_failures,
     )
 
 
