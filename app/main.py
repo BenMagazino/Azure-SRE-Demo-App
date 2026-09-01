@@ -1300,6 +1300,7 @@ def http_json(
         method=method,
         headers={
             "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
             "Content-Type": "application/json",
         },
     )
@@ -1371,15 +1372,28 @@ def refresh_app_url(job: Job, app_name: str, resource_group: str) -> str:
     return f"https://{output.strip()}" if success and output.strip() else ""
 
 
-def response_plan_payload() -> dict[str, Any]:
+def response_plan_payload(environment: str) -> dict[str, Any]:
+    alert_name = f"alert-http-5xx-{environment}"
     return {
         "id": "grubify-http-errors",
         "name": "Grubify HTTP Errors",
         "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
-        "titleContains": "",
+        "titleContains": alert_name,
+        "titleNotContains": [f"{alert_name}-"],
         "handlingAgent": "incident-handler",
         "agentMode": "autonomous",
     }
+
+
+def upsert_response_plan(
+    url: str,
+    token: str,
+    payload: dict[str, Any],
+) -> tuple[int, str]:
+    status, response = http_json("PUT", url, token, payload)
+    if status == 409:
+        return http_json("POST", url, token, payload)
+    return status, response
 
 
 def response_plan_status_is_retryable(status: int) -> bool:
@@ -1567,7 +1581,7 @@ def post_provision(job: Job, environment: str) -> bool:
 
     job.emit("output", line="Waiting 30 seconds for Azure Monitor initialization...")
     time.sleep(30)
-    response_plan = response_plan_payload()
+    response_plan = response_plan_payload(environment)
     for attempt in range(1, 6):
         success, token = run_capture(
             [
@@ -1578,13 +1592,12 @@ def post_provision(job: Job, environment: str) -> bool:
         )
         if not success:
             return False
-        status, response = http_json(
-            "PUT",
+        status, response = upsert_response_plan(
             f"{endpoint}/api/v1/incidentPlayground/filters/grubify-http-errors",
             token.strip(),
             response_plan,
         )
-        if status in (200, 201, 202, 409):
+        if status in (200, 201, 202, 204):
             return True
         if not response_plan_status_is_retryable(status):
             job.emit(

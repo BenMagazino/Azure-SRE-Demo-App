@@ -36,6 +36,7 @@ from app.main import (
     scoped_azure_login_command,
     should_open_browser,
     teardown_worker,
+    upsert_response_plan,
 )
 
 
@@ -757,16 +758,42 @@ class RequestAuthenticationTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_header("Accept"), "application/json")
         self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
 
 
 class ResponsePlanTests(unittest.TestCase):
     def test_payload_uses_current_incident_filter_schema(self) -> None:
-        payload = response_plan_payload()
+        payload = response_plan_payload("sre-lab-auto-2")
 
         self.assertEqual(payload["handlingAgent"], "incident-handler")
         self.assertEqual(payload["agentMode"], "autonomous")
+        self.assertEqual(
+            payload["titleContains"],
+            "alert-http-5xx-sre-lab-auto-2",
+        )
+        self.assertEqual(
+            payload["titleNotContains"],
+            ["alert-http-5xx-sre-lab-auto-2-"],
+        )
         self.assertNotIn("maxAttempts", payload)
+
+    @patch("app.main.http_json")
+    def test_updates_an_existing_response_plan(self, http_json) -> None:
+        http_json.side_effect = [(409, "already exists"), (200, "updated")]
+        payload = response_plan_payload("sre-lab-auto-2")
+
+        status, response = upsert_response_plan(
+            "https://example.test/filters/grubify-http-errors",
+            "token-value",
+            payload,
+        )
+
+        self.assertEqual((status, response), (200, "updated"))
+        self.assertEqual(
+            [call.args[0] for call in http_json.call_args_list],
+            ["PUT", "POST"],
+        )
 
     def test_retries_only_transient_response_plan_failures(self) -> None:
         for status in (0, 404, 405, 408, 425, 429, 500, 502, 503, 504):
