@@ -629,7 +629,14 @@ function streamJob(jobId, log, options = {}) {
         log.scrollTop = log.scrollHeight;
       }
       if (event.type === "command") log.textContent += `> ${event.command.join(" ")}\n`;
-      if (event.type === "step" && options.stepElement) options.stepElement.textContent = event.name;
+      if (event.type === "step") {
+        if (options.stepElement) {
+          options.stepElement.textContent = event.name;
+        } else {
+          log.textContent += `\n${event.name}...\n`;
+          log.scrollTop = log.scrollHeight;
+        }
+      }
       if (event.type === "error") log.textContent += `ERROR: ${event.message}\n`;
       if (event.type === "done") {
         events.close();
@@ -713,9 +720,16 @@ async function runDemoAction(path, confirmation) {
   if (confirmation && !window.confirm(confirmation)) return;
   const log = document.querySelector("#demo-log");
   const buttons = document.querySelectorAll(".demo-actions button");
+  const activeButton = document.getElementById(path);
+  const activeButtonLabel = activeButton?.textContent;
   buttons.forEach((button) => {
     button.disabled = true;
   });
+  if (activeButton) {
+    activeButton.setAttribute("aria-busy", "true");
+    activeButton.textContent = `${activeButtonLabel} running`;
+  }
+  log.setAttribute("aria-busy", "true");
   log.textContent = `Starting ${path}...\n`;
   try {
     const response = await apiPost(`/api/${path}`);
@@ -744,6 +758,11 @@ async function runDemoAction(path, confirmation) {
   } catch (error) {
     log.textContent += `Action failed: ${error}\n`;
   } finally {
+    log.removeAttribute("aria-busy");
+    if (activeButton) {
+      activeButton.removeAttribute("aria-busy");
+      activeButton.textContent = activeButtonLabel;
+    }
     buttons.forEach((button) => {
       button.disabled = false;
     });

@@ -1810,11 +1810,24 @@ def wait_for_request_metrics(
         "--aggregation", "Total",
         "--output", "json",
     ]
+    job.emit(
+        "output",
+        line="Checking Azure Monitor request metrics before fault injection...",
+    )
     success, output = run_capture(metric_command)
     if success and request_metrics_have_data(output):
+        job.emit("output", line="Azure Monitor request metrics are already ready.")
         return True
 
     job.emit("step", name="Waiting for Azure Monitor request metrics")
+    job.emit(
+        "output",
+        line=(
+            "No recent request metric is visible yet. Sending a harmless "
+            f"readiness probe every {delay_seconds:g} seconds "
+            f"(up to {attempts} attempts)."
+        ),
+    )
     for attempt in range(1, attempts + 1):
         probe = Request(
             f"{app_url}/api/cart/monitor-probe-{uuid.uuid4().hex[:8]}",
@@ -1827,16 +1840,22 @@ def wait_for_request_metrics(
         except (HTTPError, URLError, TimeoutError):
             return False
 
+        job.emit(
+            "output",
+            line=(
+                f"Metrics warm-up attempt {attempt}/{attempts}: probe accepted; "
+                f"checking Azure Monitor in {delay_seconds:g} seconds..."
+            ),
+        )
         time.sleep(delay_seconds)
         success, output = run_capture(metric_command)
         if success and request_metrics_have_data(output):
             job.emit("output", line="Azure Monitor request metrics are ready.")
             return True
-        if attempt % 4 == 0:
-            job.emit(
-                "output",
-                line=f"Still waiting for request metrics ({attempt}/{attempts})...",
-            )
+    job.emit(
+        "output",
+        line=f"Request metrics did not appear after {attempts} readiness probes.",
+    )
     return False
 
 

@@ -1002,14 +1002,35 @@ class BreakCartTests(unittest.TestCase):
         response = MagicMock()
         response.__enter__.return_value.status = 200
         urlopen.return_value = response
+        job = Job()
 
         self.assertTrue(wait_for_request_metrics(
-            Job(),
+            job,
             "https://example.test",
             "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.App/containerApps/api",
             attempts=1,
             delay_seconds=0,
         ))
+        output = [
+            event["line"]
+            for event in job.events.queue
+            if event["type"] == "output"
+        ]
+        self.assertEqual(
+            output,
+            [
+                "Checking Azure Monitor request metrics before fault injection...",
+                (
+                    "No recent request metric is visible yet. Sending a harmless "
+                    "readiness probe every 0 seconds (up to 1 attempts)."
+                ),
+                (
+                    "Metrics warm-up attempt 1/1: probe accepted; "
+                    "checking Azure Monitor in 0 seconds..."
+                ),
+                "Azure Monitor request metrics are ready.",
+            ],
+        )
 
     @patch("app.main.time.sleep")
     @patch("app.main.urlopen")
