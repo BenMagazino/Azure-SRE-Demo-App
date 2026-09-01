@@ -24,16 +24,18 @@ from urllib.request import Request, urlopen
 
 
 FROZEN = bool(getattr(sys, "frozen", False))
+PORTABLE = os.environ.get("AZURE_SRE_AGENT_PORTABLE", "").strip() == "1"
 if FROZEN:
     ROOT = Path(getattr(sys, "_MEIPASS"))
+    BUNDLED_VENDOR_DIR = ROOT / "vendor" / "starter-lab"
 else:
     ROOT = Path(__file__).resolve().parent
+    BUNDLED_VENDOR_DIR = ROOT.parent / "vendor" / "starter-lab"
 STATIC_DIR = ROOT / "static"
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "state.json"
-if FROZEN:
-    BUNDLED_VENDOR_DIR = ROOT / "vendor" / "starter-lab"
+if FROZEN or PORTABLE:
     VENDOR_DIR = STATE_DIR / "starter-lab"
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copytree(BUNDLED_VENDOR_DIR, VENDOR_DIR, dirs_exist_ok=True)
@@ -2369,9 +2371,10 @@ def main() -> None:
     sys.excepthook = log_unhandled_exception
     threading.excepthook = log_thread_exception
     LOGGER.info(
-        "Application starting pid=%s frozen=%s executable=%s python=%s cwd=%s",
+        "Application starting pid=%s frozen=%s portable=%s executable=%s python=%s cwd=%s",
         os.getpid(),
         FROZEN,
+        PORTABLE,
         sys.executable,
         sys.version.replace("\n", " "),
         os.getcwd(),

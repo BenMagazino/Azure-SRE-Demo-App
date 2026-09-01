@@ -1,64 +1,79 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$venv = Join-Path $repoRoot ".build-venv"
-$python = Get-Command python -ErrorAction SilentlyContinue
+$pythonVersion = "3.14.7"
+$runtimeArchiveName = "python-$pythonVersion-embed-amd64.zip"
+$runtimeUri = "https://www.python.org/ftp/python/$pythonVersion/$runtimeArchiveName"
+$runtimeSha256 = "d297e5ff019966817ad8502465176139f2d3d840fa4ed84b13bed399a6ab1f15"
+$downloadDirectory = Join-Path $repoRoot "build\downloads"
+$runtimeArchive = Join-Path $downloadDirectory $runtimeArchiveName
 $staleOneFileExecutable = Join-Path $repoRoot "dist\AzureSREAgentDemo.exe"
 $packageDirectory = Join-Path $repoRoot "dist\AzureSREAgentDemo"
+$packageArchive = Join-Path $repoRoot "dist\AzureSREAgentDemo-portable-win-x64.zip"
 $stagingRoot = Join-Path $repoRoot "build\package-output"
 $stagingPackage = Join-Path $stagingRoot "AzureSREAgentDemo"
+$stagingRuntime = Join-Path $stagingPackage "python"
+$launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
+$readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 
-# Remove the obsolete one-file artifact created by earlier builds. The
-# supported package is the complete dist\AzureSREAgentDemo directory.
-if (Test-Path $staleOneFileExecutable) {
-  Remove-Item $staleOneFileExecutable -Force
+function Test-RuntimeArchive {
+  if (-not (Test-Path -LiteralPath $runtimeArchive)) {
+    return $false
+  }
+  return (Get-FileHash -LiteralPath $runtimeArchive -Algorithm SHA256).Hash -eq $runtimeSha256
 }
+
 if (Test-Path $stagingRoot) {
-  Remove-Item $stagingRoot -Recurse -Force
+  Remove-Item -LiteralPath $stagingRoot -Recurse -Force
 }
+New-Item -ItemType Directory -Path $stagingRuntime -Force | Out-Null
+New-Item -ItemType Directory -Path $downloadDirectory -Force | Out-Null
 
-if (-not $python) {
-  $launcher = Get-Command py -ErrorAction SilentlyContinue
-  if (-not $launcher) {
-    throw "Python is required. Run .\scripts\start.ps1 once to install or validate it."
+if (-not (Test-RuntimeArchive)) {
+  if (Test-Path -LiteralPath $runtimeArchive) {
+    Remove-Item -LiteralPath $runtimeArchive -Force
   }
-  & $launcher.Source -3 -m venv $venv
-} else {
-  & $python.Source -m venv $venv
-}
-if ($LASTEXITCODE -ne 0) {
-  throw "Unable to create the packaging environment."
-}
-
-$venvPython = Join-Path $venv "Scripts\python.exe"
-& $venvPython -m pip install --disable-pip-version-check --quiet --upgrade pip pyinstaller
-if ($LASTEXITCODE -ne 0) {
-  throw "Unable to install the packaging tools."
-}
-
-Push-Location $repoRoot
-try {
-  & $venvPython -m PyInstaller `
-    --noconfirm `
-    --clean `
-    --onedir `
-    --name AzureSREAgentDemo `
-    --distpath $stagingRoot `
-    --add-data "app\static;static" `
-    --add-data "vendor\starter-lab;vendor\starter-lab" `
-    app\main.py
-  if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed to create the Windows package."
+  $partialArchive = "$runtimeArchive.download"
+  try {
+    Write-Host "Downloading the official Python $pythonVersion embeddable runtime..."
+    Invoke-WebRequest -Uri $runtimeUri -OutFile $partialArchive -UseBasicParsing
+    if ((Get-FileHash -LiteralPath $partialArchive -Algorithm SHA256).Hash -ne $runtimeSha256) {
+      throw "The downloaded Python runtime did not match its pinned SHA-256 checksum."
+    }
+    Move-Item -LiteralPath $partialArchive -Destination $runtimeArchive -Force
+  } finally {
+    if (Test-Path -LiteralPath $partialArchive) {
+      Remove-Item -LiteralPath $partialArchive -Force
+    }
   }
-} finally {
-  Pop-Location
 }
 
-$stagedExecutable = Join-Path $stagingPackage "AzureSREAgentDemo.exe"
-if (-not (Test-Path $stagedExecutable)) {
-  throw "Packaging completed without producing the expected executable."
+Expand-Archive -LiteralPath $runtimeArchive -DestinationPath $stagingRuntime
+$runtimePython = Join-Path $stagingRuntime "python.exe"
+$runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimePython
+if (
+  $runtimeSignature.Status -ne "Valid" -or
+  $runtimeSignature.SignerCertificate.Subject -notlike "*Python Software Foundation*"
+) {
+  throw "The embedded Python executable does not have a valid Python Software Foundation signature."
+}
+
+New-Item -ItemType Directory -Path (Join-Path $stagingPackage "app") | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot "app\main.py") -Destination (Join-Path $stagingPackage "app\main.py")
+Copy-Item -LiteralPath (Join-Path $repoRoot "app\static") -Destination (Join-Path $stagingPackage "app") -Recurse
+New-Item -ItemType Directory -Path (Join-Path $stagingPackage "vendor") | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination (Join-Path $stagingPackage "vendor") -Recurse
+Copy-Item -LiteralPath $launcherSource -Destination $stagingPackage
+Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
+
+& $runtimePython --version
+if ($LASTEXITCODE -ne 0) {
+  throw "The embedded Python runtime could not be started."
 }
 
 try {
+  if (Test-Path -LiteralPath $staleOneFileExecutable) {
+    Remove-Item -LiteralPath $staleOneFileExecutable -Force
+  }
   if (Test-Path $packageDirectory) {
     Get-ChildItem -LiteralPath $packageDirectory -Force | ForEach-Object {
       Remove-Item -LiteralPath $_.FullName -Recurse -Force
@@ -70,18 +85,22 @@ try {
     Copy-Item -LiteralPath $_.FullName -Destination $packageDirectory -Recurse -Force
   }
 } catch {
-  throw "Unable to update the Windows package. Close any running AzureSREAgentDemo executable and try again. $($_.Exception.Message)"
-} finally {
-  if (Test-Path $stagingRoot) {
-    Remove-Item $stagingRoot -Recurse -Force
-  }
+  throw "Unable to update the Windows package. Close any running portable demo and try again. $($_.Exception.Message)"
 }
 
-$executable = Join-Path $packageDirectory "AzureSREAgentDemo.exe"
-if (-not (Test-Path $executable)) {
-  throw "The Windows package could not be copied to its distribution folder."
+if (Test-Path -LiteralPath $packageArchive) {
+  Remove-Item -LiteralPath $packageArchive -Force
+}
+Compress-Archive -LiteralPath $packageDirectory -DestinationPath $packageArchive -CompressionLevel Optimal
+
+if (-not (Test-Path (Join-Path $packageDirectory "Start Azure SRE Agent Demo.cmd"))) {
+  throw "The portable package could not be copied to its distribution folder."
+}
+if (Test-Path $stagingRoot) {
+  Remove-Item -LiteralPath $stagingRoot -Recurse -Force
 }
 
 Write-Host ""
-Write-Host "Windows executable created:" -ForegroundColor Green
-Write-Host $executable
+Write-Host "Portable Windows package created:" -ForegroundColor Green
+Write-Host $packageDirectory
+Write-Host $packageArchive

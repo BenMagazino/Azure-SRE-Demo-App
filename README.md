@@ -10,8 +10,10 @@ Rust, MSYS2, MinGW, Node.js, or npm.
 ## Requirements
 
 - Windows 11
-- Python 3.9 or newer
 - An Azure subscription where you can create resources and role assignments
+
+The portable Windows package includes Python. Python 3.9 or newer is required
+only when running directly from the source repository.
 
 Azure CLI, Azure Developer CLI, and Git are checked inside the app. If any are
 missing, the prerequisite screen can install them sequentially with one action.
@@ -51,18 +53,23 @@ On a standard Windows or Hyper-V VM launch, logs are stored under
 shows the exact active path and provides a **Download log** action in every
 environment.
 
-## Build the Windows executable
+## Build the portable Windows package
 
 ```powershell
 .\scripts\build-windows.ps1
 ```
 
-The build script creates an isolated `.build-venv`, installs PyInstaller only
-inside it, and writes `dist\AzureSREAgentDemo\AzureSREAgentDemo.exe`. The
-application uses PyInstaller's directory-based package because enterprise
-Windows Application Control policies commonly block one-file executables from
-extracting a Python DLL into `%TEMP%`. End users do not need Python installed;
-distribute the complete `dist\AzureSREAgentDemo` directory.
+The build script downloads the official Python Software Foundation 3.14.7
+embeddable runtime, verifies its pinned SHA-256 checksum and Authenticode
+signature, and writes both:
+
+- `dist\AzureSREAgentDemo`
+- `dist\AzureSREAgentDemo-portable-win-x64.zip`
+
+End users do not need Python installed. After extracting the ZIP, they
+double-click `Start Azure SRE Agent Demo.cmd`. There is no custom PyInstaller
+executable; the launcher runs the included, signed `python.exe`. The complete
+folder must remain together.
 
 ## Current wizard flow
 
