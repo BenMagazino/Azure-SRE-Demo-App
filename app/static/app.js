@@ -91,14 +91,18 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 async function loadDiagnostics() {
+  const path = document.querySelector("#diagnostic-path");
   try {
     const response = await fetch("/api/diagnostics");
-    if (!response.ok) return;
+    if (!response.ok) {
+      path.textContent = "Diagnostic log unavailable. Restart the local app.";
+      return;
+    }
     const diagnostics = await response.json();
-    const path = document.querySelector("#diagnostic-path");
     path.textContent = diagnostics.path || "Diagnostic log unavailable";
     path.title = diagnostics.path || "";
   } catch (error) {
+    path.textContent = "Diagnostic log unavailable. Restart the local app.";
     reportClientError(`Unable to load diagnostic details: ${error}`);
   }
 }
@@ -160,6 +164,12 @@ function updateLabCopy() {
 
 async function loadLabs() {
   const response = await fetch("/api/labs", { cache: "no-store" });
+  const contentType = response.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      "The running backend does not support the Lab Picker. Restart the local application."
+    );
+  }
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Unable to load labs.");
   labCatalog = payload.labs || [];
