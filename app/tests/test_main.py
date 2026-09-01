@@ -769,7 +769,7 @@ class ResponsePlanTests(unittest.TestCase):
         self.assertNotIn("maxAttempts", payload)
 
     def test_retries_only_transient_response_plan_failures(self) -> None:
-        for status in (0, 404, 408, 425, 429, 500, 502, 503, 504):
+        for status in (0, 404, 405, 408, 425, 429, 500, 502, 503, 504):
             self.assertTrue(response_plan_status_is_retryable(status))
         for status in (400, 401, 403, 422):
             self.assertFalse(response_plan_status_is_retryable(status))

@@ -1383,7 +1383,7 @@ def response_plan_payload() -> dict[str, Any]:
 
 
 def response_plan_status_is_retryable(status: int) -> bool:
-    return status in {0, 404, 408, 425, 429, 500, 502, 503, 504}
+    return status in {0, 404, 405, 408, 425, 429, 500, 502, 503, 504}
 
 
 def post_provision(job: Job, environment: str) -> bool:
@@ -1599,7 +1599,10 @@ def post_provision(job: Job, environment: str) -> bool:
             line=f"Response plan attempt {attempt}/5 returned HTTP {status}; retrying...",
         )
         time.sleep(15)
-    job.emit("output", line=f"Response-plan creation failed: {response[:300]}")
+    job.emit(
+        "output",
+        line=f"Response-plan creation failed: HTTP {status} {response[:300]}",
+    )
     return False
 
 
