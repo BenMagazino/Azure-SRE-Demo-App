@@ -2143,9 +2143,28 @@ class ProcessTests(unittest.TestCase):
             build_script,
         )
         self.assertIn(
-            '@("app", $shortcutName, "README.txt")',
+            '"THIRD-PARTY-NOTICES.txt"',
             build_script,
         )
+        self.assertIn('$licenseSource = Join-Path $repoRoot "LICENSE"', build_script)
+        self.assertIn(
+            '$thirdPartyNoticesSource = Join-Path $repoRoot "THIRD-PARTY-NOTICES.txt"',
+            build_script,
+        )
+        self.assertIn(
+            "Copy-Item -LiteralPath $licenseSource -Destination $stagingPackage",
+            build_script,
+        )
+        self.assertIn(
+            "Copy-Item -LiteralPath $thirdPartyNoticesSource -Destination $stagingPackage",
+            build_script,
+        )
+        self.assertIn(
+            'Join-Path $packagedApplication "python\\LICENSE.txt"',
+            build_script,
+        )
+        self.assertTrue((repository / "LICENSE").is_file())
+        self.assertTrue((repository / "THIRD-PARTY-NOTICES.txt").is_file())
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

@@ -1,0 +1,107 @@
+THIRD-PARTY NOTICES
+===================
+
+This file identifies third-party material redistributed by Azure SRE Agent Demo
+and tools that the application downloads separately at runtime. The project's
+MIT License applies only to project-owned material. Third-party components
+remain subject to their own license terms.
+
+REDISTRIBUTED COMPONENTS
+========================
+
+1. Microsoft SRE Agent starter-lab assets
+-----------------------------------------
+
+Project: microsoft/sre-agent
+Source: https://github.com/microsoft/sre-agent/tree/main/labs/starter-lab
+License: MIT
+
+The files under vendor/starter-lab are a trimmed and modified copy of Scenario
+1 assets from the upstream starter lab. The portable package redistributes
+these files under app/vendor/starter-lab.
+
+Upstream license source:
+https://github.com/microsoft/sre-agent/blob/main/LICENSE
+
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE
+
+2. Python 3.14.7 embeddable package for Windows
+-----------------------------------------------
+
+Project: CPython
+Source package:
+https://www.python.org/ftp/python/3.14.7/python-3.14.7-embed-amd64.zip
+Release information: https://www.python.org/downloads/release/python-3147/
+Source and license: https://github.com/python/cpython/tree/v3.14.7
+License: Python Software Foundation License Version 2 and the additional
+licenses and acknowledgements included by the Python distribution
+
+The portable package redistributes the official, unmodified Python 3.14.7
+embeddable archive contents under app/python. Its upstream LICENSE.txt is
+redistributed unchanged at app/python/LICENSE.txt. That file is the complete,
+authoritative notice for the binary distribution, including:
+
+- the Python Software Foundation License Version 2 and historical Python
+  licenses;
+- conditions for the Microsoft runtime files in the Windows binary build; and
+- notices for incorporated software such as bzip2, libffi, OpenSSL, SQLite,
+  xz/liblzma, and zlib, plus other code included in the Python distribution.
+
+The required PSF copyright notice is:
+
+Copyright (c) 2001 Python Software Foundation; All Rights Reserved
+
+The complete license is also published at:
+https://docs.python.org/release/3.14.7/license.html
+
+No modifications are made to the embedded Python runtime.
+
+TOOLS DOWNLOADED AT RUNTIME (NOT REDISTRIBUTED)
+===============================================
+
+The portable ZIP does not contain Azure CLI or Azure Developer CLI (azd).
+When requested by the user, the application downloads pinned archives directly
+from their upstream distribution locations, verifies their SHA-256 checksums,
+and installs them under the user's local application-data directory. Those
+downloads and their included dependencies are governed by their respective
+upstream license files.
+
+Azure CLI 2.90.0
+Project: https://github.com/Azure/azure-cli
+License: MIT
+License source: https://github.com/Azure/azure-cli/blob/dev/LICENSE
+Distribution documentation:
+https://learn.microsoft.com/cli/azure/install-azure-cli-windows
+
+Azure Developer CLI (azd) 1.32.0
+Project: https://github.com/Azure/azure-dev
+License: MIT
+License source: https://github.com/Azure/azure-dev/blob/main/LICENSE
+Distribution documentation:
+https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
+
+TRADEMARKS
+==========
+
+Component names are used only to identify their projects or products. No
+third-party trademark license is granted by this project's MIT License.

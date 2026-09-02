@@ -19,6 +19,8 @@ $stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agen
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
 $iconSource = Join-Path $repoRoot "app\static\favicon.ico"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
+$licenseSource = Join-Path $repoRoot "LICENSE"
+$thirdPartyNoticesSource = Join-Path $repoRoot "THIRD-PARTY-NOTICES.txt"
 $shortcutName = "Azure SRE Agent Demo.lnk"
 $shortcutTemplateName = "Azure SRE Agent Demo.link-template"
 
@@ -154,6 +156,8 @@ Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $splashSource -Destination $stagingApplication
 Copy-Item -LiteralPath $iconSource -Destination (Join-Path $stagingApplication "Azure SRE Agent Demo.ico")
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
+Copy-Item -LiteralPath $licenseSource -Destination $stagingPackage
+Copy-Item -LiteralPath $thirdPartyNoticesSource -Destination $stagingPackage
 $relativeLauncher = "app\Start Azure SRE Agent Demo.cmd"
 $fallbackIcon = "%SystemRoot%\System32\cmd.exe"
 New-RelativeShortcut `
@@ -219,11 +223,26 @@ if (-not (Test-Path (Join-Path $packagedApplication "Azure SRE Agent Demo.ico"))
 if (-not (Test-Path (Join-Path $packagedApplication "python\pythonw.exe"))) {
   throw "The embedded Python runtime could not be copied to the application folder."
 }
+if (-not (Test-Path (Join-Path $packagedApplication "python\LICENSE.txt"))) {
+  throw "The embedded Python license could not be copied to the application folder."
+}
 if (-not (Test-Path (Join-Path $packagedApplication "vendor\starter-lab"))) {
   throw "The vendored lab could not be copied to the application folder."
 }
+if (-not (Test-Path (Join-Path $packageDirectory "LICENSE"))) {
+  throw "The project license could not be copied to the portable package root."
+}
+if (-not (Test-Path (Join-Path $packageDirectory "THIRD-PARTY-NOTICES.txt"))) {
+  throw "The third-party notices could not be copied to the portable package root."
+}
 
-$expectedRootItems = @("app", $shortcutName, "README.txt") | Sort-Object
+$expectedRootItems = @(
+  "app",
+  $shortcutName,
+  "LICENSE",
+  "README.txt",
+  "THIRD-PARTY-NOTICES.txt"
+) | Sort-Object
 $actualRootItems = @(
   Get-ChildItem -LiteralPath $packageDirectory |
     Select-Object -ExpandProperty Name |
