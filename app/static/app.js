@@ -33,6 +33,8 @@ const workflowPanels = [
 const heartbeatIntervalMilliseconds = 10000;
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
+let testMode = false;
+let skipEnvironmentButton = null;
 let installInProgress = false;
 let azureContextCatalog = null;
 let labCatalog = [];
@@ -68,12 +70,31 @@ async function loadSessionToken() {
       if (typeof session.token !== "string" || !session.token) {
         throw new Error("/api/session returned an invalid session token.");
       }
+      testMode = session.test_mode === true;
+      configureTestModeUi();
       return session.token;
     } catch (error) {
       lastError = error;
     }
   }
   throw new Error(`Local application API was not ready: ${lastError.message}`);
+}
+
+function configureTestModeUi() {
+  document.querySelector("#test-mode-banner").classList.toggle("hidden", !testMode);
+  if (!testMode || skipEnvironmentButton) return;
+  skipEnvironmentButton = document.createElement("button");
+  skipEnvironmentButton.id = "skip-environment-validation";
+  skipEnvironmentButton.type = "button";
+  skipEnvironmentButton.className = "secondary";
+  skipEnvironmentButton.textContent = "Skip validation";
+  skipEnvironmentButton.disabled = true;
+  skipEnvironmentButton.addEventListener("click", skipExistingEnvironmentValidation);
+  document.querySelector(".environment-validation-actions").append(skipEnvironmentButton);
+}
+
+function setSkipEnvironmentEnabled(enabled) {
+  if (skipEnvironmentButton) skipEnvironmentButton.disabled = !enabled;
 }
 
 async function initialize() {
@@ -869,6 +890,7 @@ function selectExistingEnvironment(environment) {
   document.querySelector("#environment-name").value = environment.environment;
   document.querySelector("#azure-location").value = environment.location;
   validateEnvironmentButton.disabled = false;
+  setSkipEnvironmentEnabled(true);
   environmentValidationStatus.className = "";
   environmentValidationStatus.textContent =
     `${environment.environment} selected. Validation checks only this lab.`;
@@ -885,6 +907,7 @@ function renderExistingEnvironments(payload) {
   const status = document.querySelector("#environment-discovery-status");
   const environments = payload.environments || [];
   validateEnvironmentButton.disabled = true;
+  setSkipEnvironmentEnabled(false);
   environmentValidationStatus.className = "";
   environmentValidationStatus.textContent =
     "Select an existing lab to validate only that environment.";
@@ -1013,6 +1036,7 @@ async function validateExistingEnvironment() {
   if (!environment) return;
 
   validateEnvironmentButton.disabled = true;
+  setSkipEnvironmentEnabled(false);
   validateEnvironmentButton.setAttribute("aria-busy", "true");
   validateEnvironmentButton.textContent = "Validating";
   environmentValidationStatus.className = "";
@@ -1054,6 +1078,54 @@ async function validateExistingEnvironment() {
     validateEnvironmentButton.textContent = "Validate selected lab";
     validateEnvironmentButton.disabled =
       selectedExistingEnvironment !== environment;
+    setSkipEnvironmentEnabled(selectedExistingEnvironment === environment);
+  }
+}
+
+async function skipExistingEnvironmentValidation() {
+  const environment = selectedExistingEnvironment;
+  if (!testMode || !environment) return;
+  const confirmed = window.confirm(
+    "TEST MODE: Skip all resource readiness and endpoint availability checks "
+    + `for ${environment.environment}? The demo may be stopped, unavailable, or unsafe to use.`
+  );
+  if (!confirmed) return;
+
+  validateEnvironmentButton.disabled = true;
+  setSkipEnvironmentEnabled(false);
+  skipEnvironmentButton.setAttribute("aria-busy", "true");
+  skipEnvironmentButton.textContent = "Skipping";
+  environmentValidationStatus.className = "warning";
+  environmentValidationStatus.textContent =
+    `Skipping validation for ${environment.environment} in test mode...`;
+  try {
+    await saveEnvironmentConfiguration();
+    const response = await apiPost("/api/environments/skip-validation", {
+      environment: environment.environment,
+      resource_group: environment.resource_group,
+      acknowledge_risk: true,
+    });
+    const result = await response.json();
+    if (!response.ok || !result.skipped || !result.proceed) {
+      throw new Error(result.error || "Validation skip was rejected.");
+    }
+    environmentValidationStatus.className = "warning";
+    environmentValidationStatus.textContent =
+      `${environment.environment} validation was skipped. Readiness is unknown.`;
+    skipDeploymentForValidatedEnvironment = true;
+    await loadSummary();
+    showPanel("summary");
+  } catch (error) {
+    skipDeploymentForValidatedEnvironment = false;
+    environmentValidationStatus.className = "warning";
+    environmentValidationStatus.textContent =
+      `Unable to skip validation for ${environment.environment}: ${error.message}`;
+  } finally {
+    skipEnvironmentButton.removeAttribute("aria-busy");
+    skipEnvironmentButton.textContent = "Skip validation";
+    validateEnvironmentButton.disabled =
+      selectedExistingEnvironment !== environment;
+    setSkipEnvironmentEnabled(selectedExistingEnvironment === environment);
   }
 }
 
@@ -1061,6 +1133,7 @@ function clearExistingEnvironmentSelection() {
   selectedExistingEnvironment = null;
   skipDeploymentForValidatedEnvironment = false;
   validateEnvironmentButton.disabled = true;
+  setSkipEnvironmentEnabled(false);
   environmentValidationStatus.className = "";
   environmentValidationStatus.textContent =
     "Select an existing lab to validate only that environment.";
@@ -1099,6 +1172,16 @@ async function loadSummary() {
   const summary = await response.json();
   if (!response.ok) throw new Error(summary.error || "Unable to load deployment summary.");
   currentSummary = summary;
+  const validationStatus = document.querySelector("#summary-validation-status");
+  if (summary.validation_status === "skipped") {
+    validationStatus.textContent =
+      "Test mode: validation was explicitly skipped. Resource readiness and "
+      + "endpoint availability are unknown.";
+    validationStatus.classList.remove("hidden");
+  } else {
+    validationStatus.textContent = "";
+    validationStatus.classList.add("hidden");
+  }
   const legacyEnvironment =
     summary.existing_environment && summary.environment_detection === "legacy";
   teardownButton.textContent = legacyEnvironment

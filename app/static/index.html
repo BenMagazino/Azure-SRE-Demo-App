@@ -34,6 +34,9 @@
             <h1 class="brand-title">Azure SRE Agent Demo Setup</h1>
             <p class="brand-tagline">Your fastest path to an impactful Azure SRE Agent demonstration.</p>
           </div>
+          <span id="test-mode-banner" class="test-mode-banner hidden" role="status">
+            Test mode
+          </span>
         </div>
         <button id="shutdown" class="danger" type="button">Shutdown</button>
       </header>
@@ -155,9 +158,11 @@
             <div id="existing-environment-list" class="environment-list"></div>
           </div>
           <div class="environment-validation">
-            <button id="validate-environment" type="button" disabled>
-              Validate selected lab
-            </button>
+            <div class="environment-validation-actions">
+              <button id="validate-environment" type="button" disabled>
+                Validate selected lab
+              </button>
+            </div>
             <p id="environment-validation-status" aria-live="polite">
               Select an existing lab to validate only that environment.
             </p>
@@ -227,6 +232,7 @@
             <p id="edge-profile-status" aria-live="polite"></p>
           </div>
         </div>
+        <p id="summary-validation-status" class="warning hidden" role="alert"></p>
         <div class="summary-overview">
           <div id="summary-links" class="summary-grid"></div>
           <aside
@@ -264,6 +270,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260902.24"></script>
+    <script src="/app.js?v=20260902.25"></script>
   </body>
 </html>
