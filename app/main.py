@@ -21,7 +21,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -405,6 +405,21 @@ def version_meets_minimum(version: str, minimum_version: str) -> bool:
     parsed = parse_version(version)
     minimum = parse_version(minimum_version)
     return parsed is not None and minimum is not None and parsed >= minimum
+
+
+def azure_resource_group_portal_url(
+    tenant_id: str,
+    subscription_id: str,
+    resource_group: str,
+) -> str:
+    if not subscription_id or not resource_group:
+        return ""
+    tenant_segment = f"@{quote(tenant_id, safe='')}" if tenant_id else ""
+    return (
+        f"https://portal.azure.com/#{tenant_segment}/resource/subscriptions/"
+        f"{quote(subscription_id, safe='')}/resourceGroups/"
+        f"{quote(resource_group, safe='')}/overview"
+    )
 
 
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
@@ -3027,6 +3042,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             values = azd_values(environment)
             lab = selected_lab(state)
+            resource_group = values.get("AZURE_RESOURCE_GROUP", "")
             self.send_json({
                 "lab_id": lab.id if lab else "",
                 "lab_name": lab.name if lab else "",
@@ -3036,7 +3052,12 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "existing_environment_detection",
                     "",
                 ),
-                "resource_group": values.get("AZURE_RESOURCE_GROUP", ""),
+                "resource_group": resource_group,
+                "resource_group_portal_url": azure_resource_group_portal_url(
+                    str(state.get("tenant_id") or ""),
+                    str(state.get("subscription_id") or ""),
+                    resource_group,
+                ),
                 "agent_portal_url": values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
                 "agent_endpoint": values.get("SRE_AGENT_ENDPOINT", ""),
                 "api_url": values.get("CONTAINER_APP_URL", ""),

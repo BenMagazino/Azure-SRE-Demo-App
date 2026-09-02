@@ -1107,27 +1107,31 @@ async function loadSummary() {
     ? "Compatible legacy labs must be removed through their original deployment workflow."
     : "";
   const fields = [
-    ["Lab", summary.lab_name],
-    ["Environment", summary.environment],
-    ["Resource group", summary.resource_group],
-    ["Agent portal", summary.agent_portal_url],
-    ["Grubify UI", summary.frontend_url],
-    ["Grubify API", summary.api_url],
+    ["Lab", summary.lab_name, ""],
+    ["Environment", summary.environment, ""],
+    ["Azure resource group", summary.resource_group, summary.resource_group_portal_url],
+    ["SRE Agent portal", summary.agent_portal_url, summary.agent_portal_url],
+    ["Grubify UI", summary.frontend_url, summary.frontend_url],
+    ["Grubify API", summary.api_url, summary.api_url],
   ];
   const container = document.querySelector("#summary-links");
-  container.replaceChildren(...fields.map(([label, value]) => {
+  container.replaceChildren(...fields.map(([label, value, url]) => {
     const item = document.createElement("div");
     item.className = "summary-item";
     const heading = document.createElement("strong");
     heading.textContent = label;
-    const content = value && value.startsWith("http")
-      ? document.createElement("a")
-      : document.createElement("span");
+    const content = url ? document.createElement("a") : document.createElement("span");
     content.textContent = value || "Unavailable";
     if (content instanceof HTMLAnchorElement) {
-      content.href = value;
+      content.href = url;
       content.target = "_blank";
       content.rel = "noreferrer";
+      content.title = "Open in a new tab or window";
+      const externalIcon = document.createElement("span");
+      externalIcon.className = "external-link-icon";
+      externalIcon.setAttribute("aria-hidden", "true");
+      externalIcon.textContent = "↗";
+      content.append(externalIcon);
     }
     item.append(heading, content);
     return item;
@@ -1183,7 +1187,7 @@ function startInvestigationCountdown(event) {
   investigationCountdown.classList.add("active");
   investigationCountdown.classList.remove("complete");
   investigationCountdownStatus.textContent =
-    "Alert evaluation is in progress. Watch the Agent portal for the initial investigation.";
+    "Alert evaluation is in progress. When the timer ends, check the Azure resource group and SRE Agent portal.";
 
   const update = () => {
     const remaining = Math.max(
@@ -1202,7 +1206,7 @@ function startInvestigationCountdown(event) {
     investigationCountdown.classList.remove("active");
     investigationCountdown.classList.add("complete");
     investigationCountdownStatus.textContent =
-      "Expected alert window elapsed. Check Azure SRE Agent for the triggered response plan and initial investigation.";
+      "Expected alert window elapsed. Check Azure portal for the fired alert and SRE Agent portal for the response plan and initial investigation.";
   };
 
   update();

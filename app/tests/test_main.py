@@ -28,6 +28,7 @@ from app.main import (
     azd_login_command,
     azure_context_is_available,
     azure_cli_management_authenticated,
+    azure_resource_group_portal_url,
     azure_login_worker,
     break_cart_worker,
     build_existing_environment_catalog,
@@ -98,6 +99,19 @@ class LabWorkflowTests(unittest.TestCase):
             300,
         )
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
+
+    def test_builds_tenant_scoped_resource_group_portal_link(self) -> None:
+        self.assertEqual(
+            azure_resource_group_portal_url(
+                TENANT_A,
+                SUBSCRIPTION_A,
+                "rg-sre lab",
+            ),
+            (
+                f"https://portal.azure.com/#@{TENANT_A}/resource/subscriptions/"
+                f"{SUBSCRIPTION_A}/resourceGroups/rg-sre%20lab/overview"
+            ),
+        )
 
     @patch("app.main.save_state")
     @patch("app.main.load_state")
@@ -1427,6 +1441,9 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('class="environment-discovery"', page)
         self.assertIn('class="context-card new-environment-card"', page)
         self.assertIn('id="investigation-countdown"', page)
+        self.assertIn("resource_group_portal_url", script)
+        self.assertIn('externalIcon.textContent = "↗"', script)
+        self.assertIn(".external-link-icon", styles)
         self.assertIn("Use these settings only when deploying a new lab.", page)
         self.assertIn(".summary-overview", styles)
         self.assertIn("startInvestigationCountdown(event)", script)

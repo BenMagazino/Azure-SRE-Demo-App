@@ -885,6 +885,19 @@ select {
   color: var(--cp-text-muted);
 }
 
+.summary-item a {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}
+
+.external-link-icon {
+  flex: none;
+  font-size: 0.95em;
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .investigation-countdown {
   display: flex;
   min-height: 100%;
