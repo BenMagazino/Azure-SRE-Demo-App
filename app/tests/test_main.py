@@ -1160,6 +1160,8 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("Azure SRE Agent Demo.ico", repair_script)
         self.assertIn("$shortcut.TargetPath = $launcherPath", repair_script)
         self.assertIn('$shortcut.IconLocation = "$iconPath,0"', repair_script)
+        self.assertIn("SHChangeNotify", repair_script)
+        self.assertIn("[ShortcutIconRefresh]::UpdateItem", repair_script)
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

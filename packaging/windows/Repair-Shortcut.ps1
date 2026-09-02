@@ -1,5 +1,25 @@
 $ErrorActionPreference = "Stop"
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class ShortcutIconRefresh
+{
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern void SHChangeNotify(
+        uint eventId,
+        uint flags,
+        string item1,
+        IntPtr item2);
+
+    public static void UpdateItem(string path)
+    {
+        SHChangeNotify(0x00002000, 0x0005, path, IntPtr.Zero);
+    }
+}
+'@
+
 $shortcutPath = [IO.Path]::GetFullPath(
   (Join-Path $PSScriptRoot "..\Azure SRE Agent Demo.lnk")
 )
@@ -27,3 +47,5 @@ try {
   }
   [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
 }
+
+[ShortcutIconRefresh]::UpdateItem($shortcutPath)
