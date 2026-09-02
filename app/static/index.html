@@ -17,7 +17,7 @@
     <link rel="icon" href="/favicon.svg?v=20260901.2" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/favicon-192.png?v=20260901.2">
     <link rel="manifest" href="/manifest.webmanifest?v=20260901.2">
-    <link rel="stylesheet" href="/styles.css?v=20260901.12">
+    <link rel="stylesheet" href="/styles.css?v=20260901.13">
   </head>
   <body>
     <main class="shell">
@@ -123,7 +123,7 @@
           <div class="context-heading">
             <div>
               <h3 id="existing-environments-heading">Existing lab environments</h3>
-              <p>Reuse and reconcile a lab already deployed in the selected subscription.</p>
+              <p>Reuse a lab already deployed in the selected subscription.</p>
             </div>
             <button id="refresh-environments" class="secondary" type="button">Scan subscription</button>
           </div>
@@ -131,6 +131,14 @@
             Scan the selected subscription for compatible labs.
           </p>
           <div id="existing-environment-list" class="environment-list"></div>
+          <div class="environment-validation">
+            <button id="validate-environment" type="button" disabled>
+              Validate selected lab
+            </button>
+            <p id="environment-validation-status" aria-live="polite">
+              Select an existing lab to validate only that environment.
+            </p>
+          </div>
         </section>
         <form id="configure-form" class="form-grid">
           <label>
@@ -192,6 +200,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.12"></script>
+    <script src="/app.js?v=20260901.13"></script>
   </body>
 </html>

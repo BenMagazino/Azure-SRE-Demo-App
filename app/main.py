@@ -791,6 +791,239 @@ def discover_existing_environments(
     }
 
 
+def validate_existing_lab(
+    subscription_id: str,
+    environment: dict[str, Any],
+) -> dict[str, Any]:
+    resource_group = str(environment.get("resource_group") or "").strip()
+    commands = (
+        [
+            "az", "resource", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query",
+            "[].{id:id,name:name,type:type,location:location,"
+            "provisioningState:provisioningState}",
+            "--output", "json",
+        ],
+        [
+            "az", "containerapp", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query",
+            "[].{id:id,name:name,image:properties.template.containers[0].image,"
+            "fqdn:properties.configuration.ingress.fqdn,"
+            "provisioningState:properties.provisioningState}",
+            "--output", "json",
+        ],
+    )
+    parsed_records: list[list[dict[str, Any]]] = []
+    for command in commands:
+        success, output = run_capture(command, timeout=30)
+        records = parse_json_records(output) if success else None
+        if records is None:
+            return {
+                "ready": False,
+                "issues": [
+                    output or "Azure did not return resource validation data."
+                ],
+                "values": {},
+            }
+        parsed_records.append(records)
+
+    resources, container_apps = parsed_records
+    resources_by_type: dict[str, list[dict[str, Any]]] = {}
+    for resource in resources:
+        resource_type = str(resource.get("type") or "").casefold()
+        if resource_type:
+            resources_by_type.setdefault(resource_type, []).append(resource)
+
+    required_types = {
+        "microsoft.app/agents": "Azure SRE Agent",
+        "microsoft.app/managedenvironments": "Container Apps environment",
+        "microsoft.containerregistry/registries": "Azure Container Registry",
+        "microsoft.operationalinsights/workspaces": "Log Analytics workspace",
+        "microsoft.insights/components": "Application Insights",
+        "microsoft.insights/metricalerts": "metric alert",
+    }
+    issues = [
+        f"Missing {label}."
+        for resource_type, label in required_types.items()
+        if not resources_by_type.get(resource_type)
+    ]
+    for resource in resources:
+        provisioning_state = str(
+            resource.get("provisioningState") or ""
+        ).strip()
+        if provisioning_state and provisioning_state.casefold() != "succeeded":
+            issues.append(
+                f"{resource.get('name') or 'A resource'} is {provisioning_state}."
+            )
+
+    api_app = next(
+        (
+            app for app in container_apps
+            if str(app.get("name") or "").casefold().startswith("ca-grubify-")
+            and not str(app.get("name") or "").casefold().startswith(
+                "ca-grubify-fe-"
+            )
+        ),
+        None,
+    )
+    frontend_app = next(
+        (
+            app for app in container_apps
+            if str(app.get("name") or "").casefold().startswith(
+                "ca-grubify-fe-"
+            )
+        ),
+        None,
+    )
+    for app, label, image_name in (
+        (api_app, "Grubify API", "grubify-api"),
+        (frontend_app, "Grubify frontend", "grubify-frontend"),
+    ):
+        if app is None:
+            issues.append(f"Missing {label} Container App.")
+            continue
+        provisioning_state = str(app.get("provisioningState") or "").strip()
+        if provisioning_state.casefold() != "succeeded":
+            issues.append(
+                f"{label} provisioning state is "
+                f"{provisioning_state or 'unknown'}."
+            )
+        if not str(app.get("fqdn") or "").strip():
+            issues.append(f"{label} has no application endpoint.")
+        if image_name not in str(app.get("image") or "").casefold():
+            issues.append(f"{label} is not running the current lab image.")
+
+    agents = resources_by_type.get("microsoft.app/agents", [])
+    agent_details: dict[str, Any] = {}
+    if agents:
+        success, output = run_capture(
+            [
+                "az", "resource", "show",
+                "--ids", str(agents[0].get("id") or ""),
+                "--api-version", "2025-05-01-preview",
+                "--query",
+                "{name:name,endpoint:properties.agentEndpoint,"
+                "incidentType:properties.incidentManagementConfiguration.type,"
+                "provisioningState:properties.provisioningState}",
+                "--output", "json",
+            ],
+            timeout=30,
+        )
+        if success:
+            try:
+                payload = json.loads(output)
+                if isinstance(payload, dict):
+                    agent_details = payload
+            except json.JSONDecodeError:
+                pass
+        if not agent_details:
+            issues.append("Unable to read the Azure SRE Agent status.")
+        else:
+            provisioning_state = str(
+                agent_details.get("provisioningState") or ""
+            ).strip()
+            if (
+                provisioning_state
+                and provisioning_state.casefold() != "succeeded"
+            ):
+                issues.append(
+                    f"Azure SRE Agent provisioning state is {provisioning_state}."
+                )
+            if not str(agent_details.get("endpoint") or "").strip():
+                issues.append("Azure SRE Agent has no service endpoint.")
+            if (
+                str(agent_details.get("incidentType") or "").casefold()
+                != "azmonitor"
+            ):
+                issues.append(
+                    "Azure SRE Agent incident handling is not configured."
+                )
+
+    if issues:
+        return {"ready": False, "issues": issues, "values": {}}
+
+    success, token = run_capture([
+        "az", "account", "get-access-token",
+        "--resource", "https://azuresre.dev",
+        "--query", "accessToken",
+        "--output", "tsv",
+    ], timeout=30)
+    if not success or not token.strip():
+        return {
+            "ready": False,
+            "issues": ["Unable to authenticate to the Azure SRE Agent service."],
+            "values": {},
+        }
+    agent_endpoint = str(agent_details["endpoint"]).rstrip("/")
+    data_plane_checks = (
+        (
+            f"{agent_endpoint}/api/v2/extendedAgent/agents/incident-handler",
+            "The incident-handler subagent is not configured.",
+        ),
+        (
+            f"{agent_endpoint}/api/v1/incidentPlayground/filters/"
+            "grubify-http-errors",
+            "The Grubify incident response plan is not configured.",
+        ),
+    )
+    data_plane_issues = []
+    for url, issue in data_plane_checks:
+        status, _ = http_json("GET", url, token.strip())
+        if status != HTTPStatus.OK:
+            data_plane_issues.append(issue)
+    if data_plane_issues:
+        return {
+            "ready": False,
+            "issues": data_plane_issues,
+            "values": {},
+        }
+
+    registry = resources_by_type["microsoft.containerregistry/registries"][0]
+    managed_environment = resources_by_type[
+        "microsoft.app/managedenvironments"
+    ][0]
+    workspace = resources_by_type[
+        "microsoft.operationalinsights/workspaces"
+    ][0]
+    registry_name = str(registry.get("name") or "")
+    location = str(environment.get("location") or "").lower()
+    return {
+        "ready": True,
+        "issues": [],
+        "values": {
+            "AZURE_LOCATION": location,
+            "AZURE_SUBSCRIPTION_ID": subscription_id,
+            "AZURE_RESOURCE_GROUP": resource_group,
+            "AZURE_CONTAINER_REGISTRY_NAME": registry_name,
+            "AZURE_CONTAINER_REGISTRY_ENDPOINT": (
+                f"{registry_name}.azurecr.io"
+            ),
+            "AZURE_CONTAINER_APPS_ENVIRONMENT_NAME": str(
+                managed_environment.get("name") or ""
+            ),
+            "AZURE_CONTAINER_APPS_ENVIRONMENT_ID": str(
+                managed_environment.get("id") or ""
+            ),
+            "SRE_AGENT_NAME": str(agent_details.get("name") or ""),
+            "SRE_AGENT_ENDPOINT": agent_endpoint,
+            "AGENT_PORTAL_URL": "https://sre.azure.com",
+            "CONTAINER_APP_NAME": str(api_app.get("name") or ""),
+            "CONTAINER_APP_URL": (
+                f"https://{str(api_app.get('fqdn') or '')}"
+            ),
+            "FRONTEND_APP_NAME": str(frontend_app.get("name") or ""),
+            "FRONTEND_APP_URL": (
+                f"https://{str(frontend_app.get('fqdn') or '')}"
+            ),
+            "LOG_ANALYTICS_WORKSPACE_ID": str(workspace.get("id") or ""),
+        },
+    }
+
+
 def refresh_process_path() -> None:
     if os.name != "nt":
         return
@@ -1982,6 +2215,20 @@ def azd_values(environment: str) -> dict[str, str]:
     return values
 
 
+def set_azd_values(
+    environment: str,
+    values: dict[str, str],
+) -> tuple[bool, str]:
+    for key, value in values.items():
+        success, output = run_capture(
+            ["azd", "env", "set", "-e", environment, key, value],
+            VENDOR_DIR,
+        )
+        if not success:
+            return False, output or f"Unable to save {key}."
+    return True, ""
+
+
 def http_json(
     method: str,
     url: str,
@@ -2427,6 +2674,19 @@ def teardown_worker(job: Job) -> None:
         job.emit("error", message="No configured environment.")
         job.emit("done", success=False, exit_code=None)
         return
+    if (
+        state.get("existing_environment")
+        and state.get("existing_environment_detection") == "legacy"
+    ):
+        job.emit(
+            "error",
+            message=(
+                "This compatible legacy lab was not created by this application. "
+                "Delete it through its original deployment workflow."
+            ),
+        )
+        job.emit("done", success=False, exit_code=None)
+        return
     job.emit("started", command=["azd", "down"])
     success, _ = run_process(
         job,
@@ -2783,6 +3043,11 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "lab_id": lab.id if lab else "",
                 "lab_name": lab.name if lab else "",
                 "environment": environment,
+                "existing_environment": bool(state.get("existing_environment")),
+                "environment_detection": state.get(
+                    "existing_environment_detection",
+                    "",
+                ),
                 "resource_group": values.get("AZURE_RESOURCE_GROUP", ""),
                 "agent_portal_url": values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
                 "agent_endpoint": values.get("SRE_AGENT_ENDPOINT", ""),
@@ -2973,6 +3238,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/configure":
             self.configure_environment()
             return
+        if path == "/api/environments/validate":
+            self.validate_environment()
+            return
         if path == "/api/scenarios/run":
             self.run_scenario()
             return
@@ -3011,6 +3279,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             previous_lab_id
             and previous_lab_id != lab.id
             and state.get("deployment_active")
+            and not state.get("existing_environment")
         ):
             self.send_json(
                 {"error": "Tear down the active lab before selecting another lab."},
@@ -3155,8 +3424,97 @@ class AppHandler(SimpleHTTPRequestHandler):
             "existing_environment": existing_environment,
         })
         state.pop("scenario_id", None)
+        state.pop("validated_at", None)
+        state.pop("validation_issues", None)
+        if not existing_environment:
+            state.pop("existing_environment_detection", None)
         save_state(state)
         self.send_json(state)
+
+    def validate_environment(self) -> None:
+        try:
+            payload = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        state = load_state()
+        lab = selected_lab(state)
+        context = cached_azure_context()
+        environment_name = str(payload.get("environment") or "").strip()
+        resource_group = str(payload.get("resource_group") or "").strip()
+        if lab is None or context is None:
+            self.send_json(
+                {"error": "Select a lab and Azure subscription first."},
+                HTTPStatus.CONFLICT,
+            )
+            return
+        if (
+            not state.get("existing_environment")
+            or state.get("environment") != environment_name
+            or state.get("subscription_id") != context["subscription"]
+        ):
+            self.send_json(
+                {"error": "Save the selected existing lab before validating it."},
+                HTTPStatus.CONFLICT,
+            )
+            return
+
+        candidate = next(
+            (
+                item
+                for item in load_environment_cache(
+                    context["subscription"],
+                    lab.id,
+                )
+                if item.get("environment") == environment_name
+                and item.get("resource_group") == resource_group
+            ),
+            None,
+        )
+        if candidate is None:
+            self.send_json(
+                {
+                    "error": (
+                        "The selected lab is not in the latest subscription scan. "
+                        "Scan the subscription again."
+                    )
+                },
+                HTTPStatus.CONFLICT,
+            )
+            return
+
+        result = validate_existing_lab(context["subscription"], candidate)
+        state["deployment_active"] = False
+        state["existing_environment_detection"] = candidate.get("detection", "")
+        state["validation_issues"] = result["issues"]
+        state.pop("validated_at", None)
+        if not result["ready"]:
+            save_state(state)
+            self.send_json({
+                "ready": False,
+                "environment": environment_name,
+                "issues": result["issues"],
+            })
+            return
+
+        saved, error = set_azd_values(environment_name, result["values"])
+        if not saved:
+            save_state(state)
+            self.send_json(
+                {"error": error},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        state["deployment_active"] = True
+        state["validation_issues"] = []
+        state["validated_at"] = datetime.now(timezone.utc).isoformat()
+        save_state(state)
+        self.send_json({
+            "ready": True,
+            "environment": environment_name,
+            "issues": [],
+        })
 
     def stream_job_events(self, job_id: str) -> None:
         with JOBS_LOCK:

@@ -7,6 +7,11 @@ const azureTenant = document.querySelector("#azure-tenant");
 const azureSubscription = document.querySelector("#azure-subscription");
 const azureContextStatus = document.querySelector("#azure-context-status");
 const applyAzureContextButton = document.querySelector("#apply-azure-context");
+const validateEnvironmentButton = document.querySelector("#validate-environment");
+const environmentValidationStatus = document.querySelector(
+  "#environment-validation-status"
+);
+const teardownButton = document.querySelector("#teardown");
 const backButton = document.querySelector("#back");
 const shutdownButton = document.querySelector("#shutdown");
 const shell = document.querySelector(".shell");
@@ -29,6 +34,8 @@ let selectedLabId = "";
 let selectedScenarioId = "";
 let azureContextApplied = false;
 let selectedExistingEnvironment = null;
+let skipDeploymentForValidatedEnvironment = false;
+let currentSummary = null;
 let activePanelId = "labs";
 let heartbeatTimer = null;
 
@@ -139,6 +146,10 @@ function showPanel(id) {
 }
 
 function navigateBack() {
+  if (activePanelId === "summary" && skipDeploymentForValidatedEnvironment) {
+    showPanel("configuration");
+    return;
+  }
   const currentIndex = workflowPanels.indexOf(activePanelId);
   if (currentIndex > 0) showPanel(workflowPanels[currentIndex - 1]);
 }
@@ -821,10 +832,15 @@ function azureLocationLabel(location) {
 
 function selectExistingEnvironment(environment) {
   selectedExistingEnvironment = environment;
+  skipDeploymentForValidatedEnvironment = false;
   document.querySelector("#environment-name").value = environment.environment;
   document.querySelector("#azure-location").value = environment.location;
+  validateEnvironmentButton.disabled = false;
+  environmentValidationStatus.className = "";
+  environmentValidationStatus.textContent =
+    `Validate ${environment.environment} to confirm it is ready for the demo.`;
   document.querySelector("#configure-status").textContent =
-    `${environment.environment} selected. Save to connect it to this workstation, then reconcile the lab.`;
+    `${environment.environment} selected. Validation checks only this lab.`;
   document.querySelectorAll(".environment-card").forEach((card) => {
     const selected = card.dataset.environment === environment.environment;
     card.classList.toggle("selected", selected);
@@ -836,6 +852,10 @@ function renderExistingEnvironments(payload) {
   const list = document.querySelector("#existing-environment-list");
   const status = document.querySelector("#environment-discovery-status");
   const environments = payload.environments || [];
+  validateEnvironmentButton.disabled = true;
+  environmentValidationStatus.className = "";
+  environmentValidationStatus.textContent =
+    "Select an existing lab to validate only that environment.";
   list.replaceChildren(...environments.map((environment) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -884,6 +904,8 @@ async function loadExistingEnvironments() {
   refresh.setAttribute("aria-busy", "true");
   refresh.textContent = "Scanning";
   selectedExistingEnvironment = null;
+  skipDeploymentForValidatedEnvironment = false;
+  validateEnvironmentButton.disabled = true;
   status.className = "";
   status.textContent =
     "Scanning the selected subscription and checking local azd environments...";
@@ -909,10 +931,7 @@ async function loadExistingEnvironments() {
   }
 }
 
-async function configureEnvironment(event) {
-  event.preventDefault();
-  const status = document.querySelector("#configure-status");
-  status.textContent = "Saving environment...";
+async function saveEnvironmentConfiguration() {
   const response = await apiPost("/api/configure", {
     environment: document.querySelector("#environment-name").value,
     location: document.querySelector("#azure-location").value,
@@ -920,25 +939,107 @@ async function configureEnvironment(event) {
   });
   const result = await response.json();
   if (!response.ok) {
-    status.textContent = result.error || "Configuration failed.";
-    return;
+    throw new Error(result.error || "Configuration failed.");
   }
+  return result;
+}
+
+function prepareExistingLabUpdate(issues = []) {
   const deployButton = document.querySelector("#start-deploy");
-  if (result.existing_environment) {
-    status.textContent =
-      `Existing lab selected: ${result.environment} in ${result.location}.`;
-    deployButton.textContent = "Reconcile existing lab";
-    document.querySelector("#deploy-step").textContent =
-      "The existing Azure resources will be reconciled with the current lab definition.";
-  } else {
-    status.textContent = `Ready: ${result.environment} in ${result.location}`;
-    deployButton.textContent = "Deploy lab";
-    document.querySelector("#deploy-step").textContent = "";
+  deployButton.textContent = "Update existing lab";
+  document.querySelector("#deploy-step").textContent = issues.length
+    ? `Validation found: ${issues.join(" ")}`
+    : "Update the existing Azure resources to match the current lab definition.";
+}
+
+async function configureEnvironment(event) {
+  event.preventDefault();
+  const status = document.querySelector("#configure-status");
+  status.className = "";
+  status.textContent = "Saving environment...";
+  try {
+    const result = await saveEnvironmentConfiguration();
+    skipDeploymentForValidatedEnvironment = false;
+    if (result.existing_environment) {
+      status.textContent =
+        `Existing lab selected: ${result.environment} in ${result.location}.`;
+      prepareExistingLabUpdate();
+    } else {
+      status.textContent = `Ready: ${result.environment} in ${result.location}`;
+      document.querySelector("#start-deploy").textContent = "Deploy lab";
+      document.querySelector("#deploy-step").textContent = "";
+    }
+    showPanel("deployment");
+  } catch (error) {
+    status.className = "warning";
+    status.textContent = `Unable to save the environment: ${error.message}`;
   }
-  showPanel("deployment");
+}
+
+async function validateExistingEnvironment() {
+  const environment = selectedExistingEnvironment;
+  if (!environment) return;
+
+  validateEnvironmentButton.disabled = true;
+  validateEnvironmentButton.setAttribute("aria-busy", "true");
+  validateEnvironmentButton.textContent = "Validating";
+  environmentValidationStatus.className = "";
+  environmentValidationStatus.textContent =
+    `Checking ${environment.environment} without scanning other labs...`;
+  try {
+    await saveEnvironmentConfiguration();
+    const response = await apiPost("/api/environments/validate", {
+      environment: environment.environment,
+      resource_group: environment.resource_group,
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Lab validation failed.");
+    }
+    if (result.ready) {
+      environmentValidationStatus.className = "success";
+      environmentValidationStatus.textContent =
+        `${environment.environment} is ready. Opening the demo.`;
+      skipDeploymentForValidatedEnvironment = true;
+      await loadSummary();
+      showPanel("summary");
+      return;
+    }
+
+    skipDeploymentForValidatedEnvironment = false;
+    environmentValidationStatus.className = "warning";
+    environmentValidationStatus.textContent =
+      `${environment.environment} needs an update before the demo.`;
+    prepareExistingLabUpdate(result.issues || []);
+    showPanel("deployment");
+  } catch (error) {
+    skipDeploymentForValidatedEnvironment = false;
+    environmentValidationStatus.className = "warning";
+    environmentValidationStatus.textContent =
+      `Unable to validate ${environment.environment}: ${error.message}`;
+  } finally {
+    validateEnvironmentButton.removeAttribute("aria-busy");
+    validateEnvironmentButton.textContent = "Validate selected lab";
+    validateEnvironmentButton.disabled =
+      selectedExistingEnvironment !== environment;
+  }
+}
+
+function clearExistingEnvironmentSelection() {
+  selectedExistingEnvironment = null;
+  skipDeploymentForValidatedEnvironment = false;
+  validateEnvironmentButton.disabled = true;
+  environmentValidationStatus.className = "";
+  environmentValidationStatus.textContent =
+    "Select an existing lab to validate only that environment.";
+  document.querySelectorAll(".environment-card").forEach((card) => {
+    card.classList.remove("selected");
+    card.setAttribute("aria-pressed", "false");
+  });
 }
 
 async function startDeploy() {
+  skipDeploymentForValidatedEnvironment = false;
   const button = document.querySelector("#start-deploy");
   const log = document.querySelector("#deploy-log");
   const step = document.querySelector("#deploy-step");
@@ -965,6 +1066,16 @@ async function loadSummary() {
   const response = await fetch("/api/summary");
   const summary = await response.json();
   if (!response.ok) throw new Error(summary.error || "Unable to load deployment summary.");
+  currentSummary = summary;
+  const legacyEnvironment =
+    summary.existing_environment && summary.environment_detection === "legacy";
+  teardownButton.disabled = legacyEnvironment;
+  teardownButton.textContent = legacyEnvironment
+    ? "Teardown unavailable"
+    : "Tear down Azure resources";
+  teardownButton.title = legacyEnvironment
+    ? "Compatible legacy labs must be removed through their original deployment workflow."
+    : "";
   const fields = [
     ["Lab", summary.lab_name],
     ["Environment", summary.environment],
@@ -1152,16 +1263,13 @@ document.querySelector("#refresh-environments").addEventListener(
   "click",
   loadExistingEnvironments,
 );
+validateEnvironmentButton.addEventListener("click", validateExistingEnvironment);
 document.querySelector("#environment-name").addEventListener("input", (event) => {
   if (
     selectedExistingEnvironment
     && event.target.value !== selectedExistingEnvironment.environment
   ) {
-    selectedExistingEnvironment = null;
-    document.querySelectorAll(".environment-card").forEach((card) => {
-      card.classList.remove("selected");
-      card.setAttribute("aria-pressed", "false");
-    });
+    clearExistingEnvironmentSelection();
   }
 });
 document.querySelector("#azure-location").addEventListener("change", (event) => {
@@ -1169,11 +1277,7 @@ document.querySelector("#azure-location").addEventListener("change", (event) => 
     selectedExistingEnvironment
     && event.target.value !== selectedExistingEnvironment.location
   ) {
-    selectedExistingEnvironment = null;
-    document.querySelectorAll(".environment-card").forEach((card) => {
-      card.classList.remove("selected");
-      card.setAttribute("aria-pressed", "false");
-    });
+    clearExistingEnvironmentSelection();
   }
 });
 document.querySelector("#configure-form").addEventListener("submit", configureEnvironment);
@@ -1183,9 +1287,11 @@ document.querySelector("#restore-baseline").addEventListener("click", () => runD
   "restore-baseline",
   "Reapply the declared Azure infrastructure, application images, and SRE Agent configuration? This can overwrite configuration drift."
 ));
-document.querySelector("#teardown").addEventListener("click", () => runDemoAction(
+teardownButton.addEventListener("click", () => runDemoAction(
   "teardown",
-  "Permanently delete this demo's Azure resources?"
+  currentSummary?.existing_environment
+    ? "Permanently delete this existing demo and all of its Azure resources?"
+    : "Permanently delete this demo's Azure resources?"
 ));
 
 initialize().catch((error) => {

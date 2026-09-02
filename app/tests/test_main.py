@@ -5,6 +5,7 @@ import re
 import tempfile
 import unittest
 import zipfile
+from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,11 +63,13 @@ from app.main import (
     safe_extract_zip,
     safe_log_payload,
     scoped_azure_login_command,
+    set_azd_values,
     should_open_browser,
     should_fallback_open_client,
     shutdown_application,
     teardown_worker,
     upsert_response_plan,
+    validate_existing_lab,
     wait_for_request_metrics,
     version_meets_minimum,
 )
@@ -276,6 +279,202 @@ class LabWorkflowTests(unittest.TestCase):
             "'azure-sre-agent-environment': environmentName",
             bicep,
         )
+
+    @patch("app.main.http_json", return_value=(HTTPStatus.OK, "{}"))
+    @patch("app.main.run_capture")
+    def test_validates_and_hydrates_one_selected_environment(
+        self,
+        run_capture,
+        http_json,
+    ) -> None:
+        resource_group = "rg-existing-lab"
+        resources = [
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.App/agents/sre-agent-a",
+                "name": "sre-agent-a",
+                "type": "Microsoft.App/agents",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.App/managedEnvironments/cae-a",
+                "name": "cae-a",
+                "type": "Microsoft.App/managedEnvironments",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.ContainerRegistry/registries/acra",
+                "name": "acra",
+                "type": "Microsoft.ContainerRegistry/registries",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.OperationalInsights/workspaces/law-a",
+                "name": "law-a",
+                "type": "Microsoft.OperationalInsights/workspaces",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.Insights/components/appi-a",
+                "name": "appi-a",
+                "type": "Microsoft.Insights/components",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "id": f"/subscriptions/sub/resourceGroups/{resource_group}/providers/Microsoft.Insights/metricAlerts/alert-a",
+                "name": "alert-a",
+                "type": "Microsoft.Insights/metricAlerts",
+                "provisioningState": "Succeeded",
+            },
+        ]
+        apps = [
+            {
+                "name": "ca-grubify-a",
+                "image": "acra.azurecr.io/grubify-api:latest",
+                "fqdn": "api.example.test",
+                "provisioningState": "Succeeded",
+            },
+            {
+                "name": "ca-grubify-fe-a",
+                "image": "acra.azurecr.io/grubify-frontend:latest",
+                "fqdn": "ui.example.test",
+                "provisioningState": "Succeeded",
+            },
+        ]
+        agent = {
+            "name": "sre-agent-a",
+            "endpoint": "https://agent.example.test",
+            "incidentType": "AzMonitor",
+            "provisioningState": "Succeeded",
+        }
+        run_capture.side_effect = [
+            (True, json.dumps(resources)),
+            (True, json.dumps(apps)),
+            (True, json.dumps(agent)),
+            (True, "agent-token"),
+        ]
+
+        result = validate_existing_lab(
+            SUBSCRIPTION_A,
+            {
+                "environment": "existing-lab",
+                "resource_group": resource_group,
+                "location": "eastus2",
+            },
+        )
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(
+            result["values"]["CONTAINER_APP_URL"],
+            "https://api.example.test",
+        )
+        self.assertEqual(
+            result["values"]["FRONTEND_APP_URL"],
+            "https://ui.example.test",
+        )
+        self.assertEqual(len(run_capture.call_args_list), 4)
+        self.assertEqual(len(http_json.call_args_list), 2)
+
+    @patch("app.main.run_capture")
+    def test_validation_routes_incomplete_environment_to_update(
+        self,
+        run_capture,
+    ) -> None:
+        run_capture.side_effect = [
+            (True, "[]"),
+            (True, "[]"),
+        ]
+
+        result = validate_existing_lab(
+            SUBSCRIPTION_A,
+            {
+                "environment": "incomplete-lab",
+                "resource_group": "rg-incomplete-lab",
+                "location": "eastus2",
+            },
+        )
+
+        self.assertFalse(result["ready"])
+        self.assertIn("Missing Azure SRE Agent.", result["issues"])
+        self.assertIn("Missing Grubify API Container App.", result["issues"])
+
+    @patch("app.main.run_capture")
+    def test_saves_validated_outputs_to_selected_azd_environment(
+        self,
+        run_capture,
+    ) -> None:
+        run_capture.return_value = (True, "")
+
+        success, error = set_azd_values("existing-lab", {
+            "AZURE_RESOURCE_GROUP": "rg-existing-lab",
+            "CONTAINER_APP_URL": "https://api.example.test",
+        })
+
+        self.assertTrue(success)
+        self.assertEqual(error, "")
+        self.assertEqual(len(run_capture.call_args_list), 2)
+        self.assertEqual(
+            run_capture.call_args_list[0].args[0],
+            [
+                "azd", "env", "set", "-e", "existing-lab",
+                "AZURE_RESOURCE_GROUP", "rg-existing-lab",
+            ],
+        )
+
+    @patch("app.main.set_azd_values", return_value=(True, ""))
+    @patch("app.main.validate_existing_lab")
+    @patch("app.main.load_environment_cache")
+    @patch("app.main.cached_azure_context")
+    @patch("app.main.save_state")
+    @patch("app.main.load_state")
+    def test_ready_validation_activates_existing_lab(
+        self,
+        load_state,
+        save_state,
+        cached_azure_context,
+        load_environment_cache,
+        validate_existing,
+        set_values,
+    ) -> None:
+        state = {
+            "lab_id": "grubify-starter-lab",
+            "environment": "existing-lab",
+            "subscription_id": SUBSCRIPTION_A,
+            "existing_environment": True,
+            "deployment_active": False,
+        }
+        candidate = {
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "location": "eastus2",
+        }
+        load_state.return_value = state
+        cached_azure_context.return_value = {
+            "tenant": TENANT_A,
+            "subscription": SUBSCRIPTION_A,
+        }
+        load_environment_cache.return_value = [candidate]
+        validate_existing.return_value = {
+            "ready": True,
+            "issues": [],
+            "values": {"AZURE_RESOURCE_GROUP": "rg-existing-lab"},
+        }
+        handler = object.__new__(AppHandler)
+        handler.read_json = MagicMock(return_value={
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+        })
+        handler.send_json = MagicMock()
+
+        handler.validate_environment()
+
+        self.assertTrue(save_state.call_args.args[0]["deployment_active"])
+        self.assertIn("validated_at", save_state.call_args.args[0])
+        set_values.assert_called_once_with(
+            "existing-lab",
+            {"AZURE_RESOURCE_GROUP": "rg-existing-lab"},
+        )
+        self.assertTrue(handler.send_json.call_args.args[0]["ready"])
 
 
 class DeviceCodeTests(unittest.TestCase):
@@ -1190,6 +1389,12 @@ class ProcessTests(unittest.TestCase):
         self.assertNotIn('class="workflow-navigation"', page)
         self.assertIn(".workflow-compact .step-leading #back", styles)
         self.assertIn(".prereq-actions button", styles)
+        self.assertIn('id="validate-environment"', page)
+        self.assertIn('apiPost("/api/environments/validate"', script)
+        self.assertIn(
+            'activePanelId === "summary" && skipDeploymentForValidatedEnvironment',
+            script,
+        )
         transition_start = script.index(
             'showPanel("prerequisites");',
             script.index('document.querySelector("#continue-lab")'),
@@ -1636,6 +1841,28 @@ class DeploymentRecoveryTests(unittest.TestCase):
         save_state.assert_not_called()
         done = list(job.events.queue)[-1]
         self.assertFalse(done["success"])
+
+    @patch("app.main.run_process")
+    @patch("app.main.load_state")
+    def test_legacy_environment_teardown_is_blocked(
+        self,
+        load_state,
+        run_process,
+    ) -> None:
+        load_state.return_value = {
+            "environment": "legacy-lab",
+            "existing_environment": True,
+            "existing_environment_detection": "legacy",
+            "deployment_active": True,
+        }
+        job = Job()
+
+        teardown_worker(job)
+
+        run_process.assert_not_called()
+        events = list(job.events.queue)
+        self.assertIn("original deployment workflow", events[-2]["message"])
+        self.assertFalse(events[-1]["success"])
 
 
 class BreakCartTests(unittest.TestCase):
