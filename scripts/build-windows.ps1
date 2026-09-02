@@ -17,7 +17,6 @@ $stagingVendor = Join-Path $stagingApplication "vendor"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
 $stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agent Demo.cmd"
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
-$shortcutRepairSource = Join-Path $repoRoot "packaging\windows\Repair-Shortcut.ps1"
 $iconSource = Join-Path $repoRoot "app\static\favicon.ico"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 $shortcutName = "Azure SRE Agent Demo.lnk"
@@ -193,7 +192,6 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination $
 Copy-Item -LiteralPath $launcherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $splashSource -Destination $stagingApplication
-Copy-Item -LiteralPath $shortcutRepairSource -Destination $stagingApplication
 Copy-Item -LiteralPath $iconSource -Destination (Join-Path $stagingApplication "Azure SRE Agent Demo.ico")
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
 $fallbackIcon = Join-Path $env:SystemRoot "System32\cmd.exe"
@@ -245,9 +243,6 @@ if (-not (Test-Path (Join-Path $packagedApplication "Stop Azure SRE Agent Demo.c
 }
 if (-not (Test-Path (Join-Path $packagedApplication "Show-Splash.ps1"))) {
   throw "The startup splash could not be copied to the distribution folder."
-}
-if (-not (Test-Path (Join-Path $packagedApplication "Repair-Shortcut.ps1"))) {
-  throw "The shortcut repair script could not be copied to the distribution folder."
 }
 if (-not (Test-Path (Join-Path $packagedApplication "Azure SRE Agent Demo.ico"))) {
   throw "The application icon could not be copied to the distribution folder."

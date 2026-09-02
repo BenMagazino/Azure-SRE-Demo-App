@@ -1102,7 +1102,7 @@ class ProcessTests(unittest.TestCase):
         self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
-        self.assertIn("Repair-Shortcut.ps1", launcher)
+        self.assertNotIn("Repair-Shortcut.ps1", launcher)
 
     def test_splash_waits_for_health_before_opening_browser(self) -> None:
         repository = STATIC_DIR.parents[1]
@@ -1124,7 +1124,6 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("Azure SRE Agent Demo.lnk", build_script)
         self.assertIn("SetRelativePath", build_script)
         self.assertIn('"System32\\cmd.exe"', build_script)
-        self.assertIn("Repair-Shortcut.ps1", build_script)
 
     def test_portable_package_consolidates_application_files(self) -> None:
         repository = STATIC_DIR.parents[1]
@@ -1148,20 +1147,6 @@ class ProcessTests(unittest.TestCase):
             '@("app", $shortcutName, "README.txt")',
             build_script,
         )
-
-    def test_shortcut_repair_applies_absolute_bundled_icon(self) -> None:
-        repository = STATIC_DIR.parents[1]
-        repair_script = (
-            repository / "packaging" / "windows" / "Repair-Shortcut.ps1"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("Azure SRE Agent Demo.lnk", repair_script)
-        self.assertIn("Start Azure SRE Agent Demo.cmd", repair_script)
-        self.assertIn("Azure SRE Agent Demo.ico", repair_script)
-        self.assertIn("$shortcut.TargetPath = $launcherPath", repair_script)
-        self.assertIn('$shortcut.IconLocation = "$iconPath,0"', repair_script)
-        self.assertIn("SHChangeNotify", repair_script)
-        self.assertIn("[ShortcutIconRefresh]::UpdateItem", repair_script)
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
