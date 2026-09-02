@@ -277,7 +277,7 @@ async function loadLabs() {
   if (!response.ok) throw new Error(payload.error || "Unable to load labs.");
   labCatalog = payload.labs || [];
   persistedLabId = payload.selected_lab_id || "";
-  selectedLabId = persistedLabId || labCatalog[0]?.id || "";
+  selectedLabId = persistedLabId;
   selectedScenarioId = payload.selected_scenario_id || "";
   renderLabPicker();
   updateLabCopy();
@@ -1286,11 +1286,16 @@ function selectedScenario() {
 }
 
 function updateDemoActionAvailability() {
-  document.querySelector("#run-scenario").disabled = !selectedScenario();
-  document.querySelector("#restore-baseline").disabled = false;
+  const demoActive = currentSummary !== null;
+  document.querySelector("#run-scenario").disabled =
+    !demoActive || !selectedScenario();
+  document.querySelector("#restore-baseline").disabled = !demoActive;
   teardownButton.disabled = Boolean(
-    currentSummary?.existing_environment
-    && currentSummary?.environment_detection === "legacy"
+    !demoActive
+    || (
+      currentSummary?.existing_environment
+      && currentSummary?.environment_detection === "legacy"
+    )
   );
 }
 
@@ -1393,6 +1398,55 @@ function renderScenarioPicker() {
   renderInvestigationCountdownEstimate(scenario);
 }
 
+function resetLifecycleAfterTeardown() {
+  persistedLabId = "";
+  selectedLabId = "";
+  selectedScenarioId = "";
+  selectedExistingEnvironment = null;
+  skipDeploymentForValidatedEnvironment = false;
+  currentSummary = null;
+
+  resetInvestigationCountdown();
+  document.querySelector("#configure-form").reset();
+  clearExistingEnvironmentSelection();
+  document.querySelector("#existing-environment-list").replaceChildren();
+  document.querySelector("#environment-discovery-status").className = "";
+  document.querySelector("#environment-discovery-status").textContent =
+    "Scan the selected subscription for compatible labs.";
+  document.querySelector("#configure-status").className = "";
+  document.querySelector("#configure-status").textContent = "";
+  document.querySelector("#summary-validation-status").textContent = "";
+  document.querySelector("#summary-validation-status").classList.add("hidden");
+  document.querySelector("#summary-links").replaceChildren();
+  edgeProfileStatus.textContent = "";
+  document.querySelector("#deploy-title").textContent = "Deploy selected lab";
+  document.querySelector("#deploy-copy").textContent =
+    "Infrastructure deployment and lab configuration typically take 8-15 minutes.";
+  document.querySelector("#start-deploy").textContent = "Deploy lab";
+  document.querySelector("#start-deploy").disabled = false;
+  document.querySelector("#deploy-step").textContent = "";
+  document.querySelector("#deploy-log").textContent = "";
+  document.querySelector("#demo-log").textContent = "";
+  document.querySelector("#prerequisite-copy").textContent =
+    "Select a lab to see its required tools.";
+  document.querySelector("#configure-copy").textContent =
+    "Choose the Azure environment for the selected lab.";
+  prereqList.replaceChildren();
+  continueButton.disabled = true;
+  installInProgress = false;
+  installAllButton.classList.add("hidden");
+  installAllButton.disabled = false;
+  installAllProgress.textContent = "";
+  installAllProgress.classList.add("hidden");
+  teardownButton.textContent = "Tear down Azure resources";
+  teardownButton.title = "";
+
+  renderLabPicker();
+  renderScenarioPicker();
+  updateDemoActionAvailability();
+  showPanel("labs");
+}
+
 async function runSelectedScenario() {
   const scenario = currentLab()?.scenarios.find(
     (item) => item.id === selectedScenarioId
@@ -1452,13 +1506,12 @@ async function runDemoAction(
         "\nBaseline restored from the declared infrastructure and application configuration.\n";
     }
     if (path === "teardown") {
-      resetInvestigationCountdown();
-      document.querySelector("#summary-links").replaceChildren();
-      log.textContent = "";
-      document.querySelector("#deploy-log").textContent = "";
-      document.querySelector("#deploy-step").textContent =
-        "Azure resources removed. Select Deploy lab to create the demo again.";
-      showPanel("deployment");
+      if (completed.lifecycle_reset !== true) {
+        log.textContent +=
+          "\nAzure teardown completed without confirming the local workflow reset. Review the diagnostic log before continuing.\n";
+        return;
+      }
+      resetLifecycleAfterTeardown();
     }
   } catch (error) {
     log.textContent += `Action failed: ${error}\n`;

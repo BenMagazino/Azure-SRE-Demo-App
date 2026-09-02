@@ -2273,6 +2273,57 @@ class ProcessTests(unittest.TestCase):
             script,
         )
 
+    def test_successful_teardown_resets_frontend_lifecycle_only_after_success(
+        self,
+    ) -> None:
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        reset_start = script.index("function resetLifecycleAfterTeardown()")
+        reset_end = script.index("\n}\n", reset_start)
+        reset = script[reset_start:reset_end]
+
+        for expected in (
+            'persistedLabId = "";',
+            'selectedLabId = "";',
+            'selectedScenarioId = "";',
+            "selectedExistingEnvironment = null;",
+            "skipDeploymentForValidatedEnvironment = false;",
+            "currentSummary = null;",
+            "resetInvestigationCountdown();",
+            'document.querySelector("#configure-form").reset();',
+            'document.querySelector("#existing-environment-list").replaceChildren();',
+            'document.querySelector("#summary-links").replaceChildren();',
+            'document.querySelector("#deploy-log").textContent = "";',
+            'document.querySelector("#demo-log").textContent = "";',
+            "continueButton.disabled = true;",
+            "installInProgress = false;",
+            "renderLabPicker();",
+            "renderScenarioPicker();",
+            'showPanel("labs");',
+        ):
+            self.assertIn(expected, reset)
+
+        action_start = script.index("async function runDemoAction(")
+        success_guard = script.index(
+            "if (!completed.success) return;",
+            action_start,
+        )
+        reset_contract = script.index(
+            "if (completed.lifecycle_reset !== true)",
+            success_guard,
+        )
+        reset_call = script.index(
+            "resetLifecycleAfterTeardown();",
+            reset_contract,
+        )
+        self.assertLess(success_guard, reset_contract)
+        self.assertLess(reset_contract, reset_call)
+        self.assertNotIn(
+            "Azure resources removed. Select Deploy lab to create the demo again.",
+            script,
+        )
+        self.assertIn("selectedLabId = persistedLabId;", script)
+        self.assertNotIn("persistedLabId || labCatalog[0]?.id", script)
+
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
@@ -2700,23 +2751,49 @@ class DeploymentRecoveryTests(unittest.TestCase):
     @patch("app.main.save_state")
     @patch("app.main.run_process", return_value=(True, ""))
     @patch("app.main.load_state")
-    def test_teardown_marks_demo_inactive(
+    def test_successful_teardown_resets_lifecycle_state_and_cache(
         self,
         load_state,
         run_process,
         save_state,
     ) -> None:
-        load_state.return_value = {
+        state = {
+            "lab_id": "grubify-starter-lab",
             "environment": "sre-lab",
+            "location": "eastus2",
+            "tenant_id": TENANT_A,
+            "subscription_id": SUBSCRIPTION_A,
             "deployment_active": True,
+            "existing_environment": True,
+            "existing_environment_detection": "managed",
+            "scenario_id": "memory-leak",
+            "resource_group": "rg-sre-lab",
+            "validation_status": "skipped",
+            "validation_issues": ["Validation skipped."],
+            "availability_checks": [],
+            "validation_skipped_at": "2026-09-02T20:00:00+00:00",
         }
-        job = Job()
+        load_state.return_value = state
 
-        teardown_worker(job)
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = Path(directory) / "environments.json"
+            cache_file.write_text('{"environments": []}', encoding="utf-8")
+            with patch.object(
+                main_module,
+                "ENVIRONMENT_CACHE_FILE",
+                cache_file,
+            ):
+                job = Job()
+                teardown_worker(job)
 
-        self.assertFalse(save_state.call_args.args[0]["deployment_active"])
+            self.assertFalse(cache_file.exists())
+        save_state.assert_called_once_with({
+            "tenant_id": TENANT_A,
+            "subscription_id": SUBSCRIPTION_A,
+        })
         done = list(job.events.queue)[-1]
         self.assertTrue(done["success"])
+        self.assertTrue(done["lifecycle_reset"])
 
     @patch("app.main.save_state")
     @patch("app.main.run_process", return_value=(False, "failed"))
@@ -2727,15 +2804,30 @@ class DeploymentRecoveryTests(unittest.TestCase):
         run_process,
         save_state,
     ) -> None:
-        load_state.return_value = {
+        state = {
+            "lab_id": "grubify-starter-lab",
             "environment": "sre-lab",
             "deployment_active": True,
+            "scenario_id": "memory-leak",
+            "validation_status": "skipped",
+            "validation_skipped_at": "2026-09-02T20:00:00+00:00",
         }
-        job = Job()
+        load_state.return_value = state
 
-        teardown_worker(job)
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = Path(directory) / "environments.json"
+            cache_file.write_text('{"environments": []}', encoding="utf-8")
+            with patch.object(
+                main_module,
+                "ENVIRONMENT_CACHE_FILE",
+                cache_file,
+            ):
+                job = Job()
+                teardown_worker(job)
 
+            self.assertTrue(cache_file.exists())
         save_state.assert_not_called()
+        self.assertEqual(load_state.return_value, state)
         done = list(job.events.queue)[-1]
         self.assertFalse(done["success"])
 
