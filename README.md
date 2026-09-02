@@ -177,6 +177,16 @@ The build output is:
 dist\AzureSREAgentDemo-portable-win-x64.zip
 ```
 
+## Contributing and releases
+
+Development uses a protected `main` branch and short-lived, developer-owned branches such as
+`benmagazino/feature/42-edge-profile-picker`. Pull requests run validation and produce a temporary
+Windows package artifact. Stable semantic-version tags such as `v0.1.0` build and publish the ZIP
+and its SHA-256 checksum as a GitHub Release.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch convention, pull request process, and release
+procedure.
+
 ## Project structure
 
 ```text
