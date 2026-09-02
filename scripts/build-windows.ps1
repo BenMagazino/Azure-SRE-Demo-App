@@ -17,6 +17,7 @@ $stagingVendor = Join-Path $stagingApplication "vendor"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
 $stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agent Demo.cmd"
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
+$shortcutRepairSource = Join-Path $repoRoot "packaging\windows\Repair-Shortcut.ps1"
 $iconSource = Join-Path $repoRoot "app\static\favicon.ico"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 $shortcutName = "Azure SRE Agent Demo.lnk"
@@ -102,14 +103,15 @@ namespace AzureSreAgentDemoPackaging
         public static void Create(
             string shortcutPath,
             string targetPath,
-            string relativeIconPath)
+            string iconPath,
+            int iconIndex)
         {
             IShellLinkW link = (IShellLinkW)new ShellLinkClass();
             try
             {
                 link.SetPath(targetPath);
                 link.SetDescription("Azure SRE Agent Demo");
-                link.SetIconLocation(relativeIconPath, 0);
+                link.SetIconLocation(iconPath, iconIndex);
                 link.SetShowCmd(7);
                 link.SetRelativePath(shortcutPath, 0);
                 ((IPersistFile)link).Save(shortcutPath, true);
@@ -191,12 +193,15 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination $
 Copy-Item -LiteralPath $launcherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $splashSource -Destination $stagingApplication
+Copy-Item -LiteralPath $shortcutRepairSource -Destination $stagingApplication
 Copy-Item -LiteralPath $iconSource -Destination (Join-Path $stagingApplication "Azure SRE Agent Demo.ico")
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
+$fallbackIcon = Join-Path $env:SystemRoot "System32\cmd.exe"
 [AzureSreAgentDemoPackaging.PortableShortcut]::Create(
   (Join-Path $stagingPackage $shortcutName),
   (Join-Path $stagingApplication "Start Azure SRE Agent Demo.cmd"),
-  "app\Azure SRE Agent Demo.ico"
+  $fallbackIcon,
+  0
 )
 
 & $runtimePython --version
@@ -241,6 +246,9 @@ if (-not (Test-Path (Join-Path $packagedApplication "Stop Azure SRE Agent Demo.c
 if (-not (Test-Path (Join-Path $packagedApplication "Show-Splash.ps1"))) {
   throw "The startup splash could not be copied to the distribution folder."
 }
+if (-not (Test-Path (Join-Path $packagedApplication "Repair-Shortcut.ps1"))) {
+  throw "The shortcut repair script could not be copied to the distribution folder."
+}
 if (-not (Test-Path (Join-Path $packagedApplication "Azure SRE Agent Demo.ico"))) {
   throw "The application icon could not be copied to the distribution folder."
 }
@@ -273,8 +281,8 @@ try {
     throw "The portable shortcut target could not be resolved after relocation."
   }
   $shortcut = $shell.CreateShortcut($shortcutPath)
-  if ($shortcut.IconLocation -ne "app\Azure SRE Agent Demo.ico,0") {
-    throw "The portable shortcut icon is not configured as a relative path."
+  if ($shortcut.IconLocation -ne "$fallbackIcon,0") {
+    throw "The portable shortcut fallback icon is not configured correctly."
   }
 } finally {
   if ($shortcut) {

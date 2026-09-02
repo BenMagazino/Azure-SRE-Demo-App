@@ -2,7 +2,9 @@ Azure SRE Agent Demo - Portable Windows Package
 ================================================
 
 Double-click "Azure SRE Agent Demo" to launch the application. The branded
-shortcut remains portable when the extracted folder is moved.
+shortcut remains portable when the extracted folder is moved. Windows displays
+a standard launcher icon immediately after extraction; the first launch updates
+it to the Azure SRE Agent Demo shield using the current extraction path.
 The browser opens automatically at http://127.0.0.1:8765.
 The startup terminal closes after handing the application to a background
 process. A startup splash remains visible until the local backend is ready and

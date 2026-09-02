@@ -72,9 +72,13 @@ shutdown. The portable package also includes
 application window is unavailable.
 
 The package root includes a portable `Azure SRE Agent Demo.lnk` launcher with
-the application icon already applied. It targets the embedded start command in
-the `app` folder and continues to work when the complete extracted folder is
-moved. The same icon is used by the browser and splash experience.
+the application icon applied on first launch. Windows shortcut files cannot
+resolve relative custom-icon paths, so the packaged shortcut initially uses a
+built-in Windows launcher icon. Its first launch updates the shortcut to the
+bundled shield icon using the current extraction path. It targets the embedded
+start command in the `app` folder and continues to work when the complete
+extracted folder is moved. The same shield icon is used by the browser and
+splash experience.
 
 ## Windows Sandbox diagnostics
 
