@@ -5,7 +5,10 @@ Double-click "Azure SRE Agent Demo" to launch the application. The branded
 shortcut remains portable when the extracted folder is moved. The shortcut uses
 a built-in Windows launcher icon because Windows does not support portable
 relative paths for custom shortcut icons. The Azure SRE Agent Demo shield
-appears in the startup splash and application window.
+appears in the startup splash and application window. Keep the shortcut
+read-only; this prevents Windows from replacing its relative target with a
+machine-specific path. The package restores that protection automatically on
+launch because ZIP extraction can remove the read-only attribute.
 The browser opens automatically at http://127.0.0.1:8765.
 The startup terminal closes after handing the application to a background
 process. A startup splash remains visible until the local backend is ready and

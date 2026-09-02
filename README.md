@@ -76,7 +76,11 @@ Windows shortcut files cannot resolve relative custom-icon paths, so the
 shortcut uses a built-in Windows launcher icon rather than rewriting itself to
 an extraction-specific path. It targets the embedded start command in the
 `app` folder and continues to work when the complete extracted folder is moved.
-The custom shield icon is used by the browser and splash experience.
+The shortcut is intentionally read-only so Windows cannot replace that relative
+target with a build-machine or redirected-drive path. The custom shield icon is
+used by the browser and splash experience. Since ZIP extraction can remove the
+read-only attribute, the hidden launcher restores a pristine relative shortcut
+and reapplies that protection before starting the backend.
 
 ## Windows Sandbox diagnostics
 

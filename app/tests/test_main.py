@@ -1103,6 +1103,14 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
         self.assertNotIn("Repair-Shortcut.ps1", launcher)
+        self.assertIn("Azure SRE Agent Demo.link-template", launcher)
+        self.assertIn("attrib.exe +R", launcher)
+
+        hidden_launcher = (
+            repository / "packaging" / "windows" / "Launch.vbs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Start Azure SRE Agent Demo.cmd", hidden_launcher)
+        self.assertIn('shell.Run """" & startCommand & """", 0, False', hidden_launcher)
 
     def test_splash_waits_for_health_before_opening_browser(self) -> None:
         repository = STATIC_DIR.parents[1]
@@ -1122,8 +1130,14 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("Show-Splash.ps1", build_script)
         self.assertIn("Azure SRE Agent Demo.ico", build_script)
         self.assertIn("Azure SRE Agent Demo.lnk", build_script)
-        self.assertIn("SetRelativePath", build_script)
-        self.assertIn('"System32\\cmd.exe"', build_script)
+        self.assertIn("New-RelativeShortcut", build_script)
+        self.assertIn("A0000001", build_script)
+        self.assertIn("A0000007", build_script)
+        self.assertIn('"%SystemRoot%\\System32\\cmd.exe"', build_script)
+        self.assertIn("IsReadOnly = $true", build_script)
+        self.assertIn('$relativeLauncher = "app\\Launch.vbs"', build_script)
+        self.assertIn("Azure SRE Agent Demo.link-template", build_script)
+        self.assertNotIn("SetRelativePath", build_script)
 
     def test_portable_package_consolidates_application_files(self) -> None:
         repository = STATIC_DIR.parents[1]
