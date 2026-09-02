@@ -1109,12 +1109,6 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("Azure SRE Agent Demo.link-template", launcher)
         self.assertIn("attrib.exe +R", launcher)
 
-        hidden_launcher = (
-            repository / "packaging" / "windows" / "Launch.vbs"
-        ).read_text(encoding="utf-8")
-        self.assertIn("Start Azure SRE Agent Demo.cmd", hidden_launcher)
-        self.assertIn('shell.Run """" & startCommand & """", 0, False', hidden_launcher)
-
     def test_splash_waits_for_health_before_opening_browser(self) -> None:
         repository = STATIC_DIR.parents[1]
         splash = (
@@ -1138,8 +1132,12 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("A0000007", build_script)
         self.assertIn('"%SystemRoot%\\System32\\cmd.exe"', build_script)
         self.assertIn("IsReadOnly = $true", build_script)
-        self.assertIn('$relativeLauncher = "app\\Launch.vbs"', build_script)
+        self.assertIn(
+            '$relativeLauncher = "app\\Start Azure SRE Agent Demo.cmd"',
+            build_script,
+        )
         self.assertIn("Azure SRE Agent Demo.link-template", build_script)
+        self.assertNotIn("Launch.vbs", build_script)
         self.assertNotIn("SetRelativePath", build_script)
 
     def test_portable_package_consolidates_application_files(self) -> None:

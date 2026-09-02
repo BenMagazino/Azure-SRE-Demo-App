@@ -81,7 +81,7 @@ an extraction-specific path. It targets the embedded start command in the
 The shortcut is intentionally read-only so Windows cannot replace that relative
 target with a build-machine or redirected-drive path. The custom shield icon is
 used by the browser and splash experience. Since ZIP extraction can remove the
-read-only attribute, the hidden launcher restores a pristine relative shortcut
+read-only attribute, the start command restores a pristine relative shortcut
 and reapplies that protection before starting the backend.
 
 ## Windows Sandbox diagnostics

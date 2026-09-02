@@ -14,7 +14,6 @@ $stagingPackage = Join-Path $stagingRoot "AzureSREAgentDemo"
 $stagingApplication = Join-Path $stagingPackage "app"
 $stagingRuntime = Join-Path $stagingApplication "python"
 $stagingVendor = Join-Path $stagingApplication "vendor"
-$hiddenLauncherSource = Join-Path $repoRoot "packaging\windows\Launch.vbs"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
 $stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agent Demo.cmd"
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
@@ -150,13 +149,12 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "app\main.py") -Destination (Join-Pa
 Copy-Item -LiteralPath (Join-Path $repoRoot "app\static") -Destination $stagingApplication -Recurse
 New-Item -ItemType Directory -Path $stagingVendor | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination $stagingVendor -Recurse
-Copy-Item -LiteralPath $hiddenLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $launcherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $splashSource -Destination $stagingApplication
 Copy-Item -LiteralPath $iconSource -Destination (Join-Path $stagingApplication "Azure SRE Agent Demo.ico")
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
-$relativeLauncher = "app\Launch.vbs"
+$relativeLauncher = "app\Start Azure SRE Agent Demo.cmd"
 $fallbackIcon = "%SystemRoot%\System32\cmd.exe"
 New-RelativeShortcut `
   (Join-Path $stagingPackage $shortcutName) `
@@ -205,9 +203,6 @@ if (-not (Test-Path (Join-Path $packageDirectory $shortcutName))) {
 }
 if (-not (Test-Path (Join-Path $packagedApplication "Start Azure SRE Agent Demo.cmd"))) {
   throw "The start launcher could not be copied to the application folder."
-}
-if (-not (Test-Path (Join-Path $packagedApplication "Launch.vbs"))) {
-  throw "The hidden launcher could not be copied to the application folder."
 }
 if (-not (Test-Path (Join-Path $packagedApplication $shortcutTemplateName))) {
   throw "The relative shortcut template could not be copied to the application folder."
