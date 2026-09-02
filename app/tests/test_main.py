@@ -1050,6 +1050,8 @@ class ProcessTests(unittest.TestCase):
 
         self.assertIn("/api/health", splash)
         self.assertIn('Storyboard.TargetName="SpinnerRotation"', splash)
+        self.assertIn('"--app=$AppUrl"', splash)
+        self.assertIn("Microsoft\\Edge\\Application\\msedge.exe", splash)
         self.assertIn("Start-Process $AppUrl", splash)
         self.assertIn("Show-Splash.ps1", build_script)
 

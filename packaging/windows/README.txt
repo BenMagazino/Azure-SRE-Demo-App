@@ -5,7 +5,9 @@ Double-click "Start Azure SRE Agent Demo.cmd" to launch the application.
 The browser opens automatically at http://127.0.0.1:8765.
 The startup terminal closes after handing the application to a background
 process. A startup splash remains visible until the local backend is ready and
-the browser opens. Use the Shutdown button in the browser to stop that process.
+Microsoft Edge opens in a standalone application window using the normal Edge
+profile and its authenticated sessions. If Edge is unavailable, the default
+browser opens instead. Use the Shutdown button to stop the local process.
 
 Keep the complete folder together. The included python directory contains the
 official Python Software Foundation 3.14.7 embeddable runtime, so Python does

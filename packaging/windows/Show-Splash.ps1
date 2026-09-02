@@ -133,6 +133,14 @@ if ($ValidateOnly) {
 $healthUrl = "$($AppUrl.TrimEnd('/'))/api/health"
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 $logDirectory = Join-Path $env:LOCALAPPDATA "AzureSREAgentDemo\logs"
+$edgeCandidates = @(
+  (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
+  (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe"),
+  (Join-Path $env:LOCALAPPDATA "Microsoft\Edge\Application\msedge.exe")
+)
+$edgePath = $edgeCandidates |
+  Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+  Select-Object -First 1
 $timer = [Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds(250)
 
@@ -156,10 +164,16 @@ $timer.Add_Tick({
     }
 
     $timer.Stop()
-    $statusText.Text = "Opening the application..."
+    $statusText.Text = "Opening the desktop application..."
     $detailText.Text = "The local backend is ready."
     try {
-      Start-Process $AppUrl
+      if ($edgePath) {
+        Start-Process `
+          -FilePath $edgePath `
+          -ArgumentList @("--app=$AppUrl", "--start-maximized")
+      } else {
+        Start-Process $AppUrl
+      }
       $window.Close()
     } catch {
       $spinner.Visibility = "Collapsed"
