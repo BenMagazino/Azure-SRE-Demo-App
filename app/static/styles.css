@@ -425,11 +425,45 @@ header p,
   margin: 0;
 }
 
+.environment-browser {
+  margin: 1.5rem 0 2rem;
+  padding: 1.5rem;
+}
+
+.environment-browser .context-heading {
+  gap: 2rem;
+}
+
+.environment-browser .context-heading p {
+  margin-top: 0.5rem;
+  line-height: 1.5;
+}
+
+.environment-browser .context-heading button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.environment-discovery {
+  min-height: 5.5rem;
+  padding: 1.5rem 0;
+}
+
+.environment-discovery > p {
+  color: var(--cp-text-muted);
+  line-height: 1.5;
+}
+
+.environment-discovery .environment-list {
+  margin-bottom: 0;
+}
+
 .environment-validation {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
+  justify-items: start;
   gap: 0.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--cp-border);
 }
 
 .environment-validation button {
@@ -439,6 +473,8 @@ header p,
 
 .environment-validation p {
   margin: 0;
+  color: var(--cp-text-muted);
+  line-height: 1.5;
 }
 
 .environment-card {
@@ -729,6 +765,10 @@ select {
   .app-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .environment-browser {
+    padding: 1.25rem;
   }
 
   .app-header > button {

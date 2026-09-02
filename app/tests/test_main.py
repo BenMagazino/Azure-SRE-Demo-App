@@ -1390,6 +1390,11 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".workflow-compact .step-leading #back", styles)
         self.assertIn(".prereq-actions button", styles)
         self.assertIn('id="validate-environment"', page)
+        self.assertIn('class="context-card environment-browser"', page)
+        self.assertIn('class="environment-discovery"', page)
+        self.assertIn(".environment-browser .context-heading", styles)
+        self.assertIn(".environment-discovery", styles)
+        self.assertNotIn("No GitHub connection is required", script)
         self.assertIn('apiPost("/api/environments/validate"', script)
         self.assertIn(
             'activePanelId === "summary" && skipDeploymentForValidatedEnvironment',

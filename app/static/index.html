@@ -17,7 +17,7 @@
     <link rel="icon" href="/favicon.svg?v=20260901.2" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/favicon-192.png?v=20260901.2">
     <link rel="manifest" href="/manifest.webmanifest?v=20260901.2">
-    <link rel="stylesheet" href="/styles.css?v=20260901.13">
+    <link rel="stylesheet" href="/styles.css?v=20260901.14">
   </head>
   <body>
     <main class="shell">
@@ -119,7 +119,9 @@
       <section id="configuration" class="panel hidden">
         <h2>Configure the Azure environment</h2>
         <p id="configure-copy">Choose the Azure environment for the selected lab.</p>
-        <section class="context-card" aria-labelledby="existing-environments-heading">
+        <section
+          class="context-card environment-browser"
+          aria-labelledby="existing-environments-heading">
           <div class="context-heading">
             <div>
               <h3 id="existing-environments-heading">Existing lab environments</h3>
@@ -127,10 +129,12 @@
             </div>
             <button id="refresh-environments" class="secondary" type="button">Scan subscription</button>
           </div>
-          <p id="environment-discovery-status" aria-live="polite">
-            Scan the selected subscription for compatible labs.
-          </p>
-          <div id="existing-environment-list" class="environment-list"></div>
+          <div class="environment-discovery">
+            <p id="environment-discovery-status" aria-live="polite">
+              Scan the selected subscription for compatible labs.
+            </p>
+            <div id="existing-environment-list" class="environment-list"></div>
+          </div>
           <div class="environment-validation">
             <button id="validate-environment" type="button" disabled>
               Validate selected lab
@@ -200,6 +204,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.13"></script>
+    <script src="/app.js?v=20260901.14"></script>
   </body>
 </html>

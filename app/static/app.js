@@ -227,7 +227,7 @@ function updateLabCopy() {
   const lab = currentLab();
   if (!lab) return;
   document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. Azure CLI is installed privately without administrator approval; WinGet handles other tool remediation.`;
-  document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}. No GitHub connection is required.`;
+  document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}.`;
   document.querySelector("#deploy-title").textContent = `Deploy ${lab.name}`;
   document.querySelector("#deploy-copy").textContent = `${lab.description} Azure resources and lab automation are created automatically.`;
 }
