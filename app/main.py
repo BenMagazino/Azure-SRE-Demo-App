@@ -32,7 +32,11 @@ if FROZEN:
     BUNDLED_VENDOR_DIR = ROOT / "vendor" / "starter-lab"
 else:
     ROOT = Path(__file__).resolve().parent
-    BUNDLED_VENDOR_DIR = ROOT.parent / "vendor" / "starter-lab"
+    BUNDLED_VENDOR_DIR = (
+        ROOT / "vendor" / "starter-lab"
+        if PORTABLE
+        else ROOT.parent / "vendor" / "starter-lab"
+    )
 STATIC_DIR = ROOT / "static"
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo"
 STATE_DIR.mkdir(parents=True, exist_ok=True)

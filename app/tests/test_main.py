@@ -1098,6 +1098,8 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('start "" /b', launcher)
         self.assertIn(r"python\pythonw.exe", launcher)
         self.assertNotIn(r"python\python.exe", launcher)
+        self.assertIn(r'"%~dp0main.py"', launcher)
+        self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
 
@@ -1118,6 +1120,32 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("$window.Icon", splash)
         self.assertIn("Show-Splash.ps1", build_script)
         self.assertIn("Azure SRE Agent Demo.ico", build_script)
+        self.assertIn("Azure SRE Agent Demo.lnk", build_script)
+        self.assertIn("SetRelativePath", build_script)
+        self.assertIn('"app\\Azure SRE Agent Demo.ico"', build_script)
+
+    def test_portable_package_consolidates_application_files(self) -> None:
+        repository = STATIC_DIR.parents[1]
+        build_script = (
+            repository / "scripts" / "build-windows.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '$stagingApplication = Join-Path $stagingPackage "app"',
+            build_script,
+        )
+        self.assertIn(
+            '$stagingRuntime = Join-Path $stagingApplication "python"',
+            build_script,
+        )
+        self.assertIn(
+            '$stagingVendor = Join-Path $stagingApplication "vendor"',
+            build_script,
+        )
+        self.assertIn(
+            '@("app", $shortcutName, "README.txt")',
+            build_script,
+        )
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

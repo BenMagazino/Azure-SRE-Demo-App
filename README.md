@@ -68,14 +68,13 @@ window is closed without using **Shutdown**, the backend stops after two
 minutes without a heartbeat. Active installation, authentication, deployment,
 recovery, scenario, and teardown jobs are allowed to finish before automatic
 shutdown. The portable package also includes
-`Stop Azure SRE Agent Demo.cmd` for an explicit graceful shutdown when the
+`app\Stop Azure SRE Agent Demo.cmd` for an explicit graceful shutdown when the
 application window is unavailable.
 
-The package includes `Azure SRE Agent Demo.ico`, which is also used by the
-browser and splash experience. Windows does not support embedding a custom icon
-directly in a CMD file. To give the launcher a custom Explorer or desktop icon,
-create a shortcut to `Start Azure SRE Agent Demo.cmd`, open the shortcut's
-**Properties**, choose **Change Icon**, and select the included ICO file.
+The package root includes a portable `Azure SRE Agent Demo.lnk` launcher with
+the application icon already applied. It targets the embedded start command in
+the `app` folder and continues to work when the complete extracted folder is
+moved. The same icon is used by the browser and splash experience.
 
 ## Windows Sandbox diagnostics
 
@@ -106,9 +105,10 @@ signature, and writes both:
 - `dist\AzureSREAgentDemo-portable-win-x64.zip`
 
 End users do not need Python installed. After extracting the ZIP, they
-double-click `Start Azure SRE Agent Demo.cmd`. There is no custom PyInstaller
-executable; the launcher runs the included, signed `python.exe`. The complete
-folder must remain together.
+double-click `Azure SRE Agent Demo.lnk`. The package root contains only that
+branded shortcut, `README.txt`, and the `app` folder. The application folder
+contains the launch scripts, signed embedded Python runtime, web application,
+and vendored lab assets. The complete extracted folder must remain together.
 
 ## Current wizard flow
 
