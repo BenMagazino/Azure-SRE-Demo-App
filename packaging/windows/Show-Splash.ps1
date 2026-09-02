@@ -124,6 +124,18 @@ $statusText = $window.FindName("StatusText")
 $detailText = $window.FindName("DetailText")
 $closeButton = $window.FindName("CloseButton")
 $spinner = $window.FindName("Spinner")
+$iconCandidates = @(
+  (Join-Path $PSScriptRoot "Azure SRE Agent Demo.ico"),
+  (Join-Path $PSScriptRoot "..\..\app\static\favicon.ico")
+)
+$iconPath = $iconCandidates |
+  Where-Object { Test-Path -LiteralPath $_ } |
+  Select-Object -First 1
+if ($iconPath) {
+  $window.Icon = [Windows.Media.Imaging.BitmapFrame]::Create(
+    [Uri]::new((Resolve-Path $iconPath).Path)
+  )
+}
 
 if ($ValidateOnly) {
   $window.Close()

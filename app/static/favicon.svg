@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Azure SRE Agent Demo</title>
+  <rect
+    x="16"
+    y="16"
+    width="480"
+    height="480"
+    rx="96"
+    fill="#0d1a2a"
+    stroke="#28415f"
+    stroke-width="12" />
+  <path
+    d="M256 64 404 124v112c0 101-59 176-148 220-89-44-148-119-148-220V124Z"
+    fill="#15304d"
+    stroke="#4ba3ff"
+    stroke-linejoin="round"
+    stroke-width="24" />
+  <path
+    d="M72 260h112l38-76 66 152 40-76h112"
+    fill="none"
+    stroke="#e8f0fa"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="24" />
+  <circle cx="72" cy="260" r="12" fill="#4ba3ff" />
+  <circle cx="440" cy="260" r="12" fill="#4ba3ff" />
+</svg>

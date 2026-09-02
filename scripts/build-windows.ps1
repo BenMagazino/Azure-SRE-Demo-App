@@ -15,6 +15,7 @@ $stagingRuntime = Join-Path $stagingPackage "python"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
 $stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agent Demo.cmd"
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
+$iconSource = Join-Path $repoRoot "app\static\favicon.ico"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 
 function Test-RuntimeArchive {
@@ -67,6 +68,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination (
 Copy-Item -LiteralPath $launcherSource -Destination $stagingPackage
 Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingPackage
 Copy-Item -LiteralPath $splashSource -Destination $stagingPackage
+Copy-Item -LiteralPath $iconSource -Destination (Join-Path $stagingPackage "Azure SRE Agent Demo.ico")
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
 
 & $runtimePython --version
@@ -107,6 +109,9 @@ if (-not (Test-Path (Join-Path $packageDirectory "Stop Azure SRE Agent Demo.cmd"
 }
 if (-not (Test-Path (Join-Path $packageDirectory "Show-Splash.ps1"))) {
   throw "The startup splash could not be copied to the distribution folder."
+}
+if (-not (Test-Path (Join-Path $packageDirectory "Azure SRE Agent Demo.ico"))) {
+  throw "The application icon could not be copied to the distribution folder."
 }
 if (Test-Path $stagingRoot) {
   Remove-Item -LiteralPath $stagingRoot -Recurse -Force

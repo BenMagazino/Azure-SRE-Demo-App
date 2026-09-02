@@ -71,6 +71,12 @@ shutdown. The portable package also includes
 `Stop Azure SRE Agent Demo.cmd` for an explicit graceful shutdown when the
 application window is unavailable.
 
+The package includes `Azure SRE Agent Demo.ico`, which is also used by the
+browser and splash experience. Windows does not support embedding a custom icon
+directly in a CMD file. To give the launcher a custom Explorer or desktop icon,
+create a shortcut to `Start Azure SRE Agent Demo.cmd`, open the shortcut's
+**Properties**, choose **Change Icon**, and select the included ICO file.
+
 ## Windows Sandbox diagnostics
 
 Each application launch writes a timestamped diagnostic log containing startup,

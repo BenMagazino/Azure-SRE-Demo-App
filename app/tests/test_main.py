@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import re
 import tempfile
 import unittest
@@ -1114,7 +1115,26 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('"--app=$AppUrl"', splash)
         self.assertIn("Microsoft\\Edge\\Application\\msedge.exe", splash)
         self.assertIn("Start-Process $AppUrl", splash)
+        self.assertIn("$window.Icon", splash)
         self.assertIn("Show-Splash.ps1", build_script)
+        self.assertIn("Azure SRE Agent Demo.ico", build_script)
+
+    def test_application_icon_has_web_and_windows_metadata(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        manifest = json.loads(
+            (STATIC_DIR / "manifest.webmanifest").read_text(encoding="utf-8")
+        )
+        icon = (STATIC_DIR / "favicon.ico").read_bytes()
+
+        self.assertIn('rel="icon" href="/favicon.ico', page)
+        self.assertIn('rel="manifest" href="/manifest.webmanifest"', page)
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(
+            {entry["sizes"] for entry in manifest["icons"]},
+            {"192x192", "512x512"},
+        )
+        self.assertEqual(icon[:4], b"\x00\x00\x01\x00")
+        self.assertEqual(int.from_bytes(icon[4:6], "little"), 7)
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

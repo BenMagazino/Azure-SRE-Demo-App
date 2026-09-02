@@ -12,6 +12,11 @@ If the window is closed accidentally, the backend stops automatically after
 two minutes without a browser heartbeat, once any active job finishes. You can
 also double-click "Stop Azure SRE Agent Demo.cmd" for a graceful manual stop.
 
+Windows cannot assign a custom icon directly to a CMD file. To create a
+branded launcher, make a shortcut to "Start Azure SRE Agent Demo.cmd", open the
+shortcut's Properties, choose Change Icon, and select the included
+"Azure SRE Agent Demo.ico" file.
+
 Keep the complete folder together. The included python directory contains the
 official Python Software Foundation 3.14.7 embeddable runtime, so Python does
 not need to be installed on the workstation.
