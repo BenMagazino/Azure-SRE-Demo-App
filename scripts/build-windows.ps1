@@ -13,6 +13,7 @@ $stagingRoot = Join-Path $repoRoot "build\package-output"
 $stagingPackage = Join-Path $stagingRoot "AzureSREAgentDemo"
 $stagingRuntime = Join-Path $stagingPackage "python"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
+$stopLauncherSource = Join-Path $repoRoot "packaging\windows\Stop Azure SRE Agent Demo.cmd"
 $splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 
@@ -64,6 +65,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "app\static") -Destination (Join-Pat
 New-Item -ItemType Directory -Path (Join-Path $stagingPackage "vendor") | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination (Join-Path $stagingPackage "vendor") -Recurse
 Copy-Item -LiteralPath $launcherSource -Destination $stagingPackage
+Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingPackage
 Copy-Item -LiteralPath $splashSource -Destination $stagingPackage
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
 
@@ -99,6 +101,9 @@ Compress-Archive -LiteralPath $packageDirectory -DestinationPath $packageArchive
 
 if (-not (Test-Path (Join-Path $packageDirectory "Start Azure SRE Agent Demo.cmd"))) {
   throw "The portable package could not be copied to its distribution folder."
+}
+if (-not (Test-Path (Join-Path $packageDirectory "Stop Azure SRE Agent Demo.cmd"))) {
+  throw "The stop launcher could not be copied to the distribution folder."
 }
 if (-not (Test-Path (Join-Path $packageDirectory "Show-Splash.ps1"))) {
   throw "The startup splash could not be copied to the distribution folder."

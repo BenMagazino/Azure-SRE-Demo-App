@@ -63,6 +63,14 @@ Use **Shutdown** to stop the local backend and close the application window;
 browsers that block scripted closure display a safe-to-close confirmation
 instead.
 
+The browser sends a local heartbeat every 10 seconds. If the application
+window is closed without using **Shutdown**, the backend stops after two
+minutes without a heartbeat. Active installation, authentication, deployment,
+recovery, scenario, and teardown jobs are allowed to finish before automatic
+shutdown. The portable package also includes
+`Stop Azure SRE Agent Demo.cmd` for an explicit graceful shutdown when the
+application window is unavailable.
+
 ## Windows Sandbox diagnostics
 
 Each application launch writes a timestamped diagnostic log containing startup,

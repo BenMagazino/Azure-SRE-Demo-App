@@ -62,6 +62,8 @@ HOST = "127.0.0.1"
 PORT = 8765
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 AUTH_RETRY_GRACE_SECONDS = 4.0
+CLIENT_LEASE_TIMEOUT_SECONDS = 120.0
+CLIENT_LEASE_CHECK_SECONDS = 10.0
 SESSION_TOKEN = uuid.uuid4().hex
 LOGGER = logging.getLogger("AzureSREAgentDemo")
 LOG_FILE: Optional[Path] = None
@@ -354,6 +356,8 @@ JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
 INSTALL_LOCK = threading.Lock()
 AZURE_CONTEXT_LOCK = threading.Lock()
+CLIENT_HEARTBEAT_LOCK = threading.Lock()
+LAST_CLIENT_HEARTBEAT: Optional[float] = None
 
 INSTALL_COMMANDS = {
     "winget": [
@@ -1782,11 +1786,51 @@ def create_job(
 
 def shutdown_application(server: ThreadingHTTPServer) -> None:
     LOGGER.info("Local application shutdown requested")
+    shutdown_event = getattr(server, "shutdown_event", None)
+    if shutdown_event is not None:
+        shutdown_event.set()
     with JOBS_LOCK:
         jobs = list(JOBS.values())
     for job in jobs:
         job.terminate_process()
     server.shutdown()
+
+
+def record_client_heartbeat() -> None:
+    global LAST_CLIENT_HEARTBEAT
+    with CLIENT_HEARTBEAT_LOCK:
+        LAST_CLIENT_HEARTBEAT = time.monotonic()
+
+
+def client_lease_expired(started_at: float, now: Optional[float] = None) -> bool:
+    current_time = time.monotonic() if now is None else now
+    with CLIENT_HEARTBEAT_LOCK:
+        last_heartbeat = LAST_CLIENT_HEARTBEAT
+    lease_reference = last_heartbeat if last_heartbeat is not None else started_at
+    return current_time - lease_reference >= CLIENT_LEASE_TIMEOUT_SECONDS
+
+
+def active_jobs_running() -> bool:
+    with JOBS_LOCK:
+        return any(not job.finished for job in JOBS.values())
+
+
+def monitor_client_lease(server: ThreadingHTTPServer, started_at: float) -> None:
+    shutdown_event = getattr(server, "shutdown_event")
+    while not shutdown_event.wait(CLIENT_LEASE_CHECK_SECONDS):
+        if not client_lease_expired(started_at):
+            continue
+        if active_jobs_running():
+            LOGGER.info(
+                "Client lease expired, but active jobs are still running"
+            )
+            continue
+        LOGGER.info(
+            "No browser heartbeat received for %.0f seconds; stopping local backend",
+            CLIENT_LEASE_TIMEOUT_SECONDS,
+        )
+        shutdown_application(server)
+        return
 
 
 def load_state() -> dict[str, Any]:
@@ -2563,7 +2607,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def log_message(self, format_string: str, *args: Any) -> None:
-        LOGGER.info(
+        path = urlparse(self.path).path
+        log = LOGGER.debug if path in {"/api/health", "/api/heartbeat"} else LOGGER.info
+        log(
             "HTTP client=%s %s",
             self.client_address[0],
             format_string % args,
@@ -2724,7 +2770,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": "Untrusted request origin"}, HTTPStatus.FORBIDDEN)
             return
         path = urlparse(self.path).path
-        LOGGER.info("HTTP action POST path=%s client=%s", path, self.client_address[0])
+        log = LOGGER.debug if path == "/api/heartbeat" else LOGGER.info
+        log("HTTP action POST path=%s client=%s", path, self.client_address[0])
         if path == "/api/shutdown":
             self.send_json({"shutting_down": True})
             threading.Thread(
@@ -2733,6 +2780,10 @@ class AppHandler(SimpleHTTPRequestHandler):
                 daemon=True,
                 name="application-shutdown",
             ).start()
+            return
+        if path == "/api/heartbeat":
+            record_client_heartbeat()
+            self.send_json({"active": True})
             return
         if path == "/api/client-log":
             try:
@@ -3140,6 +3191,7 @@ def main() -> None:
     try:
         server = ThreadingHTTPServer((HOST, PORT), AppHandler)
         server.daemon_threads = True
+        server.shutdown_event = threading.Event()
     except OSError:
         LOGGER.exception("Unable to bind web server to %s:%s", HOST, PORT)
         raise
@@ -3152,11 +3204,19 @@ def main() -> None:
         browser_timer.start()
     else:
         LOGGER.info("Automatic browser launch disabled by environment")
+    lease_started_at = time.monotonic()
+    threading.Thread(
+        target=monitor_client_lease,
+        args=(server, lease_started_at),
+        daemon=True,
+        name="client-lease-monitor",
+    ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         LOGGER.info("Stopping server after keyboard interrupt")
     finally:
+        server.shutdown_event.set()
         server.server_close()
         LOGGER.info("Application stopped")
 

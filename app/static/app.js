@@ -17,6 +17,7 @@ const workflowPanels = [
   "deployment",
   "summary",
 ];
+const heartbeatIntervalMilliseconds = 10000;
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
 let installInProgress = false;
@@ -28,6 +29,7 @@ let selectedScenarioId = "";
 let azureContextApplied = false;
 let selectedExistingEnvironment = null;
 let activePanelId = "labs";
+let heartbeatTimer = null;
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -56,6 +58,8 @@ async function loadSessionToken() {
 
 async function initialize() {
   sessionToken = await loadSessionToken();
+  await sendClientHeartbeat();
+  startClientHeartbeat();
   await loadLabs();
   if (persistedLabId) await loadPrerequisites();
   await loadAuthStatus();
@@ -84,6 +88,20 @@ function apiPost(path, body) {
     options.body = JSON.stringify(body);
   }
   return fetch(path, options);
+}
+
+async function sendClientHeartbeat() {
+  const response = await apiPost("/api/heartbeat");
+  if (!response.ok) throw new Error("The local application heartbeat failed.");
+}
+
+function startClientHeartbeat() {
+  if (heartbeatTimer !== null) return;
+  heartbeatTimer = window.setInterval(() => {
+    void sendClientHeartbeat().catch((error) => {
+      console.warn("Unable to refresh the local application heartbeat.", error);
+    });
+  }, heartbeatIntervalMilliseconds);
 }
 
 function reportClientError(message) {
@@ -146,6 +164,10 @@ async function shutdownApplication() {
     const response = await apiPost("/api/shutdown");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to stop the application.");
+    if (heartbeatTimer !== null) {
+      window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
     showShutdownComplete();
     window.setTimeout(() => window.close(), 150);
   } catch (error) {

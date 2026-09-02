@@ -30,6 +30,7 @@ from app.main import (
     break_cart_worker,
     build_existing_environment_catalog,
     build_azure_context_catalog,
+    client_lease_expired,
     claims_challenge_login_command,
     command_version,
     deploy_worker,
@@ -39,6 +40,7 @@ from app.main import (
     install_managed_azure_cli,
     is_device_login_url,
     memory_pressure_observed,
+    monitor_client_lease,
     open_browser_url,
     parse_claims_challenge_login,
     parse_device_code,
@@ -992,6 +994,65 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    def test_client_lease_expires_after_two_minutes_without_heartbeat(self) -> None:
+        with (
+            patch("app.main.LAST_CLIENT_HEARTBEAT", None),
+            patch("app.main.CLIENT_LEASE_TIMEOUT_SECONDS", 120.0),
+        ):
+            self.assertFalse(client_lease_expired(100.0, now=219.9))
+            self.assertTrue(client_lease_expired(100.0, now=220.0))
+
+        with (
+            patch("app.main.LAST_CLIENT_HEARTBEAT", 200.0),
+            patch("app.main.CLIENT_LEASE_TIMEOUT_SECONDS", 120.0),
+        ):
+            self.assertFalse(client_lease_expired(100.0, now=319.9))
+            self.assertTrue(client_lease_expired(100.0, now=320.0))
+
+    def test_manual_stop_launcher_uses_graceful_api_only(self) -> None:
+        repository = STATIC_DIR.parents[1]
+        stop_launcher = (
+            repository
+            / "packaging"
+            / "windows"
+            / "Stop Azure SRE Agent Demo.cmd"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/api/shutdown", stop_launcher)
+        self.assertIn("X-SRE-Session", stop_launcher)
+        self.assertNotIn("Stop-Process", stop_launcher)
+        self.assertNotIn("taskkill", stop_launcher.lower())
+
+    def test_heartbeat_route_renews_client_lease(self) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.path = "/api/heartbeat"
+        handler.send_json = MagicMock()
+
+        with patch("app.main.record_client_heartbeat") as record_client_heartbeat:
+            handler.do_POST()
+
+        record_client_heartbeat.assert_called_once_with()
+        handler.send_json.assert_called_once_with({"active": True})
+
+    @patch("app.main.shutdown_application")
+    @patch("app.main.active_jobs_running", side_effect=[True, False])
+    @patch("app.main.client_lease_expired", return_value=True)
+    def test_expired_lease_waits_for_active_job_before_shutdown(
+        self,
+        _client_lease_expired,
+        _active_jobs_running,
+        shutdown_application,
+    ) -> None:
+        server = MagicMock()
+        server.shutdown_event.wait.side_effect = [False, False]
+
+        monitor_client_lease(server, started_at=100.0)
+
+        self.assertEqual(server.shutdown_event.wait.call_count, 2)
+        shutdown_application.assert_called_once_with(server)
+
     @patch("app.main.threading.Thread")
     def test_shutdown_route_starts_background_server_shutdown(self, thread) -> None:
         shutdown_thread = thread.return_value
