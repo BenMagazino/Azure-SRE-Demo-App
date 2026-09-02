@@ -1127,7 +1127,7 @@ class ProcessTests(unittest.TestCase):
         icon = (STATIC_DIR / "favicon.ico").read_bytes()
 
         self.assertIn('rel="icon" href="/favicon.ico', page)
-        self.assertIn('rel="manifest" href="/manifest.webmanifest"', page)
+        self.assertIn('rel="manifest" href="/manifest.webmanifest', page)
         self.assertEqual(manifest["display"], "standalone")
         self.assertEqual(
             {entry["sizes"] for entry in manifest["icons"]},

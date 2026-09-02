@@ -13,7 +13,7 @@
     d="M256 64 404 124v112c0 101-59 176-148 220-89-44-148-119-148-220V124Z"
     fill="#15304d"
     stroke="#4ba3ff"
-    stroke-linejoin="round"
+    stroke-linejoin="miter"
     stroke-width="24" />
   <path
     d="M72 260h112l38-76 66 152 40-76h112"
