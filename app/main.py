@@ -954,22 +954,33 @@ def validate_existing_lab(
             "values": {},
         }
     agent_endpoint = str(agent_details["endpoint"]).rstrip("/")
-    data_plane_checks = (
-        (
-            f"{agent_endpoint}/api/v2/extendedAgent/agents/incident-handler",
-            "The incident-handler subagent is not configured.",
-        ),
-        (
-            f"{agent_endpoint}/api/v1/incidentPlayground/filters/"
-            "grubify-http-errors",
-            "The Grubify incident response plan is not configured.",
-        ),
-    )
     data_plane_issues = []
-    for url, issue in data_plane_checks:
-        status, _ = http_json("GET", url, token.strip())
-        if status != HTTPStatus.OK:
-            data_plane_issues.append(issue)
+    status, _ = http_json(
+        "GET",
+        f"{agent_endpoint}/api/v2/extendedAgent/agents/incident-handler",
+        token.strip(),
+    )
+    if status != HTTPStatus.OK:
+        data_plane_issues.append(
+            "The incident-handler subagent is not configured."
+        )
+    status, response = http_json(
+        "GET",
+        f"{agent_endpoint}/api/v1/incidentPlayground/filters/"
+        "grubify-http-errors",
+        token.strip(),
+    )
+    if status != HTTPStatus.OK:
+        data_plane_issues.append(
+            "The Grubify incident response plan is not configured."
+        )
+    elif not response_plan_is_scoped(
+        response,
+        str(environment.get("environment") or ""),
+    ):
+        data_plane_issues.append(
+            "The Grubify incident response plan is not isolated to this lab."
+        )
     if data_plane_issues:
         return {
             "ready": False,
@@ -2525,11 +2536,28 @@ def response_plan_payload(
         "name": "Grubify HTTP Errors",
         "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
         "alertId": alert_id,
-        "titleContains": "",
+        "titleContains": alert_name,
+        "titleContainsAll": [],
+        "titleContainsAny": [],
         "titleNotContains": [],
         "handlingAgent": "incident-handler",
         "agentMode": "autonomous",
+        "isEnabled": True,
     }
+
+
+def response_plan_is_scoped(response: str, environment: str) -> bool:
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return (
+        payload.get("titleContains")
+        == f"alert-http-5xx-{environment}"
+        and payload.get("isEnabled", True) is True
+    )
 
 
 def upsert_response_plan(

@@ -62,6 +62,7 @@ from app.main import (
     redact_text,
     request_metrics_have_data,
     response_plan_payload,
+    response_plan_is_scoped,
     response_plan_status_is_retryable,
     restore_baseline_worker,
     restore_container_baseline,
@@ -432,7 +433,7 @@ class LabWorkflowTests(unittest.TestCase):
             bicep,
         )
 
-    @patch("app.main.http_json", return_value=(HTTPStatus.OK, "{}"))
+    @patch("app.main.http_json")
     @patch("app.main.run_capture")
     def test_validates_and_hydrates_one_selected_environment(
         self,
@@ -503,6 +504,17 @@ class LabWorkflowTests(unittest.TestCase):
             (True, json.dumps(apps)),
             (True, json.dumps(agent)),
             (True, "agent-token"),
+        ]
+        http_json.side_effect = [
+            (HTTPStatus.OK, "{}"),
+            (
+                HTTPStatus.OK,
+                json.dumps(response_plan_payload(
+                    "existing-lab",
+                    SUBSCRIPTION_A,
+                    resource_group,
+                )),
+            ),
         ]
 
         result = validate_existing_lab(
@@ -2001,9 +2013,42 @@ class ResponsePlanTests(unittest.TestCase):
                 "alert-http-5xx-sre-lab-auto-2"
             ),
         )
-        self.assertEqual(payload["titleContains"], "")
+        self.assertEqual(
+            payload["titleContains"],
+            "alert-http-5xx-sre-lab-auto-2",
+        )
+        self.assertEqual(payload["titleContainsAll"], [])
+        self.assertEqual(payload["titleContainsAny"], [])
         self.assertEqual(payload["titleNotContains"], [])
+        self.assertTrue(payload["isEnabled"])
         self.assertNotIn("maxAttempts", payload)
+
+    def test_response_plan_scope_requires_this_environment_alert(self) -> None:
+        payload = response_plan_payload(
+            "sre-lab-auto-2",
+            SUBSCRIPTION_A,
+            "rg-sre-lab-auto-2",
+        )
+
+        self.assertTrue(
+            response_plan_is_scoped(
+                json.dumps(payload),
+                "sre-lab-auto-2",
+            )
+        )
+        self.assertFalse(
+            response_plan_is_scoped(
+                json.dumps(payload),
+                "sre-lab-auto-4",
+            )
+        )
+        payload["titleContains"] = ""
+        self.assertFalse(
+            response_plan_is_scoped(
+                json.dumps(payload),
+                "sre-lab-auto-2",
+            )
+        )
 
     @patch("app.main.http_json")
     def test_updates_an_existing_response_plan(self, http_json) -> None:
