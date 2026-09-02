@@ -319,8 +319,16 @@ class LabWorkflowTests(unittest.TestCase):
                 "name": "rg-tagged-lab",
                 "location": "eastus2",
                 "tags": {
+                    "sre-agent-demo-lab-id": "grubify-starter-lab",
+                    "sre-agent-demo-environment": "tagged-lab",
+                },
+            },
+            {
+                "name": "rg-former-tagged-lab",
+                "location": "eastus2",
+                "tags": {
                     "azure-sre-agent-lab-id": "grubify-starter-lab",
-                    "azure-sre-agent-environment": "tagged-lab",
+                    "azure-sre-agent-environment": "former-tagged-lab",
                 },
             },
             {
@@ -370,6 +378,7 @@ class LabWorkflowTests(unittest.TestCase):
             ],
             [
                 ("tagged-lab", "managed", True),
+                ("former-tagged-lab", "managed", False),
                 ("legacy-lab", "legacy", False),
             ],
         )
@@ -406,12 +415,19 @@ class LabWorkflowTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "'azure-sre-agent-lab-id': 'grubify-starter-lab'",
+            "'sre-agent-demo-lab-id': 'grubify-starter-lab'",
             bicep,
         )
         self.assertIn(
-            "'azure-sre-agent-environment': environmentName",
+            "'sre-agent-demo-environment': environmentName",
             bicep,
+        )
+        tag_names = re.findall(r"^\s*'([^']+)':", bicep, re.MULTILINE)
+        self.assertFalse(
+            any(
+                tag.casefold().startswith(("azure", "microsoft", "windows"))
+                for tag in tag_names
+            )
         )
 
     def test_sre_agent_bicep_outputs_resource_deep_link(self) -> None:

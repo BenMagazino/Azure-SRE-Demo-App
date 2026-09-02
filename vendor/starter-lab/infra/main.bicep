@@ -37,8 +37,8 @@ resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
   location: location
   tags: {
-    'azure-sre-agent-lab-id': 'grubify-starter-lab'
-    'azure-sre-agent-environment': environmentName
+    'sre-agent-demo-lab-id': 'grubify-starter-lab'
+    'sre-agent-demo-environment': environmentName
   }
 }
 
