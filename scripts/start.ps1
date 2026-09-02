@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appPath = Join-Path $repoRoot "app\main.py"
+$splashPath = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
 
 function Find-PythonRuntime {
   $candidates = @()
@@ -85,6 +86,7 @@ Install Python from https://www.python.org/downloads/windows/ and rerun this scr
 
 Write-Host "Using $($runtime.Version)"
 Write-Host "Starting the Azure SRE Agent onboarding wizard..." -ForegroundColor Green
+$env:AZURE_SRE_DEMO_NO_BROWSER = "1"
 $runtimeDirectory = Split-Path -Parent $runtime.Path
 $runtimeName = Split-Path -Leaf $runtime.Path
 $backgroundName = if ($runtimeName -ieq "py.exe") { "pyw.exe" } else { "pythonw.exe" }
@@ -96,5 +98,13 @@ $launchArgs = @($runtime.PrefixArgs) + @("`"$appPath`"")
 Start-Process `
   -FilePath $backgroundRuntime `
   -ArgumentList $launchArgs `
+  -WindowStyle Hidden | Out-Null
+$splashArguments = (
+  "-NoLogo -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden " +
+  "-File `"$splashPath`""
+)
+Start-Process `
+  -FilePath "powershell.exe" `
+  -ArgumentList $splashArguments `
   -WindowStyle Hidden | Out-Null
 exit 0

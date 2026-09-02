@@ -12,27 +12,18 @@
       })();
     </script>
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260901.6">
+    <link rel="stylesheet" href="/styles.css?v=20260901.7">
   </head>
   <body>
     <main class="shell">
-      <header>
-        <span class="eyebrow">Guided labs</span>
-        <h1>Azure SRE Agent Demo Setup</h1>
-        <p>Deploy an Azure SRE Agent lab without Git Bash or manual shell navigation.</p>
-      </header>
-      <aside class="diagnostics">
+      <header class="app-header">
         <div>
-          <strong>Diagnostic log</strong>
-          <code id="diagnostic-path">Locating current log...</code>
+          <span class="eyebrow">Guided labs</span>
+          <h1>Azure SRE Agent Demo Setup</h1>
+          <p>Deploy an Azure SRE Agent lab without Git Bash or manual shell navigation.</p>
         </div>
-        <div class="diagnostic-actions">
-          <a class="button secondary" href="/api/diagnostics/download" download>
-            Download log
-          </a>
-          <button id="shutdown" class="danger" type="button">Shutdown</button>
-        </div>
-      </aside>
+        <button id="shutdown" class="danger" type="button">Shutdown</button>
+      </header>
 
       <nav class="steps" aria-label="Setup steps">
         <span data-panel="labs" class="active" aria-current="step">1. Lab Picker</span>
@@ -182,7 +173,12 @@
         </div>
         <pre id="demo-log" class="log large"></pre>
       </section>
+      <footer class="app-footer">
+        <a class="button secondary" href="/api/diagnostics/download" download>
+          Download diagnostic log
+        </a>
+      </footer>
     </main>
-    <script src="/app.js?v=20260901.6"></script>
+    <script src="/app.js?v=20260901.7"></script>
   </body>
 </html>

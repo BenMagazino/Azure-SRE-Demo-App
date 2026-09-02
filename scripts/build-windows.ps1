@@ -13,6 +13,7 @@ $stagingRoot = Join-Path $repoRoot "build\package-output"
 $stagingPackage = Join-Path $stagingRoot "AzureSREAgentDemo"
 $stagingRuntime = Join-Path $stagingPackage "python"
 $launcherSource = Join-Path $repoRoot "packaging\windows\Start Azure SRE Agent Demo.cmd"
+$splashSource = Join-Path $repoRoot "packaging\windows\Show-Splash.ps1"
 $readmeSource = Join-Path $repoRoot "packaging\windows\README.txt"
 
 function Test-RuntimeArchive {
@@ -63,6 +64,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "app\static") -Destination (Join-Pat
 New-Item -ItemType Directory -Path (Join-Path $stagingPackage "vendor") | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination (Join-Path $stagingPackage "vendor") -Recurse
 Copy-Item -LiteralPath $launcherSource -Destination $stagingPackage
+Copy-Item -LiteralPath $splashSource -Destination $stagingPackage
 Copy-Item -LiteralPath $readmeSource -Destination $stagingPackage
 
 & $runtimePython --version
@@ -74,16 +76,18 @@ try {
   if (Test-Path -LiteralPath $staleOneFileExecutable) {
     Remove-Item -LiteralPath $staleOneFileExecutable -Force
   }
-  if (Test-Path $packageDirectory) {
-    Get-ChildItem -LiteralPath $packageDirectory -Force | ForEach-Object {
-      Remove-Item -LiteralPath $_.FullName -Recurse -Force
-    }
-  } else {
-    New-Item -ItemType Directory -Path $packageDirectory | Out-Null
+  if (-not (Test-Path $packageDirectory)) {
+    New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
   }
-  Get-ChildItem -LiteralPath $stagingPackage -Force | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination $packageDirectory -Recurse -Force
+  & robocopy `
+    $stagingPackage `
+    $packageDirectory `
+    /MIR /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+  $robocopyExitCode = $LASTEXITCODE
+  if ($robocopyExitCode -ge 8) {
+    throw "Robocopy failed with exit code $robocopyExitCode."
   }
+  $global:LASTEXITCODE = 0
 } catch {
   throw "Unable to update the Windows package. Close any running portable demo and try again. $($_.Exception.Message)"
 }
@@ -95,6 +99,9 @@ Compress-Archive -LiteralPath $packageDirectory -DestinationPath $packageArchive
 
 if (-not (Test-Path (Join-Path $packageDirectory "Start Azure SRE Agent Demo.cmd"))) {
   throw "The portable package could not be copied to its distribution folder."
+}
+if (-not (Test-Path (Join-Path $packageDirectory "Show-Splash.ps1"))) {
+  throw "The startup splash could not be copied to the distribution folder."
 }
 if (Test-Path $stagingRoot) {
   Remove-Item -LiteralPath $stagingRoot -Recurse -Force

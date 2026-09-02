@@ -56,7 +56,6 @@ async function loadSessionToken() {
 
 async function initialize() {
   sessionToken = await loadSessionToken();
-  await loadDiagnostics();
   await loadLabs();
   if (persistedLabId) await loadPrerequisites();
   await loadAuthStatus();
@@ -101,23 +100,6 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   reportClientError(`Unhandled promise rejection: ${event.reason}`);
 });
-
-async function loadDiagnostics() {
-  const path = document.querySelector("#diagnostic-path");
-  try {
-    const response = await fetch("/api/diagnostics");
-    if (!response.ok) {
-      path.textContent = "Diagnostic log unavailable. Restart the local app.";
-      return;
-    }
-    const diagnostics = await response.json();
-    path.textContent = diagnostics.path || "Diagnostic log unavailable";
-    path.title = diagnostics.path || "";
-  } catch (error) {
-    path.textContent = "Diagnostic log unavailable. Restart the local app.";
-    reportClientError(`Unable to load diagnostic details: ${error}`);
-  }
-}
 
 function showPanel(id) {
   if (!workflowPanels.includes(id)) return;

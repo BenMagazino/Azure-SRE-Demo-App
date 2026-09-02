@@ -207,41 +207,25 @@ header p,
   color: var(--cp-text-muted);
 }
 
-.diagnostics {
+.app-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-top: 1.25rem;
-  padding: 0.8rem 1rem;
-  border: 1px solid var(--cp-border);
-  border-radius: 0.625rem;
-  background: var(--cp-surface);
 }
 
-.diagnostics div {
+.app-header > div {
   min-width: 0;
 }
 
-.diagnostics .diagnostic-actions {
-  display: flex;
+.app-header > button {
   flex: none;
-  flex-wrap: wrap;
-  gap: 0.75rem;
 }
 
-.diagnostics strong {
-  display: block;
-  margin-bottom: 0.25rem;
-  color: var(--cp-text);
-}
-
-.diagnostics code {
-  display: block;
-  overflow: hidden;
-  color: var(--cp-text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.app-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
 }
 
 .steps {
@@ -593,9 +577,13 @@ select {
 
   .panel-heading,
   .context-heading,
-  .diagnostics {
+  .app-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .app-header > button {
+    align-self: flex-end;
   }
 
   .tool {

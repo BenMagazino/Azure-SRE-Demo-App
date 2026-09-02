@@ -1025,8 +1025,9 @@ class ProcessTests(unittest.TestCase):
         server.shutdown.assert_called_once_with()
 
     def test_portable_launcher_uses_background_python_runtime(self) -> None:
+        repository = STATIC_DIR.parents[1]
         launcher = (
-            STATIC_DIR.parents[1]
+            repository
             / "packaging"
             / "windows"
             / "Start Azure SRE Agent Demo.cmd"
@@ -1035,6 +1036,34 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('start "" /b', launcher)
         self.assertIn(r"python\pythonw.exe", launcher)
         self.assertNotIn(r"python\python.exe", launcher)
+        self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
+        self.assertIn("Show-Splash.ps1", launcher)
+
+    def test_splash_waits_for_health_before_opening_browser(self) -> None:
+        repository = STATIC_DIR.parents[1]
+        splash = (
+            repository / "packaging" / "windows" / "Show-Splash.ps1"
+        ).read_text(encoding="utf-8")
+        build_script = (
+            repository / "scripts" / "build-windows.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("/api/health", splash)
+        self.assertIn('Storyboard.TargetName="SpinnerRotation"', splash)
+        self.assertIn("Start-Process $AppUrl", splash)
+        self.assertIn("Show-Splash.ps1", build_script)
+
+    def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn("diagnostic-path", page)
+        self.assertIn('class="app-footer"', page)
+        self.assertIn("Download diagnostic log", page)
+        self.assertLess(page.index('id="shutdown"'), page.index('class="steps"'))
+        self.assertGreater(
+            page.index("Download diagnostic log"),
+            page.index('id="summary"'),
+        )
 
     @patch.dict("os.environ", {"AZURE_SRE_DEMO_NO_BROWSER": "true"})
     def test_can_disable_automatic_browser_launch(self) -> None:
