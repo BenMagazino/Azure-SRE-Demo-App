@@ -2,12 +2,14 @@ import hashlib
 import io
 import json
 import re
+import ssl
 import tempfile
 import unittest
 import zipfile
 from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 
 from app.main import (
     AppHandler,
@@ -38,6 +40,7 @@ from app.main import (
     command_version,
     deploy_worker,
     demo_external_urls,
+    download_with_windows_certificate_store,
     discover_existing_environments,
     discover_edge_profiles,
     http_json,
@@ -1319,6 +1322,76 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertFalse((tools_dir / "azd-staging").exists())
             self.assertFalse(any(tools_dir.glob("*.zip")))
         refresh_process_path.assert_called_once_with()
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.download_with_windows_certificate_store")
+    @patch("app.main.urlopen")
+    def test_azd_download_retries_with_windows_certificate_store(
+        self,
+        urlopen,
+        windows_download,
+        refresh_process_path,
+    ) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("azd-windows-amd64.exe", "executable")
+        payload = archive_bytes.getvalue()
+        urlopen.side_effect = URLError(
+            ssl.SSLCertVerificationError(1, "certificate verify failed")
+        )
+        windows_download.side_effect = (
+            lambda _url, destination: destination.write_bytes(payload)
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            azd_dir = tools_dir / "azd"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.AZD_DIR", azd_dir),
+                patch(
+                    "app.main.AZD_SHA256",
+                    hashlib.sha256(payload).hexdigest().upper(),
+                ),
+            ):
+                job = Job()
+                self.assertTrue(install_managed_azd(job))
+
+        windows_download.assert_called_once()
+        refresh_process_path.assert_called_once_with()
+        output = [
+            event["line"]
+            for event in job.events.queue
+            if event["type"] == "output"
+        ]
+        self.assertTrue(any("Windows trusted certificate store" in line for line in output))
+
+    @patch("app.main.subprocess.run")
+    @patch("app.main.shutil.which", return_value=r"C:\Windows\powershell.exe")
+    @patch("app.main.os.name", "nt")
+    def test_windows_download_preserves_certificate_validation(
+        self,
+        _which,
+        run,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "azd.zip"
+
+            def complete_download(*_args, **_kwargs):
+                destination.write_bytes(b"archive")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            run.side_effect = complete_download
+            download_with_windows_certificate_store(
+                "https://example.test/azd.zip",
+                destination,
+            )
+
+        command = run.call_args.args[0]
+        script = command[-1]
+        self.assertIn("Invoke-WebRequest", script)
+        self.assertNotIn("SkipCertificateCheck", script)
+        self.assertNotIn("ServerCertificateValidationCallback", script)
 
     @patch("app.main.urlopen")
     def test_rejects_azure_cli_download_with_wrong_checksum(self, urlopen) -> None:

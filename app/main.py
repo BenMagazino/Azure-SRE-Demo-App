@@ -7,6 +7,7 @@ import os
 import queue
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -1094,6 +1095,48 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
     archive.extractall(destination)
 
 
+def download_with_windows_certificate_store(url: str, destination: Path) -> None:
+    powershell = shutil.which("powershell.exe")
+    if os.name != "nt" or powershell is None:
+        raise OSError("Windows certificate-store download is unavailable.")
+
+    environment = os.environ.copy()
+    environment["AZURE_SRE_DOWNLOAD_URL"] = url
+    environment["AZURE_SRE_DOWNLOAD_PATH"] = str(destination)
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        "$ProgressPreference = 'SilentlyContinue'; "
+        "[Net.ServicePointManager]::SecurityProtocol = "
+        "[Net.SecurityProtocolType]::Tls12; "
+        "Invoke-WebRequest -UseBasicParsing "
+        "-Uri $env:AZURE_SRE_DOWNLOAD_URL "
+        "-OutFile $env:AZURE_SRE_DOWNLOAD_PATH"
+    )
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=240,
+        creationflags=CREATE_NO_WINDOW,
+        env=environment,
+    )
+    if result.returncode != 0 or not destination.is_file():
+        detail = redact_text(result.stderr or result.stdout).strip()
+        raise OSError(
+            "Windows certificate-store download failed"
+            + (f": {detail}" if detail else ".")
+        )
+
+
 def install_managed_zip_tool(
     job: Job,
     *,
@@ -1138,7 +1181,6 @@ def install_managed_zip_tool(
             "profile (no administrator approval required)..."
         ),
     )
-    digest = hashlib.sha256()
     downloaded = 0
     last_reported_megabytes = 0
     request = Request(
@@ -1146,20 +1188,33 @@ def install_managed_zip_tool(
         headers={"User-Agent": "AzureSREAgentDemo/1.0"},
     )
     try:
-        with urlopen(request, timeout=180) as response, archive_path.open("wb") as output:
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
-                digest.update(chunk)
-                downloaded += len(chunk)
-                downloaded_megabytes = downloaded // (10 * 1024 * 1024) * 10
-                if downloaded_megabytes > last_reported_megabytes:
-                    last_reported_megabytes = downloaded_megabytes
-                    job.emit(
-                        "output",
-                        line=f"Downloaded {downloaded_megabytes} MB...",
-                    )
+        try:
+            with urlopen(request, timeout=180) as response, archive_path.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+                    downloaded += len(chunk)
+                    downloaded_megabytes = downloaded // (10 * 1024 * 1024) * 10
+                    if downloaded_megabytes > last_reported_megabytes:
+                        last_reported_megabytes = downloaded_megabytes
+                        job.emit(
+                            "output",
+                            line=f"Downloaded {downloaded_megabytes} MB...",
+                        )
+        except URLError as error:
+            if not isinstance(error.reason, ssl.SSLCertVerificationError):
+                raise
+            archive_path.unlink(missing_ok=True)
+            job.emit(
+                "output",
+                line=(
+                    "The bundled downloader could not validate the server "
+                    "certificate. Retrying with the Windows trusted "
+                    "certificate store..."
+                ),
+            )
+            download_with_windows_certificate_store(url, archive_path)
 
-        actual_hash = digest.hexdigest().upper()
+        actual_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest().upper()
         if actual_hash != expected_sha256:
             raise ValueError(
                 f"{display_name} download checksum mismatch. "
