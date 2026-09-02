@@ -687,6 +687,66 @@ header p,
   background: var(--cp-surface-soft);
 }
 
+.context-loading {
+  min-height: 270px;
+  padding: 1.5rem;
+}
+
+.context-loading-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.context-loading-heading p {
+  margin-top: 0.5rem;
+  color: var(--cp-text-muted);
+}
+
+.context-spinner {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border: 3px solid var(--cp-border);
+  border-top-color: var(--cp-accent);
+  border-radius: 50%;
+  animation: context-spin 0.85s linear infinite;
+}
+
+.context-loading-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 2rem 0 1.5rem;
+}
+
+.context-skeleton {
+  display: block;
+  min-height: 4.5rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-bg-elevated);
+  animation: context-pulse 1.2s ease-in-out infinite alternate;
+}
+
+.context-skeleton-action {
+  width: 17rem;
+  min-height: 4.25rem;
+}
+
+@keyframes context-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes context-pulse {
+  to {
+    opacity: 0.45;
+  }
+}
+
 .context-card h3,
 .context-card p {
   margin: 0;
@@ -771,6 +831,14 @@ select {
     padding: 1.25rem;
   }
 
+  .context-loading-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .context-skeleton-action {
+    width: 100%;
+  }
+
   .app-header > button {
     align-self: flex-end;
   }
@@ -822,5 +890,10 @@ select {
   .steps,
   .step-leading #back {
     transition: none;
+  }
+
+  .context-spinner,
+  .context-skeleton {
+    animation: none;
   }
 }

@@ -3,6 +3,7 @@ const continueButton = document.querySelector("#continue-to-auth");
 const installAllButton = document.querySelector("#install-all");
 const installAllProgress = document.querySelector("#install-all-progress");
 const azureContextCard = document.querySelector("#azure-context-card");
+const azureContextLoadingCard = document.querySelector("#azure-context-loading");
 const azureTenant = document.querySelector("#azure-tenant");
 const azureSubscription = document.querySelector("#azure-subscription");
 const azureContextStatus = document.querySelector("#azure-context-status");
@@ -391,49 +392,68 @@ function markAzureContextChanged() {
   updateAuthenticationGate();
 }
 
+function setAzureContextLoading(loading) {
+  azureContextLoadingCard.classList.toggle("hidden", !loading);
+  azureContextLoadingCard.setAttribute("aria-busy", loading ? "true" : "false");
+}
+
 async function loadAzureContexts() {
-  const response = await fetch("/api/azure-context", { cache: "no-store" });
-  const result = await response.json();
-  if (!response.ok) {
+  const showLoadingCard = azureContextCard.classList.contains("hidden");
+  if (showLoadingCard) setAzureContextLoading(true);
+  try {
+    const response = await fetch("/api/azure-context", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) {
+      azureContextCatalog = null;
+      azureContextApplied = false;
+      azureContextCard.classList.toggle("hidden", !authStatus["azure-cli"]);
+      azureContextStatus.className = "warning";
+      azureContextStatus.textContent = result.error || "Unable to load Azure accounts.";
+      updateAuthenticationGate();
+      return;
+    }
+
+    azureContextCatalog = result;
+    azureContextCard.classList.remove("hidden");
+    azureTenant.replaceChildren(...result.tenants.map((tenant) => {
+      const option = document.createElement("option");
+      option.value = tenant.id;
+      option.textContent = azureOptionLabel(tenant.name, tenant.id);
+      return option;
+    }));
+
+    const active = result.active || {};
+    if (result.tenants.some((tenant) => tenant.id === active.tenant)) {
+      azureTenant.value = active.tenant;
+    }
+    populateSubscriptions(active.subscription || "");
+    const selected = selectedAzureContext();
+    azureContextApplied = Boolean(
+      selected
+      && selected.tenant_id === active.tenant
+      && selected.subscription_id === active.subscription
+      && authStatus["azure-cli"]
+    );
+    azureContextStatus.className = azureContextApplied ? "success" : "";
+    azureContextStatus.textContent = azureContextApplied
+      ? "Active and authenticated. This subscription will be used for deployment."
+      : "Choose and apply a subscription before continuing.";
+    applyAzureContextButton.disabled = azureContextApplied;
+    applyAzureContextButton.textContent = azureContextApplied
+      ? "Active subscription"
+      : "Use selected subscription";
+    updateAuthenticationGate();
+  } catch (error) {
     azureContextCatalog = null;
     azureContextApplied = false;
     azureContextCard.classList.toggle("hidden", !authStatus["azure-cli"]);
     azureContextStatus.className = "warning";
-    azureContextStatus.textContent = result.error || "Unable to load Azure accounts.";
+    azureContextStatus.textContent = `Unable to load Azure accounts: ${error}`;
     updateAuthenticationGate();
-    return;
+    throw error;
+  } finally {
+    if (showLoadingCard) setAzureContextLoading(false);
   }
-
-  azureContextCatalog = result;
-  azureContextCard.classList.remove("hidden");
-  azureTenant.replaceChildren(...result.tenants.map((tenant) => {
-    const option = document.createElement("option");
-    option.value = tenant.id;
-    option.textContent = azureOptionLabel(tenant.name, tenant.id);
-    return option;
-  }));
-
-  const active = result.active || {};
-  if (result.tenants.some((tenant) => tenant.id === active.tenant)) {
-    azureTenant.value = active.tenant;
-  }
-  populateSubscriptions(active.subscription || "");
-  const selected = selectedAzureContext();
-  azureContextApplied = Boolean(
-    selected
-    && selected.tenant_id === active.tenant
-    && selected.subscription_id === active.subscription
-    && authStatus["azure-cli"]
-  );
-  azureContextStatus.className = azureContextApplied ? "success" : "";
-  azureContextStatus.textContent = azureContextApplied
-    ? "Active and authenticated. This subscription will be used for deployment."
-    : "Choose and apply a subscription before continuing.";
-  applyAzureContextButton.disabled = azureContextApplied;
-  applyAzureContextButton.textContent = azureContextApplied
-    ? "Active subscription"
-    : "Use selected subscription";
-  updateAuthenticationGate();
 }
 
 async function applyAzureContext() {
