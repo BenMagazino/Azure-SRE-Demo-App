@@ -8,9 +8,11 @@ import unittest
 import zipfile
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
+import app.main as main_module
 from app.main import (
     AppHandler,
     INSTALL_COMMANDS,
@@ -18,6 +20,7 @@ from app.main import (
     LABS,
     MINIMUM_VERSIONS,
     REPAIR_COMMANDS,
+    RuntimeOptions,
     UPDATE_COMMANDS,
     Job,
     SESSION_TOKEN,
@@ -56,7 +59,9 @@ from app.main import (
     open_edge_profile_url,
     parse_claims_challenge_login,
     parse_device_code,
+    parse_runtime_options,
     lab_catalog_payload,
+    load_test_mode_config,
     prerequisite_statuses,
     redact_command,
     redact_text,
@@ -75,6 +80,7 @@ from app.main import (
     safe_log_payload,
     scoped_azure_login_command,
     set_azd_values,
+    set_runtime_options,
     should_open_browser,
     should_fallback_open_client,
     sre_agent_portal_url,
@@ -82,7 +88,10 @@ from app.main import (
     teardown_worker,
     upsert_response_plan,
     validate_existing_lab,
+    validate_container_app_availability,
+    validate_metric_alert_availability,
     wait_for_request_metrics,
+    wait_for_nonessential_delay,
     version_meets_minimum,
 )
 
@@ -92,6 +101,81 @@ TENANT_B = "00000000-0000-0000-0000-000000000002"
 SUBSCRIPTION_A = "11111111-1111-1111-1111-111111111111"
 SUBSCRIPTION_B = "22222222-2222-2222-2222-222222222222"
 SUBSCRIPTION_C = "33333333-3333-3333-3333-333333333333"
+
+
+class RuntimeOptionsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_options = main_module.RUNTIME_OPTIONS
+
+    def tearDown(self) -> None:
+        set_runtime_options(self.original_options)
+
+    def test_test_mode_defaults_off_without_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.ini"
+
+            options = parse_runtime_options([], config_file)
+
+        self.assertFalse(options.test_mode)
+        self.assertEqual(options.config_file, config_file)
+
+    def test_reads_test_mode_from_local_ini(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.ini"
+            config_file.write_text(
+                "[application]\ntest_mode = true\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(load_test_mode_config(config_file))
+            self.assertTrue(parse_runtime_options([], config_file).test_mode)
+
+    def test_command_line_enable_overrides_disabled_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.ini"
+            config_file.write_text(
+                "[application]\ntest_mode = false\n",
+                encoding="utf-8",
+            )
+
+            options = parse_runtime_options(
+                ["--config", str(config_file), "--test-mode"]
+            )
+
+        self.assertTrue(options.test_mode)
+
+    def test_command_line_disable_overrides_enabled_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_file = Path(directory) / "config.ini"
+            config_file.write_text(
+                "[application]\ntest_mode = true\n",
+                encoding="utf-8",
+            )
+
+            options = parse_runtime_options(
+                ["--config", str(config_file), "--no-test-mode"]
+            )
+
+        self.assertFalse(options.test_mode)
+
+    @patch("app.main.time.sleep")
+    def test_default_mode_preserves_nonessential_wait(self, sleep) -> None:
+        set_runtime_options(RuntimeOptions(Path("config.ini"), test_mode=False))
+
+        wait_for_nonessential_delay("azure_monitor_initialization")
+
+        sleep.assert_called_once_with(30)
+
+    @patch("app.main.time.sleep")
+    def test_test_mode_bypasses_only_registered_nonessential_wait(
+        self,
+        sleep,
+    ) -> None:
+        set_runtime_options(RuntimeOptions(Path("config.ini"), test_mode=True))
+
+        wait_for_nonessential_delay("azure_monitor_initialization")
+
+        sleep.assert_not_called()
 
 
 class LabWorkflowTests(unittest.TestCase):
@@ -341,13 +425,25 @@ class LabWorkflowTests(unittest.TestCase):
             },
         ]
         agents = [
-            {"name": "sre-agent-a", "resourceGroup": "rg-legacy-lab"},
+            {
+                "name": "sre-agent-a",
+                "resourceGroup": "rg-legacy-lab",
+                "endpoint": "https://agent.example.test",
+            },
             {"name": "sre-agent-b", "resourceGroup": "rg-unrelated"},
             {"name": "sre-agent-c", "resourceGroup": "rg-incomplete"},
         ]
         container_apps = [
-            {"name": "ca-grubify-abc", "resourceGroup": "rg-legacy-lab"},
-            {"name": "ca-grubify-fe-abc", "resourceGroup": "rg-legacy-lab"},
+            {
+                "name": "ca-grubify-abc",
+                "resourceGroup": "rg-legacy-lab",
+                "fqdn": "api.example.test",
+            },
+            {
+                "name": "ca-grubify-fe-abc",
+                "resourceGroup": "rg-legacy-lab",
+                "fqdn": "ui.example.test",
+            },
             {"name": "some-app", "resourceGroup": "rg-unrelated"},
             {"name": "ca-grubify-fe-only", "resourceGroup": "rg-incomplete"},
         ]
@@ -373,6 +469,68 @@ class LabWorkflowTests(unittest.TestCase):
                 ("tagged-lab", "managed", True),
                 ("legacy-lab", "legacy", False),
             ],
+        )
+        legacy = next(
+            item for item in environments
+            if item["environment"] == "legacy-lab"
+        )
+        self.assertEqual(
+            legacy["runtime_values"]["CONTAINER_APP_URL"],
+            "https://api.example.test",
+        )
+        self.assertEqual(
+            legacy["runtime_values"]["SRE_AGENT_ENDPOINT"],
+            "https://agent.example.test",
+        )
+
+    @patch("app.main.save_environment_cache")
+    @patch("app.main.local_azd_environment_names", return_value=set())
+    @patch("app.main.run_capture")
+    def test_discovery_uses_container_app_provider_for_runtime_urls(
+        self,
+        run_capture,
+        _local_names,
+        _save_cache,
+    ) -> None:
+        run_capture.side_effect = [
+            (True, json.dumps([{
+                "name": "rg-existing-lab",
+                "location": "eastus2",
+                "tags": {
+                    "sre-agent-demo-lab-id": "grubify-starter-lab",
+                    "sre-agent-demo-environment": "existing-lab",
+                },
+            }])),
+            (True, json.dumps([{
+                "name": "sre-agent-a",
+                "resourceGroup": "rg-existing-lab",
+            }])),
+            (True, json.dumps([
+                {
+                    "name": "ca-grubify-api",
+                    "resourceGroup": "rg-existing-lab",
+                    "fqdn": "api.example.test",
+                },
+                {
+                    "name": "ca-grubify-fe",
+                    "resourceGroup": "rg-existing-lab",
+                    "fqdn": "ui.example.test",
+                },
+            ])),
+        ]
+
+        result = discover_existing_environments(
+            SUBSCRIPTION_A,
+            "grubify-starter-lab",
+        )
+
+        self.assertEqual(
+            run_capture.call_args_list[2].args[0][:3],
+            ["az", "containerapp", "list"],
+        )
+        self.assertEqual(
+            result["environments"][0]["runtime_values"]["CONTAINER_APP_URL"],
+            "https://api.example.test",
         )
 
     @patch("app.main.load_environment_cache")
@@ -477,6 +635,7 @@ class LabWorkflowTests(unittest.TestCase):
                 "name": "alert-a",
                 "type": "Microsoft.Insights/metricAlerts",
                 "provisioningState": "Succeeded",
+                "enabled": True,
             },
         ]
         apps = [
@@ -485,12 +644,18 @@ class LabWorkflowTests(unittest.TestCase):
                 "image": "acra.azurecr.io/grubify-api:latest",
                 "fqdn": "api.example.test",
                 "provisioningState": "Succeeded",
+                "runningStatus": "Running",
+                "latestRevisionName": "api--0002",
+                "latestReadyRevisionName": "api--0002",
             },
             {
                 "name": "ca-grubify-fe-a",
                 "image": "acra.azurecr.io/grubify-frontend:latest",
                 "fqdn": "ui.example.test",
                 "provisioningState": "Succeeded",
+                "runningStatus": "Ready",
+                "latestRevisionName": "frontend--0002",
+                "latestReadyRevisionName": "frontend--0002",
             },
         ]
         agent = {
@@ -517,14 +682,18 @@ class LabWorkflowTests(unittest.TestCase):
             ),
         ]
 
-        result = validate_existing_lab(
-            SUBSCRIPTION_A,
-            {
-                "environment": "existing-lab",
-                "resource_group": resource_group,
-                "location": "eastus2",
-            },
-        )
+        with patch(
+            "app.main.probe_http_endpoint",
+            return_value=(True, ""),
+        ) as probe:
+            result = validate_existing_lab(
+                SUBSCRIPTION_A,
+                {
+                    "environment": "existing-lab",
+                    "resource_group": resource_group,
+                    "location": "eastus2",
+                },
+            )
 
         self.assertTrue(result["ready"])
         self.assertEqual(result["issues"], [])
@@ -538,6 +707,10 @@ class LabWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(len(run_capture.call_args_list), 4)
         self.assertEqual(len(http_json.call_args_list), 2)
+        self.assertEqual(probe.call_count, 2)
+        self.assertTrue(all(
+            check["available"] for check in result["availability_checks"]
+        ))
 
     @patch("app.main.run_capture")
     def test_validation_routes_incomplete_environment_to_update(
@@ -639,6 +812,302 @@ class LabWorkflowTests(unittest.TestCase):
             {"AZURE_RESOURCE_GROUP": "rg-existing-lab"},
         )
         self.assertTrue(handler.send_json.call_args.args[0]["ready"])
+
+    def test_stopped_container_app_is_not_ready_or_probed(self) -> None:
+        apps = {
+            "api": {
+                "name": "ca-grubify-api",
+                "provisioningState": "Succeeded",
+                "runningStatus": "Stopped",
+                "latestRevisionName": "api--0002",
+                "latestReadyRevisionName": "api--0002",
+                "fqdn": "api.example.test",
+            },
+            "frontend": None,
+        }
+
+        with patch("app.main.probe_http_endpoint") as probe:
+            issues, checks = validate_container_app_availability(apps)
+
+        probe.assert_not_called()
+        self.assertIn("is not started (running status: Stopped)", issues[0])
+        self.assertFalse(checks[0]["started"])
+        self.assertFalse(checks[0]["available"])
+
+    def test_started_container_app_requires_reachable_endpoint(self) -> None:
+        apps = {
+            "api": {
+                "name": "ca-grubify-api",
+                "provisioningState": "Succeeded",
+                "runningStatus": "Running",
+                "latestRevisionName": "api--0002",
+                "latestReadyRevisionName": "api--0002",
+                "fqdn": "api.example.test",
+            },
+            "frontend": None,
+        }
+
+        with patch(
+            "app.main.probe_http_endpoint",
+            return_value=(False, "HTTP 503"),
+        ):
+            issues, checks = validate_container_app_availability(apps)
+
+        self.assertIn("is started but its endpoint /health is unavailable", issues[0])
+        self.assertTrue(checks[0]["started"])
+        self.assertFalse(checks[0]["available"])
+
+    def test_latest_container_app_revision_must_be_ready(self) -> None:
+        apps = {
+            "api": {
+                "name": "ca-grubify-api",
+                "provisioningState": "Succeeded",
+                "runningStatus": "Running",
+                "latestRevisionName": "api--0003",
+                "latestReadyRevisionName": "api--0002",
+                "fqdn": "api.example.test",
+            },
+            "frontend": None,
+        }
+
+        with patch("app.main.probe_http_endpoint") as probe:
+            issues, checks = validate_container_app_availability(apps)
+
+        probe.assert_not_called()
+        self.assertIn("latest revision is not ready", issues[0])
+        self.assertFalse(checks[0]["available"])
+
+    def test_disabled_metric_alert_is_unavailable(self) -> None:
+        issues, checks = validate_metric_alert_availability([{
+            "name": "alert-http-5xx-lab",
+            "provisioningState": "Succeeded",
+            "enabled": False,
+        }])
+
+        self.assertIn("is disabled", issues[0])
+        self.assertFalse(checks[0]["available"])
+
+
+class TestModeValidationTests(unittest.TestCase):
+    def handler(self, payload: dict[str, Any]) -> AppHandler:
+        handler = object.__new__(AppHandler)
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.read_json = MagicMock(return_value=payload)
+        handler.send_json = MagicMock()
+        return handler
+
+    @patch("app.main.is_test_mode", return_value=False)
+    def test_skip_is_rejected_when_test_mode_is_off(self, _is_test_mode) -> None:
+        handler = self.handler({
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "acknowledge_risk": True,
+        })
+        handler.existing_environment_candidate = MagicMock()
+
+        handler.skip_environment_validation()
+
+        handler.existing_environment_candidate.assert_not_called()
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.FORBIDDEN,
+        )
+
+    @patch("app.main.is_test_mode", return_value=True)
+    def test_skip_requires_explicit_risk_acknowledgement(
+        self,
+        _is_test_mode,
+    ) -> None:
+        handler = self.handler({
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+        })
+        handler.existing_environment_candidate = MagicMock()
+
+        handler.skip_environment_validation()
+
+        handler.existing_environment_candidate.assert_not_called()
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    @patch("app.main.save_state")
+    @patch("app.main.set_azd_values", return_value=(True, ""))
+    @patch("app.main.is_test_mode", return_value=True)
+    def test_skip_records_explicit_state_in_test_mode(
+        self,
+        _is_test_mode,
+        set_values,
+        save_state,
+    ) -> None:
+        payload = {
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "acknowledge_risk": True,
+        }
+        handler = self.handler(payload)
+        state = {
+            "lab_id": "grubify-starter-lab",
+            "environment": "existing-lab",
+            "existing_environment": True,
+            "subscription_id": SUBSCRIPTION_A,
+        }
+        candidate = {
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "location": "eastus2",
+            "detection": "managed",
+            "runtime_values": {
+                "AZURE_RESOURCE_GROUP": "rg-existing-lab",
+                "CONTAINER_APP_NAME": "ca-grubify-api",
+                "CONTAINER_APP_URL": "https://api.example.test",
+                "FRONTEND_APP_NAME": "ca-grubify-frontend",
+                "FRONTEND_APP_URL": "https://ui.example.test",
+                "SRE_AGENT_NAME": "sre-agent-a",
+                "SRE_AGENT_ENDPOINT": "https://agent.example.test",
+            },
+        }
+        handler.existing_environment_candidate = MagicMock(return_value=(
+            state,
+            LABS[0],
+            {"tenant": TENANT_A, "subscription": SUBSCRIPTION_A},
+            candidate,
+        ))
+
+        handler.skip_environment_validation()
+
+        saved = save_state.call_args.args[0]
+        self.assertTrue(saved["deployment_active"])
+        self.assertEqual(saved["validation_status"], "skipped")
+        self.assertIn("validation_skipped_at", saved)
+        self.assertNotIn("validated_at", saved)
+        set_values.assert_called_once_with(
+            "existing-lab",
+            candidate["runtime_values"],
+        )
+        response = handler.send_json.call_args.args[0]
+        self.assertTrue(response["skipped"])
+        self.assertFalse(response["ready"])
+        self.assertTrue(response["proceed"])
+
+    @patch("app.main.is_test_mode", return_value=True)
+    def test_skip_rejects_unknown_environment_selection(
+        self,
+        _is_test_mode,
+    ) -> None:
+        handler = self.handler({
+            "environment": "unknown-lab",
+            "resource_group": "rg-unknown-lab",
+            "acknowledge_risk": True,
+        })
+        handler.existing_environment_candidate = MagicMock(return_value=None)
+
+        with patch("app.main.save_state") as save_state:
+            handler.skip_environment_validation()
+
+        save_state.assert_not_called()
+
+    @patch("app.main.is_test_mode", return_value=True)
+    def test_skip_rejects_incomplete_runtime_metadata(
+        self,
+        _is_test_mode,
+    ) -> None:
+        handler = self.handler({
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "acknowledge_risk": True,
+        })
+        handler.existing_environment_candidate = MagicMock(return_value=(
+            {"environment": "existing-lab"},
+            LABS[0],
+            {"tenant": TENANT_A, "subscription": SUBSCRIPTION_A},
+            {
+                "environment": "existing-lab",
+                "resource_group": "rg-existing-lab",
+                "runtime_values": {},
+            },
+        ))
+
+        with (
+            patch("app.main.set_azd_values") as set_values,
+            patch("app.main.save_state") as save_state,
+        ):
+            handler.skip_environment_validation()
+
+        set_values.assert_not_called()
+        save_state.assert_not_called()
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.CONFLICT,
+        )
+
+    @patch("app.main.save_state")
+    @patch("app.main.set_azd_values", return_value=(True, ""))
+    @patch("app.main.validate_existing_lab")
+    @patch("app.main.is_test_mode", return_value=True)
+    def test_normal_validation_still_runs_in_test_mode(
+        self,
+        _is_test_mode,
+        validate_existing,
+        set_values,
+        save_state,
+    ) -> None:
+        handler = self.handler({
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+        })
+        state = {"deployment_active": False}
+        candidate = {
+            "environment": "existing-lab",
+            "resource_group": "rg-existing-lab",
+            "location": "eastus2",
+        }
+        handler.existing_environment_candidate = MagicMock(return_value=(
+            state,
+            LABS[0],
+            {"tenant": TENANT_A, "subscription": SUBSCRIPTION_A},
+            candidate,
+        ))
+        validate_existing.return_value = {
+            "ready": True,
+            "issues": [],
+            "values": {"AZURE_RESOURCE_GROUP": "rg-existing-lab"},
+        }
+
+        handler.validate_environment()
+
+        validate_existing.assert_called_once_with(SUBSCRIPTION_A, candidate)
+        set_values.assert_called_once()
+        self.assertEqual(save_state.call_args.args[0]["validation_status"], "validated")
+
+    def test_skip_route_requires_local_session_token(self) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": "wrong-token"}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/environments/skip-validation"
+        handler.send_json = MagicMock()
+        handler.skip_environment_validation = MagicMock()
+
+        handler.do_POST()
+
+        handler.skip_environment_validation.assert_not_called()
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.FORBIDDEN,
+        )
+
+    def test_skip_route_dispatches_with_valid_local_session(self) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/environments/skip-validation"
+        handler.send_json = MagicMock()
+        handler.skip_environment_validation = MagicMock()
+
+        handler.do_POST()
+
+        handler.skip_environment_validation.assert_called_once_with()
 
 
 class DeviceCodeTests(unittest.TestCase):
@@ -1601,6 +2070,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(r"python\pythonw.exe", launcher)
         self.assertNotIn(r"python\python.exe", launcher)
         self.assertIn(r'"%~dp0main.py"', launcher)
+        self.assertIn(r'"%~dp0main.py" %*', launcher)
         self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
         self.assertIn("AZURE_SRE_DEMO_CLIENT_FALLBACK=1", launcher)
@@ -1608,6 +2078,20 @@ class ProcessTests(unittest.TestCase):
         self.assertNotIn("Repair-Shortcut.ps1", launcher)
         self.assertIn("Azure SRE Agent Demo.link-template", launcher)
         self.assertIn("attrib.exe +R", launcher)
+
+    def test_source_launcher_passes_command_line_options_to_python(self) -> None:
+        repository = STATIC_DIR.parents[1]
+        command_launcher = (
+            repository / "scripts" / "start.cmd"
+        ).read_text(encoding="utf-8")
+        powershell_launcher = (
+            repository / "scripts" / "start.ps1"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('-File "%~dp0start.ps1" %*', command_launcher)
+        self.assertIn("ValueFromRemainingArguments", powershell_launcher)
+        self.assertIn("$quotedAppArguments", powershell_launcher)
+        self.assertIn("+ $quotedAppArguments", powershell_launcher)
 
     def test_splash_waits_for_health_before_opening_browser(self) -> None:
         repository = STATIC_DIR.parents[1]
@@ -1710,6 +2194,8 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".workflow-compact .step-leading #back", styles)
         self.assertIn(".prereq-actions button", styles)
         self.assertIn('id="validate-environment"', page)
+        self.assertNotIn('id="skip-environment-validation"', page)
+        self.assertIn('id="test-mode-banner"', page)
         self.assertIn('id="azure-context-loading"', page)
         self.assertIn('class="context-spinner"', page)
         self.assertIn(".context-loading-grid", styles)
@@ -1758,6 +2244,17 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".environment-discovery", styles)
         self.assertNotIn("No GitHub connection is required", script)
         self.assertIn('apiPost("/api/environments/validate"', script)
+        self.assertIn(
+            'skipEnvironmentButton = document.createElement("button")',
+            script,
+        )
+        self.assertIn('if (!testMode || !environment) return;', script)
+        self.assertIn(
+            'apiPost("/api/environments/skip-validation"',
+            script,
+        )
+        self.assertIn("acknowledge_risk: true", script)
+        self.assertIn("window.confirm(", script)
         self.assertIn(
             'activePanelId === "summary" && skipDeploymentForValidatedEnvironment',
             script,
