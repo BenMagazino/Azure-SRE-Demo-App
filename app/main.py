@@ -256,6 +256,7 @@ class ScenarioDefinition:
     description: str
     action_label: str
     confirmation: str
+    investigation_delay_seconds: int
 
 
 @dataclass(frozen=True)
@@ -298,6 +299,7 @@ LABS = (
                 confirmation=(
                     "Send cart requests to trigger the Grubify memory leak?"
                 ),
+                investigation_delay_seconds=300,
             ),
         ),
     ),
@@ -2792,6 +2794,28 @@ def break_cart_worker(job: Job) -> None:
     errors = 0
     consecutive_service_failures = 0
     max_consecutive_service_failures = 0
+    countdown_started = False
+    scenario = LABS_BY_ID["grubify-starter-lab"].scenarios[0]
+
+    def start_investigation_countdown() -> None:
+        nonlocal countdown_started
+        if countdown_started:
+            return
+        countdown_started = True
+        job.emit(
+            "output",
+            line=(
+                "First alert-triggering request failure detected. "
+                "Starting the expected SRE Agent response window."
+            ),
+        )
+        job.emit(
+            "investigation_countdown",
+            scenario_id=scenario.id,
+            seconds=scenario.investigation_delay_seconds,
+            started_at=time.time(),
+        )
+
     body = json.dumps({"foodItemId": 1, "quantity": 1}).encode("utf-8")
     for index in range(1, 201):
         request = Request(
@@ -2809,17 +2833,20 @@ def break_cart_worker(job: Job) -> None:
                     errors += 1
                     if response.status >= 500:
                         consecutive_service_failures += 1
+                        start_investigation_countdown()
                     else:
                         consecutive_service_failures = 0
         except HTTPError as error:
             errors += 1
             if error.code >= 500:
                 consecutive_service_failures += 1
+                start_investigation_countdown()
             else:
                 consecutive_service_failures = 0
         except (URLError, TimeoutError):
             errors += 1
             consecutive_service_failures += 1
+            start_investigation_countdown()
         max_consecutive_service_failures = max(
             max_consecutive_service_failures,
             consecutive_service_failures,

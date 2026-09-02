@@ -13,6 +13,10 @@ const environmentValidationStatus = document.querySelector(
   "#environment-validation-status"
 );
 const teardownButton = document.querySelector("#teardown");
+const investigationCountdown = document.querySelector("#investigation-countdown");
+const investigationCountdownValue = document.querySelector("#investigation-countdown-value");
+const investigationCountdownProgress = document.querySelector("#investigation-countdown-progress");
+const investigationCountdownStatus = document.querySelector("#investigation-countdown-status");
 const backButton = document.querySelector("#back");
 const shutdownButton = document.querySelector("#shutdown");
 const shell = document.querySelector(".shell");
@@ -39,6 +43,10 @@ let skipDeploymentForValidatedEnvironment = false;
 let currentSummary = null;
 let activePanelId = "labs";
 let heartbeatTimer = null;
+let investigationCountdownTimer = null;
+let investigationCountdownState = "idle";
+let investigationCountdownEnd = 0;
+let investigationCountdownDuration = 0;
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -823,6 +831,7 @@ function streamJob(jobId, log, options = {}) {
     const events = new EventSource(`/api/jobs/${jobId}/events`);
     events.onmessage = ({ data }) => {
       const event = JSON.parse(data);
+      options.onEvent?.(event);
       if (event.type === "output") {
         log.textContent += `${event.line}\n`;
         log.scrollTop = log.scrollHeight;
@@ -1123,7 +1132,83 @@ async function loadSummary() {
     item.append(heading, content);
     return item;
   }));
+  resetInvestigationCountdown();
   renderScenarioPicker();
+}
+
+function formatCountdown(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function selectedScenario() {
+  return currentLab()?.scenarios.find((item) => item.id === selectedScenarioId) || null;
+}
+
+function renderInvestigationCountdownEstimate(scenario) {
+  if (investigationCountdownState !== "idle") return;
+  const seconds = Number(scenario?.investigation_delay_seconds || 0);
+  investigationCountdownValue.textContent = formatCountdown(seconds);
+  investigationCountdownProgress.style.transform = "scaleX(0)";
+  investigationCountdownStatus.textContent = scenario
+    ? "Starts when this scenario confirms its alert-triggering failure."
+    : "Choose a scenario to see its expected response window.";
+}
+
+function resetInvestigationCountdown(scenario = selectedScenario()) {
+  if (investigationCountdownTimer !== null) {
+    window.clearInterval(investigationCountdownTimer);
+    investigationCountdownTimer = null;
+  }
+  investigationCountdownState = "idle";
+  investigationCountdownEnd = 0;
+  investigationCountdownDuration = 0;
+  investigationCountdown.classList.remove("active", "complete");
+  renderInvestigationCountdownEstimate(scenario);
+}
+
+function startInvestigationCountdown(event) {
+  const seconds = Number(event.seconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  if (investigationCountdownTimer !== null) {
+    window.clearInterval(investigationCountdownTimer);
+  }
+  investigationCountdownState = "active";
+  investigationCountdownDuration = seconds;
+  const startedAt = Number(event.started_at) * 1000;
+  investigationCountdownEnd =
+    (Number.isFinite(startedAt) && startedAt > 0 ? startedAt : Date.now())
+    + seconds * 1000;
+  investigationCountdown.classList.add("active");
+  investigationCountdown.classList.remove("complete");
+  investigationCountdownStatus.textContent =
+    "Alert evaluation is in progress. Watch the Agent portal for the initial investigation.";
+
+  const update = () => {
+    const remaining = Math.max(
+      0,
+      Math.ceil((investigationCountdownEnd - Date.now()) / 1000),
+    );
+    investigationCountdownValue.textContent = formatCountdown(remaining);
+    const elapsed = 1 - remaining / investigationCountdownDuration;
+    investigationCountdownProgress.style.transform =
+      `scaleX(${Math.min(1, Math.max(0, elapsed))})`;
+    if (remaining > 0) return;
+
+    window.clearInterval(investigationCountdownTimer);
+    investigationCountdownTimer = null;
+    investigationCountdownState = "complete";
+    investigationCountdown.classList.remove("active");
+    investigationCountdown.classList.add("complete");
+    investigationCountdownStatus.textContent =
+      "Expected alert window elapsed. Check Azure SRE Agent for the triggered response plan and initial investigation.";
+  };
+
+  update();
+  if (investigationCountdownState === "active") {
+    investigationCountdownTimer = window.setInterval(update, 250);
+  }
 }
 
 function renderScenarioPicker() {
@@ -1157,6 +1242,7 @@ function renderScenarioPicker() {
   const scenario = scenarios.find((item) => item.id === selectedScenarioId);
   runButton.disabled = !scenario;
   runButton.textContent = scenario?.action_label || "Run selected scenario";
+  renderInvestigationCountdownEstimate(scenario);
 }
 
 async function runSelectedScenario() {
@@ -1164,6 +1250,7 @@ async function runSelectedScenario() {
     (item) => item.id === selectedScenarioId
   );
   if (!scenario) return;
+  resetInvestigationCountdown(scenario);
   await runDemoAction(
     "scenarios/run",
     scenario.confirmation,
@@ -1201,7 +1288,13 @@ async function runDemoAction(
       log.textContent += `${result.error || "Action did not start."}\n`;
       return;
     }
-    const completed = await streamJob(result.job_id, log);
+    const completed = await streamJob(result.job_id, log, {
+      onEvent: (event) => {
+        if (event.type === "investigation_countdown") {
+          startInvestigationCountdown(event);
+        }
+      },
+    });
     log.textContent += completed.success ? "\nCompleted.\n" : "\nAction failed.\n";
     if (!completed.success) return;
 
@@ -1211,6 +1304,7 @@ async function runDemoAction(
         "\nBaseline restored from the declared infrastructure and application configuration.\n";
     }
     if (path === "teardown") {
+      resetInvestigationCountdown();
       document.querySelector("#summary-links").replaceChildren();
       log.textContent = "";
       document.querySelector("#deploy-log").textContent = "";

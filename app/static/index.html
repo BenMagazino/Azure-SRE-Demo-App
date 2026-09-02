@@ -218,7 +218,23 @@
 
       <section id="summary" class="panel hidden">
         <h2>Demo ready</h2>
-        <div id="summary-links" class="summary-grid"></div>
+        <div class="summary-overview">
+          <div id="summary-links" class="summary-grid"></div>
+          <aside
+            id="investigation-countdown"
+            class="investigation-countdown"
+            aria-labelledby="investigation-countdown-title">
+            <span class="countdown-eyebrow">Expected SRE Agent response</span>
+            <h3 id="investigation-countdown-title">Investigation countdown</h3>
+            <div id="investigation-countdown-value" class="countdown-value" role="timer">05:00</div>
+            <div class="countdown-progress" aria-hidden="true">
+              <span id="investigation-countdown-progress"></span>
+            </div>
+            <p id="investigation-countdown-status" aria-live="polite">
+              Starts when the selected scenario confirms its alert-triggering failure.
+            </p>
+          </aside>
+        </div>
         <h3>Choose a scenario</h3>
         <p>Run a scenario supported by this lab, then watch Azure SRE Agent investigate.</p>
         <div id="scenario-picker" class="picker-grid" aria-live="polite"></div>
@@ -235,6 +251,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.18"></script>
+    <script src="/app.js?v=20260901.19"></script>
   </body>
 </html>

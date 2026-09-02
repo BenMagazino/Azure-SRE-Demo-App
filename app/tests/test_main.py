@@ -93,6 +93,10 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertEqual(payload["labs"][0]["resource_count"], 17)
         self.assertEqual(payload["labs"][0]["estimated_turnaround"], "10-23 min")
         self.assertEqual(payload["labs"][0]["dependency_ids"], ("az", "azd"))
+        self.assertEqual(
+            payload["labs"][0]["scenarios"][0]["investigation_delay_seconds"],
+            300,
+        )
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
 
     @patch("app.main.save_state")
@@ -1422,7 +1426,10 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('class="context-card environment-browser"', page)
         self.assertIn('class="environment-discovery"', page)
         self.assertIn('class="context-card new-environment-card"', page)
+        self.assertIn('id="investigation-countdown"', page)
         self.assertIn("Use these settings only when deploying a new lab.", page)
+        self.assertIn(".summary-overview", styles)
+        self.assertIn("startInvestigationCountdown(event)", script)
         self.assertIn(".environment-choice-divider", styles)
         self.assertIn(".new-environment-card .form-grid", styles)
         self.assertNotIn("azd stores its sign-in separately", script)
@@ -2003,6 +2010,14 @@ class BreakCartTests(unittest.TestCase):
 
         events = list(job.events.queue)
         self.assertFalse(any(event["type"] == "error" for event in events))
+        countdown_events = [
+            event
+            for event in events
+            if event["type"] == "investigation_countdown"
+        ]
+        self.assertEqual(len(countdown_events), 1)
+        self.assertEqual(countdown_events[0]["scenario_id"], "memory-leak")
+        self.assertEqual(countdown_events[0]["seconds"], 300)
         self.assertIn(
             "Memory pressure observed",
             "\n".join(
