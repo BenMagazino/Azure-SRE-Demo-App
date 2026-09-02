@@ -1,144 +1,193 @@
 # Azure SRE Agent Demo Setup
 
-A Windows-first local web application that reduces setup friction for guided
-Azure SRE Agent labs. The workflow is driven by a lab catalog so each lab can
-declare its own dependencies and demo scenarios.
+A Windows-first local web application for deploying and running an
+[Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/) demonstration without asking the
+presenter to assemble a development toolchain or run the starter lab's Bash scripts.
 
-The initial catalog includes the **Grubify Starter Lab** and its **Memory Leak**
-scenario: deploy Grubify, trigger cart memory pressure, and observe Azure SRE
-Agent investigate.
+The app packages the
+[Grubify starter lab](https://github.com/microsoft/sre-agent/tree/main/labs/starter-lab) into a
+guided six-step experience. It resolves its own Azure command-line dependencies, guides device-code
+authentication, deploys or reuses a lab, starts the demo incident, and restores or removes the
+environment.
 
-The app intentionally excludes GitHub integration and does not require Git,
-Git Bash, Rust, MSYS2, MinGW, Node.js, or npm.
+## What is included
+
+| Capability | Current behavior |
+| --- | --- |
+| Supported host | Windows 11 |
+| User interface | Local web app at `http://127.0.0.1:8765` |
+| Runtime | Python standard library; Python 3.14.7 is bundled in the portable package |
+| Azure tools | Private, per-user Azure CLI 2.90.0 and Azure Developer CLI 1.32.0 installs |
+| Current lab | Grubify Starter Lab: 17 Azure resources, 2 dependencies, 1 demo scenario |
+| Typical turnaround | Approximately 10-23 minutes for a new deployment |
+| Demo scenario | Memory Leak, with a four-minute expected-response countdown |
+
+Git, Git Bash, Node.js, Rust, Docker Desktop, and administrator access are not required to run the
+portable package.
 
 ## Requirements
 
-- Windows 11
-- An Azure subscription where you can create resources and role assignments
+- Windows 11 with PowerShell and internet access.
+- An Azure subscription where the signed-in user can create resources and role assignments. The
+  **Owner** role at subscription scope is the simplest supported configuration.
+- Access to Azure SRE Agent in the selected subscription and deployment region.
+- Microsoft Edge is optional, but required to use the work/personal profile selector for Azure links.
 
-The portable Windows package includes Python. Python 3.14.7 or newer is required
-only when running directly from the source repository.
+The deployment creates billable Azure resources. Tear down the lab when it is no longer needed.
 
-The app requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0 or
-newer. The prerequisite screen verifies these versions and can install, repair,
-or update both tools sequentially with one action. Remediation downloads the
-official 64-bit ZIP distributions, verifies pinned SHA-256 checksums, and
-installs Azure CLI 2.90.0 and Azure Developer CLI 1.32.0 under
-`%LOCALAPPDATA%\AzureSREAgentDemo\tools`. These user-profile installations do
-not require administrator approval or change the machine `PATH`. Microsoft
-currently marks the Azure CLI ZIP distribution as preview.
+## Run the portable app
 
-These minimums were reviewed on September 1, 2026 and should be refreshed by
-December 1, 2026 to preserve the three-month tool-age policy.
+1. Obtain `AzureSREAgentDemo-portable-win-x64.zip` from a trusted build of this repository.
+2. Extract the entire ZIP to a writable local folder. Do not run it from inside the ZIP.
+3. Double-click **Start Azure SRE Agent Demo.cmd**.
+4. Use **Shutdown** in the app when finished. If the browser is closed without using Shutdown, the
+   backend exits automatically after its client timeout once active work has completed.
 
-## First run
+The portable package contains Python and the vendored lab. On the Prerequisites step, **Resolve all
+dependencies** downloads pinned Azure CLI and azd ZIPs, verifies their SHA-256 hashes, and installs
+them under:
 
-From PowerShell in the repository root:
+```text
+%LOCALAPPDATA%\AzureSREAgentDemo\tools
+```
+
+These private installs do not change the machine PATH and do not require elevation. If Python cannot
+validate GitHub's certificate chain while downloading azd, the app retries through PowerShell so
+Windows' trusted certificate store is used; certificate validation is never disabled.
+
+## The six-step workflow
+
+1. **Lab Picker** — Select the Grubify Starter Lab and review its dependency, resource, scenario, and
+   timing metadata.
+2. **Prerequisites** — Detect Azure CLI and azd, then install or update only the missing dependencies.
+   The minimum supported versions are Azure CLI 2.88.0 and azd 1.28.0.
+3. **Sign in** — Complete device-code authentication for both CLIs, then select the Azure tenant and
+   subscription to use.
+4. **Configure** — Scan for an existing compatible lab or choose a name and supported region for a
+   new environment. Validation is performed only for the selected existing lab.
+5. **Deploy** — Reuse a healthy environment, update an incomplete one, or deploy all infrastructure
+   and post-provision configuration for a new lab. Progress and command output stream in the app.
+6. **Demo** — Open Grubify, its API, the resource group, or the deployed SRE Agent; run the Memory
+   Leak scenario; restore the baseline; or tear down the environment.
+
+Device codes are copied and their verification pages are opened automatically. The app never asks
+for Azure passwords.
+
+### Existing environments
+
+The app discovers current environments through the resource-group tags
+`sre-agent-demo-lab-id` and `sre-agent-demo-environment`. It can also structurally recognize a
+compatible older starter-lab deployment that predates those tags.
+
+- A healthy, app-managed environment can be reused without redeployment and remains eligible for
+  teardown.
+- An incomplete or drifted managed environment is routed through an update.
+- A structurally discovered legacy environment can be validated and reused, but app-assisted
+  teardown is disabled because the app cannot prove ownership.
+
+### Demo and recovery
+
+The Memory Leak scenario sends sustained cart requests until Grubify produces the alert-triggering
+HTTP or connection failures. The four-minute countdown starts only after that failure is confirmed.
+
+Azure Monitor incident ingestion can span agents in the same subscription. To keep parallel labs
+isolated, each response plan filters on that environment's exact HTTP 5xx alert title. Environments
+created with an older build should run **Restore baseline** once to repair a broad or stale response
+plan.
+
+**Restore baseline** reapplies the declared infrastructure, application images, SRE Agent
+configuration, knowledge base, incident-handler subagent, and response plan. Use it after a demo or
+when validation reports drift. It does not delete the environment.
+
+Step 6 can open Azure links in the current browser context or in a selected local Microsoft Edge
+profile. Profiles are displayed by name and account email, while the resource group and SRE Agent
+links display their resource names rather than long URLs.
+
+## What the lab deploys
+
+The vendored Scenario 1 infrastructure includes:
+
+- Azure Container Registry
+- Azure Container Apps environment
+- Grubify frontend and API container apps
+- Log Analytics workspace and Application Insights
+- Managed identity and required role assignments
+- Azure SRE Agent
+- Environment-specific HTTP 5xx alert rule
+- Grubify runbook and architecture knowledge
+- Incident-handler subagent and isolated response plan
+
+Post-provision operations that the upstream lab performs in shell scripts are implemented directly
+in `app\main.py`, including container image builds, CORS configuration, knowledge upload, subagent
+creation, and response-plan creation.
+
+## Diagnostics, cleanup, and uninstall
+
+Use **Download diagnostic log** in the app footer when troubleshooting. Logs are also written to:
+
+```text
+%LOCALAPPDATA%\AzureSREAgentDemo\logs
+```
+
+The logs redact authentication tokens and other sensitive command output covered by the app's
+diagnostic filters.
+
+To remove a managed Azure environment, use **Tear down Azure resources** before uninstalling the
+app. Deleting the local package does not delete anything in Azure.
+
+To uninstall locally:
+
+1. Shut down the app.
+2. Delete the extracted portable-package folder.
+3. Delete `%LOCALAPPDATA%\AzureSREAgentDemo` to remove managed CLIs, cached environment metadata,
+   logs, and local application state.
+
+## Run from source
+
+Source development requires Git and Python 3.14.7 or newer. The application itself has no third-party
+Python packages.
 
 ```powershell
+git clone https://github.com/BenMagazino/Azure-SRE-Demo-App.git
+cd Azure-SRE-Demo-App
 .\scripts\start.cmd
 ```
 
-The launcher uses a process-scoped PowerShell execution-policy bypass so it also
-works in Windows Sandbox without changing the machine policy. The start script
-checks for Python 3.14.7 or newer, installs or updates Python 3.14.7 with WinGet
-when necessary, and launches the local application. It does not create a virtual
-environment or download Python packages because the application uses only the
-Python standard library. If both Python and WinGet are unavailable, it provides
-the direct Python installation URL.
+If the required Python runtime is missing, `scripts\start.ps1` uses WinGet to install Python 3.14.7
+for the current user. Azure CLI and azd are still managed through the app's Prerequisites step.
 
-The browser opens automatically at <http://127.0.0.1:8765>.
-The launcher hands the server off to a background Python process, so its
-terminal window closes after startup. A native Windows splash displays startup
-progress, waits for the local health endpoint, opens the browser when the
-backend is ready, and then closes itself. Microsoft Edge opens in application
-mode, providing a standalone window without browser tabs or an address bar
-while retaining the normal Edge profile and its authenticated sessions. If
-Edge is unavailable, the launcher falls back to the default browser. If the
-splash cannot run, the backend opens the application window directly after
-five seconds. If startup times out, the splash points to the diagnostic-log
-directory. Use
-**Back** to revisit an earlier wizard step without clearing completed state.
-Use **Shutdown** to stop the local backend and close the application window;
-browsers that block scripted closure display a safe-to-close confirmation
-instead.
-
-The browser sends a local heartbeat every 10 seconds. If the application
-window is closed without using **Shutdown**, the backend stops after two
-minutes without a heartbeat. Active installation, authentication, deployment,
-recovery, scenario, and teardown jobs are allowed to finish before automatic
-shutdown. The portable package also includes
-`app\Stop Azure SRE Agent Demo.cmd` for an explicit graceful shutdown when the
-application window is unavailable.
-
-The package root includes a portable `Azure SRE Agent Demo.lnk` launcher.
-Windows shortcut files cannot resolve relative custom-icon paths, so the
-shortcut uses a built-in Windows launcher icon rather than rewriting itself to
-an extraction-specific path. It targets the embedded start command in the
-`app` folder and continues to work when the complete extracted folder is moved.
-The shortcut is intentionally read-only so Windows cannot replace that relative
-target with a build-machine or redirected-drive path. The custom shield icon is
-used by the browser and splash experience. Since ZIP extraction can remove the
-read-only attribute, the start command restores a pristine relative shortcut
-and reapplies that protection before starting the backend.
-
-## Windows Sandbox diagnostics
-
-Each application launch writes a timestamped diagnostic log containing startup,
-prerequisite, HTTP, job, subprocess, and authentication details. Device codes,
-claims challenges, and tokens are redacted.
-
-`AzureSREAgentDemo.wsb` maps the host `sandbox-logs` directory into the Sandbox
-as `AzureSREAgentDemoLogs`. Logs therefore remain available in
-`sandbox-logs\AzureSREAgentDemo-*.log` after the Sandbox is closed.
-
-On a standard Windows or Hyper-V VM launch, logs are stored under
-`%LOCALAPPDATA%\AzureSREAgentDemo\logs`. A **Download diagnostic log** action is
-available in the application footer without exposing the workstation path in
-the interface.
-
-## Build the portable Windows package
+Run the automated tests:
 
 ```powershell
-.\scripts\build-windows.ps1
+python -m unittest discover -s app\tests -p "test_*.py"
+node --check app\static\app.js
 ```
 
-The build script downloads the official Python Software Foundation 3.14.7
-embeddable runtime, verifies its pinned SHA-256 checksum and Authenticode
-signature, and writes both:
+Build the self-contained Windows package:
 
-- `dist\AzureSREAgentDemo`
-- `dist\AzureSREAgentDemo-portable-win-x64.zip`
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
+```
 
-End users do not need Python installed. After extracting the ZIP, they
-double-click `Azure SRE Agent Demo.lnk`. The package root contains only that
-branded shortcut, `README.txt`, and the `app` folder. The application folder
-contains the launch scripts, signed embedded Python runtime, web application,
-and vendored lab assets. The complete extracted folder must remain together.
+The build output is:
 
-## Current wizard flow
+```text
+dist\AzureSREAgentDemo-portable-win-x64.zip
+```
 
-1. Choose a lab from the catalog.
-2. Verify the selected lab's minimum Azure CLI and Azure Developer CLI versions.
-3. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
-4. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
-   Azure CLI default is shown first, and cross-tenant selections are reauthenticated
-   with a tenant-scoped device-code flow when required.
-5. Scan the selected subscription for compatible existing labs, or configure a
-   new Azure environment and region. Existing labs can be connected to the
-   local azd project and reconciled with the current lab definition.
-6. Deploy the selected lab.
-7. Choose and run a scenario supported by that lab.
-8. Restore the declared Bicep, application, and SRE Agent baseline when policy
-   enforcement, autonomous remediation, or an outage causes configuration drift.
-9. Tear down the Azure environment and return to the deployment step for a clean
-   redeployment.
+## Project structure
 
-All wizard steps are implemented in the Python backend. Deployment uses ACR Tasks
-to build Grubify remotely, so Docker Desktop and a local Grubify checkout are not
-required.
+```text
+app\
+  main.py                  Local HTTP server and Azure workflow
+  static\                  Dependency-free HTML, CSS, and JavaScript UI
+  tests\test_main.py       Backend and workflow test suite
+packaging\windows\         Portable launchers, splash screen, and end-user notes
+scripts\
+  start.cmd / start.ps1    Source launcher and Python bootstrap
+  build-windows.ps1        Portable ZIP builder
+vendor\starter-lab\        Vendored Grubify application, Bicep, and SRE configuration
+```
 
-Environment discovery uses read-only Azure CLI subscription inventory as the
-source of truth and `azd env list` to identify environments already known on the
-workstation. The last successful scan is cached at
-`%LOCALAPPDATA%\AzureSREAgentDemo\environments.json` for offline fallback.
+The application binds only to loopback. Azure operations run as child processes using the selected
+Azure CLI and azd sessions; no hosted control plane or separate application account is involved.
