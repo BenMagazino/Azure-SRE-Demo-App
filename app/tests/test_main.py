@@ -102,7 +102,7 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertEqual(payload["labs"][0]["dependency_ids"], ("az", "azd"))
         self.assertEqual(
             payload["labs"][0]["scenarios"][0]["investigation_delay_seconds"],
-            300,
+            240,
         )
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
 
@@ -2207,7 +2207,7 @@ class BreakCartTests(unittest.TestCase):
         ]
         self.assertEqual(len(countdown_events), 1)
         self.assertEqual(countdown_events[0]["scenario_id"], "memory-leak")
-        self.assertEqual(countdown_events[0]["seconds"], 300)
+        self.assertEqual(countdown_events[0]["seconds"], 240)
         self.assertIn(
             "Memory pressure observed",
             "\n".join(

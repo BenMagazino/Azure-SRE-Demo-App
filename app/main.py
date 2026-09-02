@@ -299,7 +299,7 @@ LABS = (
                 confirmation=(
                     "Send cart requests to trigger the Grubify memory leak?"
                 ),
-                investigation_delay_seconds=300,
+                investigation_delay_seconds=240,
             ),
         ),
     ),
