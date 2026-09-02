@@ -404,6 +404,11 @@ header p,
   justify-content: flex-end;
 }
 
+.prereq-actions button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .demo-actions {
   margin: 1rem 0;
 }

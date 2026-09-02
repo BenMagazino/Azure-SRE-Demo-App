@@ -1189,6 +1189,16 @@ class ProcessTests(unittest.TestCase):
         self.assertLess(page.index('id="back"'), page.index("1. Lab Picker"))
         self.assertNotIn('class="workflow-navigation"', page)
         self.assertIn(".workflow-compact .step-leading #back", styles)
+        self.assertIn(".prereq-actions button", styles)
+        transition_start = script.index(
+            'showPanel("prerequisites");',
+            script.index('document.querySelector("#continue-lab")'),
+        )
+        persistence_start = script.index(
+            "await persistSelectedLab();",
+            transition_start,
+        )
+        self.assertLess(transition_start, persistence_start)
         self.assertIn(
             'classList.toggle("workflow-compact", id !== "labs")',
             script,

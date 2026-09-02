@@ -246,8 +246,6 @@ async function persistSelectedLab() {
   persistedLabId = result.lab.id;
   selectedLabId = result.lab.id;
   updateLabCopy();
-  await loadPrerequisites();
-  showPanel("prerequisites");
 }
 
 async function copyToClipboard(text) {
@@ -1112,9 +1110,15 @@ shutdownButton.addEventListener("click", shutdownApplication);
 document.querySelector("#continue-lab").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   button.disabled = true;
+  prereqList.textContent = "Checking installed tools...";
+  continueButton.disabled = true;
+  installAllButton.classList.add("hidden");
+  showPanel("prerequisites");
   try {
     await persistSelectedLab();
+    await loadPrerequisites();
   } catch (error) {
+    showPanel("labs");
     const message = document.createElement("p");
     message.className = "warning";
     message.setAttribute("role", "alert");
