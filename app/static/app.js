@@ -17,6 +17,8 @@ const investigationCountdown = document.querySelector("#investigation-countdown"
 const investigationCountdownValue = document.querySelector("#investigation-countdown-value");
 const investigationCountdownProgress = document.querySelector("#investigation-countdown-progress");
 const investigationCountdownStatus = document.querySelector("#investigation-countdown-status");
+const edgeProfileSelect = document.querySelector("#edge-profile");
+const edgeProfileStatus = document.querySelector("#edge-profile-status");
 const backButton = document.querySelector("#back");
 const shutdownButton = document.querySelector("#shutdown");
 const shell = document.querySelector(".shell");
@@ -47,6 +49,7 @@ let investigationCountdownTimer = null;
 let investigationCountdownState = "idle";
 let investigationCountdownEnd = 0;
 let investigationCountdownDuration = 0;
+let edgeProfilesLoaded = false;
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -1132,12 +1135,62 @@ async function loadSummary() {
       externalIcon.setAttribute("aria-hidden", "true");
       externalIcon.textContent = "↗";
       content.append(externalIcon);
+      content.addEventListener("click", (event) => {
+        void openSummaryLink(event, url);
+      });
     }
     item.append(heading, content);
     return item;
   }));
   resetInvestigationCountdown();
   renderScenarioPicker();
+  void loadEdgeProfiles();
+}
+
+async function loadEdgeProfiles() {
+  if (edgeProfilesLoaded) return;
+  edgeProfileStatus.textContent = "Finding Microsoft Edge profiles...";
+  try {
+    const response = await fetch("/api/edge-profiles", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Unable to load Microsoft Edge profiles.");
+    }
+    const profiles = result.profiles || [];
+    const options = [new Option("Current browser profile", "")];
+    profiles.forEach((profile) => {
+      const identity = profile.email ? ` - ${profile.email}` : "";
+      options.push(new Option(`${profile.name}${identity}`, profile.id));
+    });
+    edgeProfileSelect.replaceChildren(...options);
+    edgeProfileSelect.disabled = !result.edge_available || profiles.length === 0;
+    edgeProfileStatus.textContent = edgeProfileSelect.disabled
+      ? "No selectable Microsoft Edge profiles were found."
+      : "Select a work profile to open Azure and SRE links with that identity.";
+    edgeProfilesLoaded = true;
+  } catch (error) {
+    edgeProfileSelect.disabled = true;
+    edgeProfileStatus.textContent = `Unable to load Microsoft Edge profiles: ${error}`;
+  }
+}
+
+async function openSummaryLink(event, url) {
+  const profile = edgeProfileSelect.value;
+  if (!profile) return;
+  event.preventDefault();
+  edgeProfileStatus.textContent = "Opening link in the selected Microsoft Edge profile...";
+  try {
+    const response = await apiPost("/api/open-edge-link", { url, profile });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Unable to open the link.");
+    }
+    const selectedLabel =
+      edgeProfileSelect.options[edgeProfileSelect.selectedIndex]?.textContent;
+    edgeProfileStatus.textContent = `Opened in ${selectedLabel}.`;
+  } catch (error) {
+    edgeProfileStatus.textContent = `Unable to open the selected profile: ${error}`;
+  }
 }
 
 function formatCountdown(seconds) {

@@ -217,7 +217,16 @@
       </section>
 
       <section id="summary" class="panel hidden">
-        <h2>Demo ready</h2>
+        <div class="summary-heading">
+          <h2>Demo ready</h2>
+          <div class="edge-profile-picker">
+            <label for="edge-profile">Open Step 6 links with</label>
+            <select id="edge-profile">
+              <option value="">Current browser profile</option>
+            </select>
+            <p id="edge-profile-status" aria-live="polite"></p>
+          </div>
+        </div>
         <div class="summary-overview">
           <div id="summary-links" class="summary-grid"></div>
           <aside
@@ -251,6 +260,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.20"></script>
+    <script src="/app.js?v=20260901.21"></script>
   </body>
 </html>

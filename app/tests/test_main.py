@@ -37,16 +37,20 @@ from app.main import (
     claims_challenge_login_command,
     command_version,
     deploy_worker,
+    demo_external_urls,
     discover_existing_environments,
+    discover_edge_profiles,
     http_json,
     install_all_worker,
     install_managed_azd,
     install_managed_azure_cli,
     is_device_login_url,
+    is_allowed_demo_external_url,
     launch_client_if_unclaimed,
     memory_pressure_observed,
     monitor_client_lease,
     open_browser_url,
+    open_edge_profile_url,
     parse_claims_challenge_login,
     parse_device_code,
     lab_catalog_payload,
@@ -111,6 +115,83 @@ class LabWorkflowTests(unittest.TestCase):
                 f"https://portal.azure.com/#@{TENANT_A}/resource/subscriptions/"
                 f"{SUBSCRIPTION_A}/resourceGroups/rg-sre%20lab/overview"
             ),
+        )
+
+    def test_discovers_named_edge_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            user_data = Path(directory)
+            (user_data / "Default").mkdir()
+            (user_data / "Profile 1").mkdir()
+            (user_data / "System Profile").mkdir()
+            (user_data / "Local State").write_text(
+                json.dumps({
+                    "profile": {
+                        "info_cache": {
+                            "Default": {
+                                "name": "Personal",
+                                "user_name": "personal@example.test",
+                            },
+                            "Profile 1": {
+                                "name": "Work",
+                                "user_name": "work@example.test",
+                            },
+                            "System Profile": {"name": "System"},
+                        },
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                discover_edge_profiles(user_data),
+                [
+                    {
+                        "id": "Default",
+                        "name": "Personal",
+                        "email": "personal@example.test",
+                    },
+                    {
+                        "id": "Profile 1",
+                        "name": "Work",
+                        "email": "work@example.test",
+                    },
+                ],
+            )
+
+    def test_demo_external_links_are_limited_to_active_https_urls(self) -> None:
+        state = {
+            "environment": "sre-lab",
+            "tenant_id": TENANT_A,
+            "subscription_id": SUBSCRIPTION_A,
+        }
+        values = {
+            "AZURE_RESOURCE_GROUP": "rg-sre-lab",
+            "AGENT_PORTAL_URL": "https://sre.azure.com",
+            "CONTAINER_APP_URL": "https://api.example.test",
+            "FRONTEND_APP_URL": "https://app.example.test",
+        }
+
+        self.assertEqual(len(demo_external_urls(state, values)), 4)
+        self.assertTrue(
+            is_allowed_demo_external_url(
+                "https://app.example.test",
+                state,
+                values,
+            )
+        )
+        self.assertFalse(
+            is_allowed_demo_external_url(
+                "https://malicious.example.test",
+                state,
+                values,
+            )
+        )
+        self.assertFalse(
+            is_allowed_demo_external_url(
+                "http://app.example.test",
+                state,
+                values,
+            )
         )
 
     @patch("app.main.save_state")
@@ -1239,6 +1320,51 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.discover_edge_profiles")
+    @patch("app.main.find_edge")
+    def test_opens_url_with_selected_edge_profile(
+        self,
+        find_edge,
+        discover_edge_profiles,
+        popen,
+    ) -> None:
+        find_edge.return_value = Path(r"C:\Edge\msedge.exe")
+        discover_edge_profiles.return_value = [
+            {"id": "Profile 1", "name": "Work", "email": "work@example.test"}
+        ]
+        popen.return_value.pid = 1234
+
+        self.assertTrue(
+            open_edge_profile_url(
+                "https://portal.azure.com/example",
+                "Profile 1",
+            )
+        )
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], r"C:\Edge\msedge.exe")
+        self.assertIn("--profile-directory=Profile 1", command)
+        self.assertIn("--new-window", command)
+        self.assertEqual(command[-1], "https://portal.azure.com/example")
+
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.discover_edge_profiles", return_value=[])
+    @patch("app.main.find_edge", return_value=Path(r"C:\Edge\msedge.exe"))
+    def test_rejects_unknown_edge_profile(
+        self,
+        _find_edge,
+        _discover_edge_profiles,
+        popen,
+    ) -> None:
+        self.assertFalse(
+            open_edge_profile_url(
+                "https://portal.azure.com/example",
+                r"..\Unsafe",
+            )
+        )
+        popen.assert_not_called()
+
     def test_client_lease_expires_after_two_minutes_without_heartbeat(self) -> None:
         with (
             patch("app.main.LAST_CLIENT_HEARTBEAT", None),
@@ -1441,6 +1567,9 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('class="environment-discovery"', page)
         self.assertIn('class="context-card new-environment-card"', page)
         self.assertIn('id="investigation-countdown"', page)
+        self.assertIn('id="edge-profile"', page)
+        self.assertIn('apiPost("/api/open-edge-link"', script)
+        self.assertIn(".edge-profile-picker", styles)
         self.assertIn("resource_group_portal_url", script)
         self.assertIn('externalIcon.textContent = "↗"', script)
         self.assertIn(".external-link-icon", styles)

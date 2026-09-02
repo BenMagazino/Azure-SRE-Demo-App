@@ -1945,6 +1945,134 @@ def find_edge() -> Optional[Path]:
     return next((path for path in candidates if path.is_file()), None)
 
 
+def discover_edge_profiles(user_data_dir: Optional[Path] = None) -> list[dict[str, str]]:
+    if user_data_dir is None:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            return []
+        user_data_dir = Path(local_app_data) / "Microsoft" / "Edge" / "User Data"
+    local_state = user_data_dir / "Local State"
+    try:
+        payload = json.loads(local_state.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        LOGGER.info("Microsoft Edge profile catalog was not found")
+        return []
+    except (OSError, json.JSONDecodeError):
+        LOGGER.exception("Microsoft Edge profile catalog could not be read")
+        return []
+
+    info_cache = payload.get("profile", {}).get("info_cache", {})
+    if not isinstance(info_cache, dict):
+        LOGGER.warning("Microsoft Edge profile catalog has an invalid info_cache")
+        return []
+
+    try:
+        resolved_user_data_dir = user_data_dir.resolve()
+    except OSError:
+        LOGGER.exception("Microsoft Edge user-data directory could not be resolved")
+        return []
+
+    profiles = []
+    for directory, metadata in info_cache.items():
+        if not isinstance(directory, str):
+            continue
+        profile_path = user_data_dir / directory
+        try:
+            profile_is_safe = (
+                profile_path.resolve().is_relative_to(resolved_user_data_dir)
+            )
+        except OSError:
+            profile_is_safe = False
+        if (
+            not re.fullmatch(r"(?:Default|Profile \d+)", directory)
+            or not isinstance(metadata, dict)
+            or not profile_is_safe
+            or not profile_path.is_dir()
+        ):
+            continue
+        profiles.append({
+            "id": directory,
+            "name": str(metadata.get("name") or directory).strip(),
+            "email": str(metadata.get("user_name") or "").strip(),
+        })
+    return sorted(
+        profiles,
+        key=lambda profile: (
+            profile["id"] != "Default",
+            profile["name"].casefold(),
+        ),
+    )
+
+
+def open_edge_profile_url(url: str, profile_directory: str) -> bool:
+    edge = find_edge()
+    available_profiles = {
+        profile["id"]
+        for profile in discover_edge_profiles()
+    }
+    if edge is None or profile_directory not in available_profiles:
+        return False
+    try:
+        process = subprocess.Popen(
+            [
+                str(edge),
+                f"--profile-directory={profile_directory}",
+                "--new-window",
+                url,
+            ],
+            creationflags=CREATE_NO_WINDOW,
+        )
+        LOGGER.info(
+            "Opened URL in Edge profile=%s pid=%s",
+            profile_directory,
+            process.pid,
+        )
+        return True
+    except OSError:
+        LOGGER.exception(
+            "Unable to open URL in Edge profile=%s",
+            profile_directory,
+        )
+        return False
+
+
+def demo_external_urls(
+    state: Optional[dict[str, Any]] = None,
+    values: Optional[dict[str, str]] = None,
+) -> set[str]:
+    state = state if state is not None else load_state()
+    environment = str(state.get("environment") or "")
+    values = values if values is not None else (
+        azd_values(environment) if environment else {}
+    )
+    resource_group = values.get("AZURE_RESOURCE_GROUP", "")
+    return {
+        url
+        for url in (
+            values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
+            values.get("CONTAINER_APP_URL", ""),
+            values.get("FRONTEND_APP_URL", ""),
+            azure_resource_group_portal_url(
+                str(state.get("tenant_id") or ""),
+                str(state.get("subscription_id") or ""),
+                resource_group,
+            ),
+        )
+        if url
+    }
+
+
+def is_allowed_demo_external_url(
+    url: str,
+    state: Optional[dict[str, Any]] = None,
+    values: Optional[dict[str, str]] = None,
+) -> bool:
+    return (
+        urlparse(url).scheme == "https"
+        and url in demo_external_urls(state, values)
+    )
+
+
 def open_browser_url(url: str) -> bool:
     LOGGER.info("Opening browser URL: %s", url)
     if is_windows_sandbox():
@@ -2978,6 +3106,12 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/session":
             self.send_json({"token": SESSION_TOKEN})
             return
+        if path == "/api/edge-profiles":
+            self.send_json({
+                "edge_available": find_edge() is not None,
+                "profiles": discover_edge_profiles(),
+            })
+            return
         if path == "/api/diagnostics":
             self.send_json({
                 "path": str(LOG_FILE) if LOG_FILE else "",
@@ -3211,6 +3345,31 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             if not open_browser_url(verification_url):
                 self.send_json({"error": "Unable to open the default browser"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                return
+            self.send_json({"opened": True})
+            return
+        if path == "/api/open-edge-link":
+            try:
+                payload = self.read_json()
+            except (ValueError, json.JSONDecodeError):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            url = str(payload.get("url") or "").strip()
+            profile = str(payload.get("profile") or "").strip()
+            state = load_state()
+            environment = str(state.get("environment") or "")
+            values = azd_values(environment) if environment else {}
+            if not is_allowed_demo_external_url(url, state, values):
+                self.send_json(
+                    {"error": "This URL is not part of the active demo."},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            if not open_edge_profile_url(url, profile):
+                self.send_json(
+                    {"error": "The selected Microsoft Edge profile is unavailable."},
+                    HTTPStatus.CONFLICT,
+                )
                 return
             self.send_json({"opened": True})
             return

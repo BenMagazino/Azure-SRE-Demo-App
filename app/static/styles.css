@@ -864,6 +864,36 @@ select {
   gap: 0.75rem;
 }
 
+.summary-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.summary-heading h2 {
+  margin-bottom: 0;
+}
+
+.edge-profile-picker {
+  width: min(100%, 360px);
+}
+
+.edge-profile-picker label {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--cp-text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.edge-profile-picker p {
+  margin: 0.45rem 0 0;
+  color: var(--cp-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 .summary-overview {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.8fr);
@@ -1008,6 +1038,14 @@ select {
 
   .summary-overview {
     grid-template-columns: 1fr;
+  }
+
+  .summary-heading {
+    flex-direction: column;
+  }
+
+  .edge-profile-picker {
+    width: 100%;
   }
 
   .investigation-countdown {
