@@ -430,6 +430,16 @@ header p,
   padding: 1.5rem;
 }
 
+.environment-option-label {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  color: var(--cp-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .environment-browser .context-heading {
   gap: 2rem;
 }
@@ -475,6 +485,61 @@ header p,
   margin: 0;
   color: var(--cp-text-muted);
   line-height: 1.5;
+}
+
+.environment-choice-divider {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0 0 2rem;
+  color: var(--cp-text-muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.environment-choice-divider::before,
+.environment-choice-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--cp-border);
+  content: "";
+}
+
+.new-environment-card {
+  margin: 0;
+  padding: 1.5rem;
+  border-color: var(--cp-border-strong);
+}
+
+.new-environment-heading {
+  margin-bottom: 1.5rem;
+}
+
+.new-environment-heading h3,
+.new-environment-heading p {
+  margin: 0;
+}
+
+.new-environment-heading p {
+  margin-top: 0.5rem;
+  color: var(--cp-text-muted);
+  line-height: 1.5;
+}
+
+.new-environment-card .form-grid {
+  max-width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.new-environment-card .form-grid button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.new-environment-card #configure-status {
+  margin-bottom: 0;
 }
 
 .environment-card {
@@ -829,6 +894,18 @@ select {
 
   .environment-browser {
     padding: 1.25rem;
+  }
+
+  .new-environment-card {
+    padding: 1.25rem;
+  }
+
+  .new-environment-card .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .new-environment-card .form-grid button {
+    width: 100%;
   }
 
   .context-loading-grid {

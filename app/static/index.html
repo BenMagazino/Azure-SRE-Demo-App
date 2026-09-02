@@ -17,7 +17,7 @@
     <link rel="icon" href="/favicon.svg?v=20260901.2" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/favicon-192.png?v=20260901.2">
     <link rel="manifest" href="/manifest.webmanifest?v=20260901.2">
-    <link rel="stylesheet" href="/styles.css?v=20260901.15">
+    <link rel="stylesheet" href="/styles.css?v=20260901.16">
   </head>
   <body>
     <main class="shell">
@@ -142,6 +142,7 @@
           aria-labelledby="existing-environments-heading">
           <div class="context-heading">
             <div>
+              <span class="environment-option-label">Reuse existing</span>
               <h3 id="existing-environments-heading">Existing lab environments</h3>
               <p>Reuse a lab already deployed in the selected subscription.</p>
             </div>
@@ -162,37 +163,49 @@
             </p>
           </div>
         </section>
-        <form id="configure-form" class="form-grid">
-          <label>
-            Environment name
-            <input id="environment-name" value="sre-lab" pattern="[A-Za-z0-9-]{2,30}" required>
-          </label>
-          <label>
-            Azure region
-            <select id="azure-location">
-              <option value="australiaeast">Australia East</option>
-              <option value="canadacentral">Canada Central</option>
-              <option value="centralus">Central US</option>
-              <option value="eastasia">East Asia</option>
-              <option value="eastus2" selected>East US 2</option>
-              <option value="francecentral">France Central</option>
-              <option value="italynorth">Italy North</option>
-              <option value="japaneast">Japan East</option>
-              <option value="koreacentral">Korea Central</option>
-              <option value="northcentralus">North Central US</option>
-              <option value="southafricanorth">South Africa North</option>
-              <option value="southeastasia">Southeast Asia</option>
-              <option value="spaincentral">Spain Central</option>
-              <option value="swedencentral">Sweden Central</option>
-              <option value="uksouth">UK South</option>
-              <option value="westcentralus">West Central US</option>
-              <option value="westus2">West US 2</option>
-              <option value="westus3">West US 3</option>
-            </select>
-          </label>
-          <button type="submit">Save environment</button>
-        </form>
-        <p id="configure-status" aria-live="polite"></p>
+        <div class="environment-choice-divider" role="separator">
+          <span>or</span>
+        </div>
+        <section
+          class="context-card new-environment-card"
+          aria-labelledby="new-environment-heading">
+          <div class="new-environment-heading">
+            <span class="environment-option-label">New deployment</span>
+            <h3 id="new-environment-heading">Create a new lab environment</h3>
+            <p>Use these settings only when deploying a new lab.</p>
+          </div>
+          <form id="configure-form" class="form-grid">
+            <label>
+              New environment name
+              <input id="environment-name" value="sre-lab" pattern="[A-Za-z0-9-]{2,30}" required>
+            </label>
+            <label>
+              Azure region for new resources
+              <select id="azure-location">
+                <option value="australiaeast">Australia East</option>
+                <option value="canadacentral">Canada Central</option>
+                <option value="centralus">Central US</option>
+                <option value="eastasia">East Asia</option>
+                <option value="eastus2" selected>East US 2</option>
+                <option value="francecentral">France Central</option>
+                <option value="italynorth">Italy North</option>
+                <option value="japaneast">Japan East</option>
+                <option value="koreacentral">Korea Central</option>
+                <option value="northcentralus">North Central US</option>
+                <option value="southafricanorth">South Africa North</option>
+                <option value="southeastasia">Southeast Asia</option>
+                <option value="spaincentral">Spain Central</option>
+                <option value="swedencentral">Sweden Central</option>
+                <option value="uksouth">UK South</option>
+                <option value="westcentralus">West Central US</option>
+                <option value="westus2">West US 2</option>
+                <option value="westus3">West US 3</option>
+              </select>
+            </label>
+            <button type="submit">Create new environment</button>
+          </form>
+          <p id="configure-status" aria-live="polite"></p>
+        </section>
       </section>
 
       <section id="deployment" class="panel hidden">
@@ -222,6 +235,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.16"></script>
+    <script src="/app.js?v=20260901.18"></script>
   </body>
 </html>

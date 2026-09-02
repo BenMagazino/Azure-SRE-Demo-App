@@ -212,7 +212,7 @@ function renderLabPicker() {
     description.textContent = lab.description;
     const meta = document.createElement("span");
     meta.className = "picker-meta";
-    meta.textContent = `${lab.dependency_ids.length} dependencies · ${lab.scenarios.length} scenario${lab.scenarios.length === 1 ? "" : "s"}`;
+    meta.textContent = `${lab.dependency_ids.length} dependencies · ${lab.scenarios.length} scenario${lab.scenarios.length === 1 ? "" : "s"} · ${lab.resource_count} resource${lab.resource_count === 1 ? "" : "s"} · ${lab.estimated_turnaround} turnaround`;
     button.append(title, description, meta);
     button.addEventListener("click", () => {
       selectedLabId = lab.id;
@@ -335,7 +335,7 @@ function showAuthComplete(device, button, kind, existingSession = false) {
   if (existingSession) {
     detail.textContent = kind === "azure-cli"
       ? "An existing Azure CLI session is ready."
-      : "An existing Azure Developer CLI session is ready. azd stores its sign-in separately from Azure CLI.";
+      : "An existing Azure Developer CLI session is ready.";
   } else {
     detail.textContent = kind === "azure-cli"
       ? "Azure CLI authentication completed successfully."

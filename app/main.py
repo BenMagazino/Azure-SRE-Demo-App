@@ -263,6 +263,8 @@ class LabDefinition:
     id: str
     name: str
     description: str
+    resource_count: int
+    estimated_turnaround: str
     dependency_ids: tuple[str, ...]
     scenarios: tuple[ScenarioDefinition, ...]
 
@@ -281,6 +283,8 @@ LABS = (
             "Deploy Grubify to Azure Container Apps and observe Azure SRE Agent "
             "investigate an application incident."
         ),
+        resource_count=17,
+        estimated_turnaround="10-23 min",
         dependency_ids=("az", "azd"),
         scenarios=(
             ScenarioDefinition(
