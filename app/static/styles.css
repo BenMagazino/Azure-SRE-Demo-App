@@ -319,6 +319,7 @@ header p,
 
 .steps {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 1rem;
   margin: 2rem 0 1rem;
@@ -335,10 +336,43 @@ header p,
   font-weight: 700;
 }
 
-.workflow-navigation {
-  display: flex;
-  justify-content: flex-start;
-  margin-bottom: 0.75rem;
+.step-leading {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.step-leading #back {
+  max-width: 0;
+  margin-right: 0;
+  padding-right: 0;
+  padding-left: 0;
+  overflow: hidden;
+  border-width: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-0.5rem);
+  visibility: hidden;
+  transition:
+    max-width 320ms ease,
+    margin-right 320ms ease,
+    padding 320ms ease,
+    border-width 320ms ease,
+    opacity 220ms ease,
+    transform 320ms ease,
+    visibility 0s linear 320ms;
+}
+
+.workflow-compact .step-leading #back {
+  max-width: 5rem;
+  margin-right: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-width: 1px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .panel {
@@ -724,7 +758,8 @@ select {
   .brand-logo,
   .brand-tagline,
   .app-header > button,
-  .steps {
+  .steps,
+  .step-leading #back {
     transition: none;
   }
 }

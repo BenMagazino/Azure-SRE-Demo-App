@@ -17,7 +17,7 @@
     <link rel="icon" href="/favicon.svg?v=20260901.2" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/favicon-192.png?v=20260901.2">
     <link rel="manifest" href="/manifest.webmanifest?v=20260901.2">
-    <link rel="stylesheet" href="/styles.css?v=20260901.10">
+    <link rel="stylesheet" href="/styles.css?v=20260901.11">
   </head>
   <body>
     <main class="shell">
@@ -39,16 +39,16 @@
       </header>
 
       <nav class="steps" aria-label="Setup steps">
-        <span data-panel="labs" class="active" aria-current="step">1. Lab Picker</span>
+        <span class="step-leading">
+          <button id="back" class="secondary" type="button" disabled>Back</button>
+          <span data-panel="labs" class="active" aria-current="step">1. Lab Picker</span>
+        </span>
         <span data-panel="prerequisites">2. Prerequisites</span>
         <span data-panel="authentication">3. Sign in</span>
         <span data-panel="configuration">4. Configure</span>
         <span data-panel="deployment">5. Deploy</span>
         <span data-panel="summary">6. Demo</span>
       </nav>
-      <div class="workflow-navigation">
-        <button id="back" class="secondary" type="button" disabled>Back</button>
-      </div>
 
       <section id="labs" class="panel">
         <h2>Choose a lab</h2>
@@ -192,6 +192,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260901.10"></script>
+    <script src="/app.js?v=20260901.11"></script>
   </body>
 </html>

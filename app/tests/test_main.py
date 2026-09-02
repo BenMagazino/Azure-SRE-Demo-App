@@ -1185,6 +1185,10 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('src="/favicon.svg', page)
         self.assertIn(".workflow-compact .brand-logo", styles)
         self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+        self.assertIn('class="step-leading"', page)
+        self.assertLess(page.index('id="back"'), page.index("1. Lab Picker"))
+        self.assertNotIn('class="workflow-navigation"', page)
+        self.assertIn(".workflow-compact .step-leading #back", styles)
         self.assertIn(
             'classList.toggle("workflow-compact", id !== "labs")',
             script,
