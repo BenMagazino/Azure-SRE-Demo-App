@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import configparser
 import hashlib
 import json
 import logging
@@ -43,6 +45,7 @@ STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / "state.json"
 ENVIRONMENT_CACHE_FILE = STATE_DIR / "environments.json"
+CONFIG_FILE = STATE_DIR / "config.ini"
 MANAGED_TOOLS_DIR = STATE_DIR / "tools"
 AZURE_CLI_VERSION = "2.90.0"
 AZURE_CLI_URL = (
@@ -110,6 +113,105 @@ SRE_AGENT_REGIONS = frozenset({
     "westus2",
     "westus3",
 })
+
+
+@dataclass(frozen=True)
+class RuntimeOptions:
+    config_file: Path
+    test_mode: bool = False
+
+
+@dataclass(frozen=True)
+class DelayDefinition:
+    seconds: float
+    description: str
+    production_message: str
+
+
+NONESSENTIAL_DELAYS = {
+    "azure_monitor_initialization": DelayDefinition(
+        seconds=30,
+        description="Azure Monitor initialization stabilization",
+        production_message="Waiting 30 seconds for Azure Monitor initialization...",
+    ),
+}
+RUNTIME_OPTIONS = RuntimeOptions(config_file=CONFIG_FILE)
+
+
+def load_test_mode_config(config_file: Path) -> bool:
+    if not config_file.is_file():
+        return False
+    parser = configparser.ConfigParser()
+    try:
+        with config_file.open(encoding="utf-8") as stream:
+            parser.read_file(stream)
+        return parser.getboolean("application", "test_mode", fallback=False)
+    except (OSError, configparser.Error, ValueError) as error:
+        raise ValueError(
+            f"Unable to read test_mode from {config_file}: {error}"
+        ) from error
+
+
+def parse_runtime_options(
+    argv: Optional[list[str]] = None,
+    default_config_file: Path = CONFIG_FILE,
+) -> RuntimeOptions:
+    parser = argparse.ArgumentParser(description="Azure SRE Agent Demo")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=default_config_file,
+        help="Path to the local INI configuration file.",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--test-mode",
+        action="store_true",
+        default=None,
+        help="Enable explicit test-only controls and nonessential wait bypasses.",
+    )
+    mode.add_argument(
+        "--no-test-mode",
+        action="store_false",
+        dest="test_mode",
+        help="Disable test mode even when the INI configuration enables it.",
+    )
+    arguments = parser.parse_args(argv)
+    config_file = arguments.config.expanduser()
+    configured_test_mode = load_test_mode_config(config_file)
+    return RuntimeOptions(
+        config_file=config_file,
+        test_mode=(
+            configured_test_mode
+            if arguments.test_mode is None
+            else arguments.test_mode
+        ),
+    )
+
+
+def set_runtime_options(options: RuntimeOptions) -> None:
+    global RUNTIME_OPTIONS
+    RUNTIME_OPTIONS = options
+
+
+def is_test_mode() -> bool:
+    return RUNTIME_OPTIONS.test_mode
+
+
+def wait_for_nonessential_delay(
+    name: str,
+    notify: Optional[Callable[[str], None]] = None,
+) -> None:
+    delay = NONESSENTIAL_DELAYS[name]
+    if is_test_mode():
+        message = f"Test mode: skipped {delay.description} wait."
+        LOGGER.warning(message)
+        if notify:
+            notify(message)
+        return
+    if notify:
+        notify(delay.production_message)
+    time.sleep(delay.seconds)
 
 
 def redact_text(value: str) -> str:
@@ -613,17 +715,16 @@ def build_existing_environment_catalog(
     local_environment_names: set[str],
     lab_id: str,
 ) -> list[dict[str, Any]]:
-    agent_groups = {
-        str(resource.get("resourceGroup") or "").casefold()
+    agents_by_group = {
+        str(resource.get("resourceGroup") or "").casefold(): resource
         for resource in agents
         if resource.get("resourceGroup")
     }
-    apps_by_group: dict[str, set[str]] = {}
+    apps_by_group: dict[str, list[dict[str, Any]]] = {}
     for resource in container_apps:
         resource_group = str(resource.get("resourceGroup") or "").casefold()
-        name = str(resource.get("name") or "").casefold()
-        if resource_group and name:
-            apps_by_group.setdefault(resource_group, set()).add(name)
+        if resource_group and resource.get("name"):
+            apps_by_group.setdefault(resource_group, []).append(resource)
 
     environments = []
     for group in groups:
@@ -641,10 +742,13 @@ def build_existing_environment_catalog(
                 continue
             detection = "managed"
         else:
-            app_names = apps_by_group.get(resource_group_key, set())
+            app_names = {
+                str(app.get("name") or "").casefold()
+                for app in apps_by_group.get(resource_group_key, [])
+            }
             is_grubify_lab = (
                 resource_group_key.startswith("rg-")
-                and resource_group_key in agent_groups
+                and resource_group_key in agents_by_group
                 and any(
                     name.startswith("ca-grubify-")
                     and not name.startswith("ca-grubify-fe-")
@@ -666,12 +770,51 @@ def build_existing_environment_catalog(
             or location not in SRE_AGENT_REGIONS
         ):
             continue
+        group_apps = apps_by_group.get(resource_group_key, [])
+        api_app = next(
+            (
+                app for app in group_apps
+                if str(app.get("name") or "").casefold().startswith(
+                    "ca-grubify-"
+                )
+                and not str(app.get("name") or "").casefold().startswith(
+                    "ca-grubify-fe-"
+                )
+            ),
+            {},
+        )
+        frontend_app = next(
+            (
+                app for app in group_apps
+                if str(app.get("name") or "").casefold().startswith(
+                    "ca-grubify-fe-"
+                )
+            ),
+            {},
+        )
+        agent = agents_by_group.get(resource_group_key, {})
+        runtime_values = {
+            "AZURE_RESOURCE_GROUP": resource_group,
+            "CONTAINER_APP_NAME": str(api_app.get("name") or ""),
+            "CONTAINER_APP_URL": (
+                f"https://{api_app['fqdn']}" if api_app.get("fqdn") else ""
+            ),
+            "FRONTEND_APP_NAME": str(frontend_app.get("name") or ""),
+            "FRONTEND_APP_URL": (
+                f"https://{frontend_app['fqdn']}"
+                if frontend_app.get("fqdn")
+                else ""
+            ),
+            "SRE_AGENT_NAME": str(agent.get("name") or ""),
+            "SRE_AGENT_ENDPOINT": str(agent.get("endpoint") or ""),
+        }
         environments.append({
             "environment": environment,
             "resource_group": resource_group,
             "location": location,
             "detection": detection,
             "local": environment.casefold() in local_environment_names,
+            "runtime_values": runtime_values,
         })
     return sorted(
         environments,
@@ -721,6 +864,146 @@ def save_environment_cache(
         LOGGER.exception("Unable to save the environment discovery cache")
 
 
+def probe_http_endpoint(url: str, path: str) -> tuple[bool, str]:
+    endpoint = f"{url.rstrip('/')}/{path.lstrip('/')}"
+    request = Request(
+        endpoint,
+        method="GET",
+        headers={"User-Agent": "AzureSREAgentDemo/availability-validation"},
+    )
+    try:
+        with urlopen(request, timeout=15) as response:
+            if 200 <= response.status < 400:
+                return True, ""
+            return False, f"HTTP {response.status}"
+    except HTTPError as error:
+        return False, f"HTTP {error.code}"
+    except (URLError, TimeoutError) as error:
+        detail = error.reason if isinstance(error, URLError) else error
+        return False, str(detail)
+
+
+def validate_container_app_availability(
+    apps: dict[str, Optional[dict[str, Any]]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    issues = []
+    checks = []
+    for role, label, endpoint_path in (
+        ("api", "Grubify API", "/health"),
+        ("frontend", "Grubify frontend", "/"),
+    ):
+        app = apps.get(role)
+        if app is None:
+            continue
+        running_status = str(app.get("runningStatus") or "").strip()
+        started = running_status.casefold() in {"running", "ready"}
+        latest_revision = str(app.get("latestRevisionName") or "").strip()
+        ready_revision = str(app.get("latestReadyRevisionName") or "").strip()
+        revision_ready = bool(
+            latest_revision
+            and ready_revision
+            and latest_revision == ready_revision
+        )
+        available = False
+        detail = ""
+        if not started:
+            detail = f"running status: {running_status or 'unknown'}"
+            issues.append(
+                f"{label} Container App is not started ({detail}). "
+                "Start the app before reusing this lab."
+            )
+        elif not revision_ready:
+            detail = (
+                "latest revision is not ready"
+                if ready_revision
+                else "no ready revision"
+            )
+            issues.append(
+                f"{label} Container App is started but its latest revision "
+                "is not ready."
+            )
+        else:
+            fqdn = str(app.get("fqdn") or "").strip()
+            if fqdn:
+                available, detail = probe_http_endpoint(
+                    f"https://{fqdn}",
+                    endpoint_path,
+                )
+                if not available:
+                    issues.append(
+                        f"{label} Container App is started but its endpoint "
+                        f"{endpoint_path} is unavailable "
+                        f"({detail or 'no response'})."
+                    )
+            else:
+                detail = "no ingress endpoint"
+        checks.append({
+            "resource_type": "Microsoft.App/containerApps",
+            "name": str(app.get("name") or ""),
+            "provisioned": (
+                str(app.get("provisioningState") or "").casefold()
+                == "succeeded"
+            ),
+            "started": started,
+            "available": available,
+            "detail": detail,
+        })
+    return issues, checks
+
+
+def validate_metric_alert_availability(
+    alerts: list[dict[str, Any]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    issues = []
+    checks = []
+    for alert in alerts:
+        enabled = alert.get("enabled")
+        if enabled is False:
+            issues.append(
+                f"Metric alert {alert.get('name') or '<unnamed>'} is disabled. "
+                "Enable it before reusing this lab."
+            )
+        checks.append({
+            "resource_type": "Microsoft.Insights/metricAlerts",
+            "name": str(alert.get("name") or ""),
+            "provisioned": (
+                str(alert.get("provisioningState") or "").casefold()
+                == "succeeded"
+            ),
+            "started": None,
+            "available": enabled is not False,
+            "detail": "enabled" if enabled is not False else "disabled",
+        })
+    return issues, checks
+
+
+RESOURCE_AVAILABILITY_VALIDATORS: dict[
+    str,
+    Callable[[Any], tuple[list[str], list[dict[str, Any]]]],
+] = {
+    "microsoft.app/containerapps": validate_container_app_availability,
+    "microsoft.insights/metricalerts": validate_metric_alert_availability,
+}
+
+
+def validate_resource_availability(
+    resources_by_type: dict[str, list[dict[str, Any]]],
+    container_apps: dict[str, Optional[dict[str, Any]]],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    resources: dict[str, Any] = dict(resources_by_type)
+    resources["microsoft.app/containerapps"] = container_apps
+    issues = []
+    checks = []
+    for resource_type, validator in RESOURCE_AVAILABILITY_VALIDATORS.items():
+        relevant_resources = resources.get(resource_type)
+        if not relevant_resources:
+            continue
+        validator_issues, validator_checks = validator(relevant_resources)
+        issues.extend(validator_issues)
+        checks.extend(validator_checks)
+    return issues, checks
+
+
 def discover_existing_environments(
     subscription_id: str,
     lab_id: str,
@@ -737,14 +1020,17 @@ def discover_existing_environments(
             "az", "resource", "list",
             "--subscription", subscription_id,
             "--resource-type", "Microsoft.App/agents",
-            "--query", "[].{name:name,resourceGroup:resourceGroup,location:location}",
+            "--query",
+            "[].{name:name,resourceGroup:resourceGroup,location:location,"
+            "endpoint:properties.agentEndpoint}",
             "--output", "json",
         ],
         [
-            "az", "resource", "list",
+            "az", "containerapp", "list",
             "--subscription", subscription_id,
-            "--resource-type", "Microsoft.App/containerApps",
-            "--query", "[].{name:name,resourceGroup:resourceGroup,location:location}",
+            "--query",
+            "[].{name:name,resourceGroup:resourceGroup,location:location,"
+            "fqdn:properties.configuration.ingress.fqdn}",
             "--output", "json",
         ],
     )
@@ -798,7 +1084,7 @@ def validate_existing_lab(
             "--resource-group", resource_group,
             "--query",
             "[].{id:id,name:name,type:type,location:location,"
-            "provisioningState:provisioningState}",
+            "provisioningState:provisioningState,enabled:properties.enabled}",
             "--output", "json",
         ],
         [
@@ -808,7 +1094,10 @@ def validate_existing_lab(
             "--query",
             "[].{id:id,name:name,image:properties.template.containers[0].image,"
             "fqdn:properties.configuration.ingress.fqdn,"
-            "provisioningState:properties.provisioningState}",
+            "provisioningState:properties.provisioningState,"
+            "runningStatus:properties.runningStatus,"
+            "latestRevisionName:properties.latestRevisionName,"
+            "latestReadyRevisionName:properties.latestReadyRevisionName}",
             "--output", "json",
         ],
     )
@@ -892,6 +1181,12 @@ def validate_existing_lab(
         if image_name not in str(app.get("image") or "").casefold():
             issues.append(f"{label} is not running the current lab image.")
 
+    availability_issues, availability_checks = validate_resource_availability(
+        resources_by_type,
+        {"api": api_app, "frontend": frontend_app},
+    )
+    issues.extend(availability_issues)
+
     agents = resources_by_type.get("microsoft.app/agents", [])
     agent_details: dict[str, Any] = {}
     if agents:
@@ -939,7 +1234,12 @@ def validate_existing_lab(
                 )
 
     if issues:
-        return {"ready": False, "issues": issues, "values": {}}
+        return {
+            "ready": False,
+            "issues": issues,
+            "values": {},
+            "availability_checks": availability_checks,
+        }
 
     success, token = run_capture([
         "az", "account", "get-access-token",
@@ -952,6 +1252,7 @@ def validate_existing_lab(
             "ready": False,
             "issues": ["Unable to authenticate to the Azure SRE Agent service."],
             "values": {},
+            "availability_checks": availability_checks,
         }
     agent_endpoint = str(agent_details["endpoint"]).rstrip("/")
     data_plane_issues = []
@@ -986,6 +1287,7 @@ def validate_existing_lab(
             "ready": False,
             "issues": data_plane_issues,
             "values": {},
+            "availability_checks": availability_checks,
         }
 
     registry = resources_by_type["microsoft.containerregistry/registries"][0]
@@ -1000,6 +1302,7 @@ def validate_existing_lab(
     return {
         "ready": True,
         "issues": [],
+        "availability_checks": availability_checks,
         "values": {
             "AZURE_LOCATION": location,
             "AZURE_SUBSCRIPTION_ID": subscription_id,
@@ -2754,8 +3057,10 @@ def post_provision(job: Job, environment: str) -> bool:
     if not success:
         return False
 
-    job.emit("output", line="Waiting 30 seconds for Azure Monitor initialization...")
-    time.sleep(30)
+    wait_for_nonessential_delay(
+        "azure_monitor_initialization",
+        lambda line: job.emit("output", line=line),
+    )
     response_plan = response_plan_payload(
         environment,
         subscription_id.strip(),
@@ -3222,7 +3527,10 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"status": "ok"})
             return
         if path == "/api/session":
-            self.send_json({"token": SESSION_TOKEN})
+            self.send_json({
+                "token": SESSION_TOKEN,
+                "test_mode": is_test_mode(),
+            })
             return
         if path == "/api/edge-profiles":
             self.send_json({
@@ -3294,7 +3602,10 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             values = azd_values(environment)
             lab = selected_lab(state)
-            resource_group = values.get("AZURE_RESOURCE_GROUP", "")
+            resource_group = (
+                values.get("AZURE_RESOURCE_GROUP", "")
+                or str(state.get("resource_group") or "")
+            )
             self.send_json({
                 "lab_id": lab.id if lab else "",
                 "lab_name": lab.name if lab else "",
@@ -3304,6 +3615,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "existing_environment_detection",
                     "",
                 ),
+                "validation_status": state.get("validation_status", ""),
+                "validation_issues": state.get("validation_issues", []),
+                "availability_checks": state.get("availability_checks", []),
                 "resource_group": resource_group,
                 "resource_group_portal_url": azure_resource_group_portal_url(
                     str(state.get("tenant_id") or ""),
@@ -3527,6 +3841,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/environments/validate":
             self.validate_environment()
             return
+        if path == "/api/environments/skip-validation":
+            self.skip_environment_validation()
+            return
         if path == "/api/scenarios/run":
             self.run_scenario()
             return
@@ -3711,19 +4028,21 @@ class AppHandler(SimpleHTTPRequestHandler):
         })
         state.pop("scenario_id", None)
         state.pop("validated_at", None)
+        state.pop("validation_skipped_at", None)
+        state.pop("validation_status", None)
         state.pop("validation_issues", None)
+        state.pop("availability_checks", None)
         if not existing_environment:
             state.pop("existing_environment_detection", None)
         save_state(state)
         self.send_json(state)
 
-    def validate_environment(self) -> None:
-        try:
-            payload = self.read_json()
-        except (ValueError, json.JSONDecodeError):
-            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
-            return
-
+    def existing_environment_candidate(
+        self,
+        payload: dict[str, Any],
+    ) -> Optional[
+        tuple[dict[str, Any], LabDefinition, dict[str, str], dict[str, Any]]
+    ]:
         state = load_state()
         lab = selected_lab(state)
         context = cached_azure_context()
@@ -3734,18 +4053,17 @@ class AppHandler(SimpleHTTPRequestHandler):
                 {"error": "Select a lab and Azure subscription first."},
                 HTTPStatus.CONFLICT,
             )
-            return
+            return None
         if (
             not state.get("existing_environment")
             or state.get("environment") != environment_name
             or state.get("subscription_id") != context["subscription"]
         ):
             self.send_json(
-                {"error": "Save the selected existing lab before validating it."},
+                {"error": "Save the selected existing lab before using it."},
                 HTTPStatus.CONFLICT,
             )
-            return
-
+            return None
         candidate = next(
             (
                 item
@@ -3768,19 +4086,46 @@ class AppHandler(SimpleHTTPRequestHandler):
                 },
                 HTTPStatus.CONFLICT,
             )
+            return None
+        return state, lab, context, candidate
+
+    def validate_environment(self) -> None:
+        try:
+            payload = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
             return
 
+        selection = self.existing_environment_candidate(payload)
+        if selection is None:
+            return
+        state, _lab, context, candidate = selection
+        environment_name = str(candidate["environment"])
+
         result = validate_existing_lab(context["subscription"], candidate)
+        availability_checks = result.get("availability_checks", [])
+        LOGGER.info(
+            "Existing lab validation environment=%s ready=%s "
+            "availability_checks=%s issues=%s",
+            environment_name,
+            result["ready"],
+            safe_log_payload({"checks": availability_checks})["checks"],
+            result["issues"],
+        )
         state["deployment_active"] = False
         state["existing_environment_detection"] = candidate.get("detection", "")
         state["validation_issues"] = result["issues"]
+        state["availability_checks"] = availability_checks
+        state["validation_status"] = "failed"
         state.pop("validated_at", None)
+        state.pop("validation_skipped_at", None)
         if not result["ready"]:
             save_state(state)
             self.send_json({
                 "ready": False,
                 "environment": environment_name,
                 "issues": result["issues"],
+                "availability_checks": availability_checks,
             })
             return
 
@@ -3794,12 +4139,106 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         state["deployment_active"] = True
         state["validation_issues"] = []
+        state["validation_status"] = "validated"
         state["validated_at"] = datetime.now(timezone.utc).isoformat()
         save_state(state)
         self.send_json({
             "ready": True,
             "environment": environment_name,
             "issues": [],
+            "availability_checks": availability_checks,
+        })
+
+    def skip_environment_validation(self) -> None:
+        client = getattr(self, "client_address", ("<unknown>",))[0]
+        if not is_test_mode():
+            LOGGER.warning(
+                "Rejected validation skip because test mode is disabled client=%s",
+                client,
+            )
+            self.send_json(
+                {"error": "Validation skip is available only in test mode."},
+                HTTPStatus.FORBIDDEN,
+            )
+            return
+        try:
+            payload = self.read_json()
+        except (ValueError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+            return
+        if payload.get("acknowledge_risk") is not True:
+            self.send_json(
+                {"error": "Explicit risk acknowledgement is required."},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+        selection = self.existing_environment_candidate(payload)
+        if selection is None:
+            return
+        state, _lab, context, candidate = selection
+        environment_name = str(candidate["environment"])
+        runtime_values = {
+            str(key): str(value)
+            for key, value in (candidate.get("runtime_values") or {}).items()
+            if value
+        }
+        required_values = {
+            "AZURE_RESOURCE_GROUP",
+            "CONTAINER_APP_NAME",
+            "CONTAINER_APP_URL",
+            "FRONTEND_APP_NAME",
+            "FRONTEND_APP_URL",
+            "SRE_AGENT_NAME",
+        }
+        missing_values = sorted(required_values - runtime_values.keys())
+        if missing_values:
+            self.send_json(
+                {
+                    "error": (
+                        "The latest subscription scan did not return enough "
+                        "runtime metadata to skip validation. Scan again or "
+                        "validate normally."
+                    ),
+                    "missing_values": missing_values,
+                },
+                HTTPStatus.CONFLICT,
+            )
+            return
+        saved, error = set_azd_values(environment_name, runtime_values)
+        if not saved:
+            self.send_json(
+                {"error": error},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        issue = (
+            "Validation was explicitly skipped in test mode; resource readiness "
+            "and endpoint availability are unknown."
+        )
+        state["deployment_active"] = True
+        state["existing_environment_detection"] = candidate.get("detection", "")
+        state["resource_group"] = candidate.get("resource_group", "")
+        state["validation_status"] = "skipped"
+        state["validation_issues"] = [issue]
+        state["availability_checks"] = []
+        state["validation_skipped_at"] = datetime.now(timezone.utc).isoformat()
+        state.pop("validated_at", None)
+        save_state(state)
+        LOGGER.warning(
+            "TEST MODE validation skipped environment=%s resource_group=%s "
+            "subscription=%s client=%s",
+            environment_name,
+            candidate.get("resource_group", ""),
+            context["subscription"],
+            client,
+        )
+        self.send_json({
+            "ready": False,
+            "proceed": True,
+            "skipped": True,
+            "environment": environment_name,
+            "issues": [issue],
+            "validation_status": "skipped",
         })
 
     def stream_job_events(self, job_id: str) -> None:
@@ -3831,7 +4270,9 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
 
 
-def main() -> None:
+def main(argv: Optional[list[str]] = None) -> None:
+    options = parse_runtime_options(argv)
+    set_runtime_options(options)
     log_file = configure_logging()
 
     def log_unhandled_exception(
@@ -3869,6 +4310,12 @@ def main() -> None:
         STATE_DIR,
         VENDOR_DIR,
         log_file,
+    )
+    LOGGER.log(
+        logging.WARNING if options.test_mode else logging.INFO,
+        "Runtime mode test_mode=%s config=%s",
+        options.test_mode,
+        options.config_file,
     )
     LOGGER.debug(
         "Runtime environment username=%s computer=%s sandbox=%s argv=%s",

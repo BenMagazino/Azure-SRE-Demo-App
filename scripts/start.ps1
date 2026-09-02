@@ -1,3 +1,8 @@
+param(
+  [Parameter(ValueFromRemainingArguments = $true)]
+  [string[]]$AppArguments
+)
+
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $appPath = Join-Path $repoRoot "app\main.py"
@@ -94,7 +99,13 @@ $backgroundRuntime = Join-Path $runtimeDirectory $backgroundName
 if (-not (Test-Path -LiteralPath $backgroundRuntime)) {
   $backgroundRuntime = $runtime.Path
 }
-$launchArgs = @($runtime.PrefixArgs) + @("`"$appPath`"")
+$quotedAppArguments = @()
+if ($AppArguments) {
+  $quotedAppArguments = @($AppArguments | ForEach-Object {
+    '"' + $_.Replace('"', '\"') + '"'
+  })
+}
+$launchArgs = @($runtime.PrefixArgs) + @("`"$appPath`"") + $quotedAppArguments
 Start-Process `
   -FilePath $backgroundRuntime `
   -ArgumentList $launchArgs `

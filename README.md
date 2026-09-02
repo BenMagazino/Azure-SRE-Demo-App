@@ -134,6 +134,42 @@ Use **Download diagnostic log** in the app footer when troubleshooting. Logs are
 The logs redact authentication tokens and other sensitive command output covered by the app's
 diagnostic filters.
 
+### Test mode
+
+Test mode is off by default. It adds a clearly labeled **Skip validation** action for a selected
+existing lab and bypasses only designated nonessential stabilization delays. The skip action
+requires confirmation and records the environment as `skipped`, not validated. Normal validation
+still performs all control-plane, running-state, ready-revision, endpoint, SRE Agent data-plane,
+and alert checks in test mode.
+
+Enable it for the current user by creating:
+
+```text
+%LOCALAPPDATA%\AzureSREAgentDemo\config.ini
+```
+
+```ini
+[application]
+test_mode = true
+```
+
+Or enable it for one source run:
+
+```powershell
+.\scripts\start.cmd --test-mode
+```
+
+The portable launcher also accepts the option:
+
+```powershell
+& ".\app\Start Azure SRE Agent Demo.cmd" --test-mode
+```
+
+Command-line mode options take precedence over the INI file. `--test-mode` enables the mode and
+`--no-test-mode` disables it even when the INI setting is `true`. Use `--config <path>` to read a
+different INI file. The startup diagnostic log records the effective mode and configuration path;
+when active, the UI displays a persistent **Test mode** badge.
+
 To remove a managed Azure environment, use **Tear down Azure resources** before uninstalling the
 app. Deleting the local package does not delete anything in Azure.
 

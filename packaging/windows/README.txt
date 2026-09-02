@@ -47,7 +47,28 @@ If the application window is unavailable, run
 Closing the browser without using Shutdown also stops the local application
 after approximately two minutes, once active operations have finished.
 
-5. Remove Azure resources
+5. Test mode
+------------
+
+Test mode is off by default. To enable its explicit, confirmed "Skip
+validation" action for an existing lab, create:
+
+%LOCALAPPDATA%\AzureSREAgentDemo\config.ini
+
+with:
+
+[application]
+test_mode = true
+
+For one run, use:
+
+"app\Start Azure SRE Agent Demo.cmd" --test-mode
+
+The command-line option overrides the INI setting. Use --no-test-mode to
+disable a configured test mode. The UI and diagnostic log identify test mode,
+and skipped validation is recorded as skipped rather than successful.
+
+6. Remove Azure resources
 -------------------------
 
 Before uninstalling, open the deployed demo and use Tear down in Step 6 to
@@ -57,7 +78,7 @@ If Tear down is disabled for a reused environment, the application does not
 own that environment. Remove it through its original deployment process or
 with help from its Azure owner.
 
-6. Uninstall
+7. Uninstall
 ------------
 
 1. Shut down the application.
