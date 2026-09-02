@@ -37,6 +37,22 @@ portable package.
 
 The deployment creates billable Azure resources. Tear down the lab when it is no longer needed.
 
+## Legal and project status
+
+This is an independent personal project. It is not an official Microsoft product and is not
+approved, owned, endorsed, or supported by Microsoft. It is intended for demonstration use and is
+provided as-is.
+
+Running the demo creates billable Azure resources. You are responsible for securing the deployed
+environment, monitoring its use and cost, and deleting resources when finished. Microsoft names and
+trademarks are governed by the
+[Microsoft Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks).
+
+Review the [MIT License](LICENSE), [third-party notices](THIRD-PARTY-NOTICES.txt),
+[security policy](SECURITY.md), [support policy](SUPPORT.md), and
+[Code of Conduct](CODE_OF_CONDUCT.md) before using or contributing to the project. The MIT License
+does not replace the separate licenses that apply to redistributed third-party components.
+
 ## Run the portable app
 
 1. Obtain `AzureSREAgentDemo-portable-win-x64.zip` from a trusted build of this repository.
@@ -184,8 +200,8 @@ Development uses a protected `main` branch and short-lived, developer-owned bran
 Windows package artifact. Stable semantic-version tags such as `v0.1.0` build and publish the ZIP
 and its SHA-256 checksum as a GitHub Release.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch convention, pull request process, and release
-procedure.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch convention, pull request process, community
+guidelines, and release procedure.
 
 ## Project structure
 

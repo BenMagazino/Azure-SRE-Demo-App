@@ -22,8 +22,8 @@ when needed.
    select Unblock, and select OK.
 3. Extract the entire ZIP to a local folder. Do not run the app from inside
    the ZIP.
-4. Keep "Azure SRE Agent Demo.lnk", "README.txt", and the "app" folder
-   together.
+4. Keep "Azure SRE Agent Demo.lnk", "README.txt", "LICENSE",
+   "THIRD-PARTY-NOTICES.txt", and the "app" folder together.
 
 No installer or administrator setup is required.
 
@@ -64,3 +64,16 @@ with help from its Azure owner.
 2. Delete the extracted Azure SRE Agent Demo folder.
 3. Delete "%LOCALAPPDATA%\AzureSREAgentDemo" to remove the private Azure CLI
    and azd installations, cached application state, and logs.
+
+7. Legal and support notices
+----------------------------
+
+This is an independent personal project. It is not an official Microsoft
+product and is not approved, owned, endorsed, or supported by Microsoft.
+The demo creates billable Azure resources; you are responsible for their
+security, cost, and cleanup.
+
+Read "LICENSE" for the license covering project-owned material and
+"THIRD-PARTY-NOTICES.txt" for the separate terms and attributions that apply
+to redistributed components. Community support is best-effort through the
+repository's GitHub Issues and has no SLA or Microsoft support coverage.

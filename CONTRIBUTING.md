@@ -3,6 +3,12 @@
 This repository uses GitHub Flow: `main` is the single integration branch, work is completed on
 short-lived branches, and releases are immutable snapshots identified by semantic-version tags.
 
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Use
+[GitHub Issues](https://github.com/BenMagazino/Azure-SRE-Demo-App/issues) for community support and
+feature or defect discussions, and follow [SECURITY.md](SECURITY.md) for private vulnerability
+reports. This is an independent personal project; participation is community-based and does not
+create a Microsoft support relationship.
+
 ## Branches
 
 Create every working branch from the latest `main`:
