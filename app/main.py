@@ -3228,6 +3228,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     resource_group,
                 ),
                 "agent_portal_url": resolved_sre_agent_portal_url(state, values),
+                "agent_name": values.get("SRE_AGENT_NAME", ""),
                 "agent_endpoint": values.get("SRE_AGENT_ENDPOINT", ""),
                 "api_url": values.get("CONTAINER_APP_URL", ""),
                 "frontend_url": values.get("FRONTEND_APP_URL", ""),

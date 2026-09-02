@@ -1113,7 +1113,7 @@ async function loadSummary() {
     ["Lab", summary.lab_name, ""],
     ["Environment", summary.environment, ""],
     ["Azure resource group", summary.resource_group, summary.resource_group_portal_url],
-    ["SRE Agent portal", summary.agent_portal_url, summary.agent_portal_url],
+    ["SRE Agent portal", summary.agent_name, summary.agent_portal_url],
     ["Grubify UI", summary.frontend_url, summary.frontend_url],
     ["Grubify API", summary.api_url, summary.api_url],
   ];

@@ -1611,6 +1611,10 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('apiPost("/api/open-edge-link"', script)
         self.assertIn(".edge-profile-picker", styles)
         self.assertIn("resource_group_portal_url", script)
+        self.assertIn(
+            '["SRE Agent portal", summary.agent_name, summary.agent_portal_url]',
+            script,
+        )
         self.assertIn('externalIcon.textContent = "↗"', script)
         self.assertIn(".external-link-icon", styles)
         self.assertIn("Use these settings only when deploying a new lab.", page)
