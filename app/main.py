@@ -308,11 +308,6 @@ LABS = (
 LABS_BY_ID = {lab.id: lab for lab in LABS}
 LAB_ID_TAG = "sre-agent-demo-lab-id"
 LAB_ENVIRONMENT_TAG = "sre-agent-demo-environment"
-LAB_ID_TAGS = (LAB_ID_TAG, "azure-sre-agent-lab-id")
-LAB_ENVIRONMENT_TAGS = (
-    LAB_ENVIRONMENT_TAG,
-    "azure-sre-agent-environment",
-)
 
 
 class Job:
@@ -640,14 +635,7 @@ def build_existing_environment_catalog(
             str(key).casefold(): str(value).strip()
             for key, value in (group.get("tags") or {}).items()
         }
-        tagged_lab_id = next(
-            (
-                tags[tag.casefold()]
-                for tag in LAB_ID_TAGS
-                if tags.get(tag.casefold())
-            ),
-            "",
-        )
+        tagged_lab_id = tags.get(LAB_ID_TAG.casefold(), "")
         if tagged_lab_id:
             if tagged_lab_id.casefold() != lab_id.casefold():
                 continue
@@ -668,13 +656,9 @@ def build_existing_environment_catalog(
                 continue
             detection = "legacy"
 
-        environment = next(
-            (
-                tags[tag.casefold()]
-                for tag in LAB_ENVIRONMENT_TAGS
-                if tags.get(tag.casefold())
-            ),
-            resource_group.removeprefix("rg-"),
+        environment = (
+            tags.get(LAB_ENVIRONMENT_TAG.casefold(), "")
+            or resource_group.removeprefix("rg-")
         )
         location = str(group.get("location") or "").lower()
         if (

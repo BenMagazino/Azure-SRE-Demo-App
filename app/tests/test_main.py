@@ -324,14 +324,6 @@ class LabWorkflowTests(unittest.TestCase):
                 },
             },
             {
-                "name": "rg-former-tagged-lab",
-                "location": "eastus2",
-                "tags": {
-                    "azure-sre-agent-lab-id": "grubify-starter-lab",
-                    "azure-sre-agent-environment": "former-tagged-lab",
-                },
-            },
-            {
                 "name": "rg-legacy-lab",
                 "location": "swedencentral",
                 "tags": {},
@@ -378,7 +370,6 @@ class LabWorkflowTests(unittest.TestCase):
             ],
             [
                 ("tagged-lab", "managed", True),
-                ("former-tagged-lab", "managed", False),
                 ("legacy-lab", "legacy", False),
             ],
         )
