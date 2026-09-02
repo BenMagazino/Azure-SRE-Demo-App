@@ -14,7 +14,9 @@ The startup terminal closes after handing the application to a background
 process. A startup splash remains visible until the local backend is ready and
 Microsoft Edge opens in a standalone application window using the normal Edge
 profile and its authenticated sessions. If Edge is unavailable, the default
-browser opens instead. Use the Shutdown button to stop the local process.
+browser opens instead. If the splash cannot run, the backend opens the
+application window directly after five seconds. Use the Shutdown button to stop
+the local process.
 If the window is closed accidentally, the backend stops automatically after
 two minutes without a browser heartbeat, once any active job finishes. You can
 also run "app\Stop Azure SRE Agent Demo.cmd" for a graceful manual stop.

@@ -40,6 +40,7 @@ from app.main import (
     install_all_worker,
     install_managed_azure_cli,
     is_device_login_url,
+    launch_client_if_unclaimed,
     memory_pressure_observed,
     monitor_client_lease,
     open_browser_url,
@@ -62,6 +63,7 @@ from app.main import (
     safe_log_payload,
     scoped_azure_login_command,
     should_open_browser,
+    should_fallback_open_client,
     shutdown_application,
     teardown_worker,
     upsert_response_plan,
@@ -1101,6 +1103,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(r'"%~dp0main.py"', launcher)
         self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
+        self.assertIn("AZURE_SRE_DEMO_CLIENT_FALLBACK=1", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
         self.assertNotIn("Repair-Shortcut.ps1", launcher)
         self.assertIn("Azure SRE Agent Demo.link-template", launcher)
@@ -1194,6 +1197,38 @@ class ProcessTests(unittest.TestCase):
     @patch.dict("os.environ", {"AZURE_SRE_DEMO_NO_BROWSER": "true"})
     def test_can_disable_automatic_browser_launch(self) -> None:
         self.assertFalse(should_open_browser())
+
+    @patch.dict("os.environ", {"AZURE_SRE_DEMO_CLIENT_FALLBACK": "true"})
+    def test_can_enable_client_launch_fallback(self) -> None:
+        self.assertTrue(should_fallback_open_client())
+
+    @patch("app.main.open_application_window")
+    @patch("app.main.LAST_CLIENT_HEARTBEAT", None)
+    def test_client_launch_fallback_opens_unclaimed_application(
+        self,
+        open_application_window,
+    ) -> None:
+        server = MagicMock()
+        server.shutdown_event.wait.return_value = False
+
+        launch_client_if_unclaimed(server, "http://127.0.0.1:8765")
+
+        open_application_window.assert_called_once_with(
+            "http://127.0.0.1:8765"
+        )
+
+    @patch("app.main.open_application_window")
+    @patch("app.main.LAST_CLIENT_HEARTBEAT", 100.0)
+    def test_client_launch_fallback_skips_claimed_application(
+        self,
+        open_application_window,
+    ) -> None:
+        server = MagicMock()
+        server.shutdown_event.wait.return_value = False
+
+        launch_client_if_unclaimed(server, "http://127.0.0.1:8765")
+
+        open_application_window.assert_not_called()
 
     @patch.dict("os.environ", {}, clear=True)
     def test_opens_browser_by_default(self) -> None:

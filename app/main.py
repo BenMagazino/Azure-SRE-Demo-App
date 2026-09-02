@@ -68,6 +68,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 AUTH_RETRY_GRACE_SECONDS = 4.0
 CLIENT_LEASE_TIMEOUT_SECONDS = 120.0
 CLIENT_LEASE_CHECK_SECONDS = 10.0
+CLIENT_LAUNCH_FALLBACK_SECONDS = 5.0
 SESSION_TOKEN = uuid.uuid4().hex
 LOGGER = logging.getLogger("AzureSREAgentDemo")
 LOG_FILE: Optional[Path] = None
@@ -1765,6 +1766,46 @@ def should_open_browser() -> bool:
     }
 
 
+def should_fallback_open_client() -> bool:
+    return os.environ.get(
+        "AZURE_SRE_DEMO_CLIENT_FALLBACK", ""
+    ).strip().lower() in {"1", "true", "yes"}
+
+
+def open_application_window(url: str) -> bool:
+    edge = find_edge() if os.name == "nt" else None
+    if edge:
+        try:
+            process = subprocess.Popen(
+                [str(edge), f"--app={url}", "--start-maximized"],
+                creationflags=CREATE_NO_WINDOW,
+            )
+            LOGGER.info("Opened Edge application window pid=%s", process.pid)
+            return True
+        except OSError:
+            LOGGER.exception("Unable to open Edge application window")
+    return open_browser_url(url)
+
+
+def launch_client_if_unclaimed(
+    server: ThreadingHTTPServer,
+    url: str,
+) -> None:
+    shutdown_event = getattr(server, "shutdown_event")
+    if shutdown_event.wait(CLIENT_LAUNCH_FALLBACK_SECONDS):
+        return
+    with CLIENT_HEARTBEAT_LOCK:
+        heartbeat_received = LAST_CLIENT_HEARTBEAT is not None
+    if heartbeat_received:
+        LOGGER.info("Client heartbeat received; browser fallback is not needed")
+        return
+    LOGGER.warning(
+        "No client heartbeat after %.1f seconds; opening the application directly",
+        CLIENT_LAUNCH_FALLBACK_SECONDS,
+    )
+    open_application_window(url)
+
+
 def create_job(
     command: Optional[list[str]] = None,
     worker: Optional[Any] = None,
@@ -3208,6 +3249,13 @@ def main() -> None:
         browser_timer.start()
     else:
         LOGGER.info("Automatic browser launch disabled by environment")
+    if should_fallback_open_client():
+        threading.Thread(
+            target=launch_client_if_unclaimed,
+            args=(server, url),
+            daemon=True,
+            name="client-launch-fallback",
+        ).start()
     lease_started_at = time.monotonic()
     threading.Thread(
         target=monitor_client_lease,

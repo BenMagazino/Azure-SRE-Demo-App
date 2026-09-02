@@ -56,8 +56,10 @@ progress, waits for the local health endpoint, opens the browser when the
 backend is ready, and then closes itself. Microsoft Edge opens in application
 mode, providing a standalone window without browser tabs or an address bar
 while retaining the normal Edge profile and its authenticated sessions. If
-Edge is unavailable, the launcher falls back to the default browser. If
-startup times out, the splash points to the diagnostic-log directory. Use
+Edge is unavailable, the launcher falls back to the default browser. If the
+splash cannot run, the backend opens the application window directly after
+five seconds. If startup times out, the splash points to the diagnostic-log
+directory. Use
 **Back** to revisit an earlier wizard step without clearing completed state.
 Use **Shutdown** to stop the local backend and close the application window;
 browsers that block scripted closure display a safe-to-close confirmation
