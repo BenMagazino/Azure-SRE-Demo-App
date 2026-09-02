@@ -85,6 +85,16 @@ Install Python from https://www.python.org/downloads/windows/ and rerun this scr
 
 Write-Host "Using $($runtime.Version)"
 Write-Host "Starting the Azure SRE Agent onboarding wizard..." -ForegroundColor Green
-$launchArgs = @($runtime.PrefixArgs) + @($appPath)
-& $runtime.Path @launchArgs
-exit $LASTEXITCODE
+$runtimeDirectory = Split-Path -Parent $runtime.Path
+$runtimeName = Split-Path -Leaf $runtime.Path
+$backgroundName = if ($runtimeName -ieq "py.exe") { "pyw.exe" } else { "pythonw.exe" }
+$backgroundRuntime = Join-Path $runtimeDirectory $backgroundName
+if (-not (Test-Path -LiteralPath $backgroundRuntime)) {
+  $backgroundRuntime = $runtime.Path
+}
+$launchArgs = @($runtime.PrefixArgs) + @("`"$appPath`"")
+Start-Process `
+  -FilePath $backgroundRuntime `
+  -ArgumentList $launchArgs `
+  -WindowStyle Hidden | Out-Null
+exit 0

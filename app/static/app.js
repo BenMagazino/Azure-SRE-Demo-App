@@ -7,6 +7,16 @@ const azureTenant = document.querySelector("#azure-tenant");
 const azureSubscription = document.querySelector("#azure-subscription");
 const azureContextStatus = document.querySelector("#azure-context-status");
 const applyAzureContextButton = document.querySelector("#apply-azure-context");
+const backButton = document.querySelector("#back");
+const shutdownButton = document.querySelector("#shutdown");
+const workflowPanels = [
+  "labs",
+  "prerequisites",
+  "authentication",
+  "configuration",
+  "deployment",
+  "summary",
+];
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
 let installInProgress = false;
@@ -17,6 +27,7 @@ let selectedLabId = "";
 let selectedScenarioId = "";
 let azureContextApplied = false;
 let selectedExistingEnvironment = null;
+let activePanelId = "labs";
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -109,8 +120,11 @@ async function loadDiagnostics() {
 }
 
 function showPanel(id) {
+  if (!workflowPanels.includes(id)) return;
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
   document.querySelector(`#${id}`).classList.remove("hidden");
+  activePanelId = id;
+  backButton.disabled = workflowPanels.indexOf(id) === 0;
   document.querySelectorAll(".steps [data-panel]").forEach((step) => {
     const active = step.dataset.panel === id;
     step.classList.toggle("active", active);
@@ -120,6 +134,44 @@ function showPanel(id) {
       step.removeAttribute("aria-current");
     }
   });
+}
+
+function navigateBack() {
+  const currentIndex = workflowPanels.indexOf(activePanelId);
+  if (currentIndex > 0) showPanel(workflowPanels[currentIndex - 1]);
+}
+
+function showShutdownComplete() {
+  const shell = document.createElement("main");
+  shell.className = "shell";
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  const heading = document.createElement("h1");
+  heading.textContent = "Application stopped";
+  const message = document.createElement("p");
+  message.textContent = "The local backend has stopped. You can close this tab if your browser did not close it automatically.";
+  panel.append(heading, message);
+  shell.append(panel);
+  document.body.replaceChildren(shell);
+}
+
+async function shutdownApplication() {
+  if (!window.confirm("Stop the local Azure SRE Agent Demo application?")) return;
+  shutdownButton.disabled = true;
+  shutdownButton.setAttribute("aria-busy", "true");
+  shutdownButton.textContent = "Stopping...";
+  try {
+    const response = await apiPost("/api/shutdown");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to stop the application.");
+    showShutdownComplete();
+    window.setTimeout(() => window.close(), 150);
+  } catch (error) {
+    shutdownButton.disabled = false;
+    shutdownButton.removeAttribute("aria-busy");
+    shutdownButton.textContent = "Shutdown";
+    window.alert(`Shutdown failed: ${error}`);
+  }
 }
 
 function currentLab() {
@@ -1049,6 +1101,8 @@ document.querySelector("#refresh-prereqs").addEventListener("click", () => {
     prereqList.textContent = `Unable to reconnect to the app: ${error}`;
   });
 });
+backButton.addEventListener("click", navigateBack);
+shutdownButton.addEventListener("click", shutdownApplication);
 document.querySelector("#continue-lab").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   button.disabled = true;

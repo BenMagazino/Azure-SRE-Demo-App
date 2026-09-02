@@ -223,6 +223,13 @@ header p,
   min-width: 0;
 }
 
+.diagnostics .diagnostic-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .diagnostics strong {
   display: block;
   margin-bottom: 0.25rem;
@@ -248,6 +255,12 @@ header p,
 .steps .active {
   color: var(--cp-accent);
   font-weight: 700;
+}
+
+.workflow-navigation {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 0.75rem;
 }
 
 .panel {

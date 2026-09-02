@@ -12,7 +12,7 @@
       })();
     </script>
     <title>Azure SRE Agent Demo Setup</title>
-    <link rel="stylesheet" href="/styles.css?v=20260901.5">
+    <link rel="stylesheet" href="/styles.css?v=20260901.6">
   </head>
   <body>
     <main class="shell">
@@ -26,9 +26,12 @@
           <strong>Diagnostic log</strong>
           <code id="diagnostic-path">Locating current log...</code>
         </div>
-        <a class="button secondary" href="/api/diagnostics/download" download>
-          Download log
-        </a>
+        <div class="diagnostic-actions">
+          <a class="button secondary" href="/api/diagnostics/download" download>
+            Download log
+          </a>
+          <button id="shutdown" class="danger" type="button">Shutdown</button>
+        </div>
       </aside>
 
       <nav class="steps" aria-label="Setup steps">
@@ -39,6 +42,9 @@
         <span data-panel="deployment">5. Deploy</span>
         <span data-panel="summary">6. Demo</span>
       </nav>
+      <div class="workflow-navigation">
+        <button id="back" class="secondary" type="button" disabled>Back</button>
+      </div>
 
       <section id="labs" class="panel">
         <h2>Choose a lab</h2>
@@ -177,6 +183,6 @@
         <pre id="demo-log" class="log large"></pre>
       </section>
     </main>
-    <script src="/app.js?v=20260901.5"></script>
+    <script src="/app.js?v=20260901.6"></script>
   </body>
 </html>

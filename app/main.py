@@ -1780,6 +1780,15 @@ def create_job(
     return job
 
 
+def shutdown_application(server: ThreadingHTTPServer) -> None:
+    LOGGER.info("Local application shutdown requested")
+    with JOBS_LOCK:
+        jobs = list(JOBS.values())
+    for job in jobs:
+        job.terminate_process()
+    server.shutdown()
+
+
 def load_state() -> dict[str, Any]:
     if not STATE_FILE.exists():
         return {}
@@ -2716,6 +2725,15 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         path = urlparse(self.path).path
         LOGGER.info("HTTP action POST path=%s client=%s", path, self.client_address[0])
+        if path == "/api/shutdown":
+            self.send_json({"shutting_down": True})
+            threading.Thread(
+                target=shutdown_application,
+                args=(self.server,),
+                daemon=True,
+                name="application-shutdown",
+            ).start()
+            return
         if path == "/api/client-log":
             try:
                 message = str(self.read_json().get("message", ""))[:2000]
@@ -3121,6 +3139,7 @@ def main() -> None:
     )
     try:
         server = ThreadingHTTPServer((HOST, PORT), AppHandler)
+        server.daemon_threads = True
     except OSError:
         LOGGER.exception("Unable to bind web server to %s:%s", HOST, PORT)
         raise

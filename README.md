@@ -50,6 +50,11 @@ Python standard library. If both Python and WinGet are unavailable, it provides
 the direct Python installation URL.
 
 The browser opens automatically at <http://127.0.0.1:8765>.
+The launcher hands the server off to a background Python process, so its
+terminal window closes after startup. Use **Back** to revisit an earlier wizard
+step without clearing completed state. Use **Shutdown** to stop the local
+backend and request that the browser close the application tab; browsers that
+block scripted tab closure display a safe-to-close confirmation instead.
 
 ## Windows Sandbox diagnostics
 

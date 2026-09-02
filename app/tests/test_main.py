@@ -16,6 +16,7 @@ from app.main import (
     REPAIR_COMMANDS,
     UPDATE_COMMANDS,
     Job,
+    SESSION_TOKEN,
     SRE_AGENT_REGIONS,
     STATIC_DIR,
     ToolStatus,
@@ -58,6 +59,7 @@ from app.main import (
     safe_log_payload,
     scoped_azure_login_command,
     should_open_browser,
+    shutdown_application,
     teardown_worker,
     upsert_response_plan,
     wait_for_request_metrics,
@@ -990,6 +992,50 @@ class PrerequisiteTests(unittest.TestCase):
 
 
 class ProcessTests(unittest.TestCase):
+    @patch("app.main.threading.Thread")
+    def test_shutdown_route_starts_background_server_shutdown(self, thread) -> None:
+        shutdown_thread = thread.return_value
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 12345)
+        handler.path = "/api/shutdown"
+        handler.server = MagicMock()
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        handler.send_json.assert_called_once_with({"shutting_down": True})
+        thread.assert_called_once_with(
+            target=shutdown_application,
+            args=(handler.server,),
+            daemon=True,
+            name="application-shutdown",
+        )
+        shutdown_thread.start.assert_called_once_with()
+
+    @patch("app.main.JOBS", {"active": MagicMock()})
+    def test_shutdown_stops_jobs_before_server(self) -> None:
+        server = MagicMock()
+
+        shutdown_application(server)
+
+        from app.main import JOBS
+
+        JOBS["active"].terminate_process.assert_called_once_with()
+        server.shutdown.assert_called_once_with()
+
+    def test_portable_launcher_uses_background_python_runtime(self) -> None:
+        launcher = (
+            STATIC_DIR.parents[1]
+            / "packaging"
+            / "windows"
+            / "Start Azure SRE Agent Demo.cmd"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('start "" /b', launcher)
+        self.assertIn(r"python\pythonw.exe", launcher)
+        self.assertNotIn(r"python\python.exe", launcher)
+
     @patch.dict("os.environ", {"AZURE_SRE_DEMO_NO_BROWSER": "true"})
     def test_can_disable_automatic_browser_launch(self) -> None:
         self.assertFalse(should_open_browser())

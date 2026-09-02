@@ -3,6 +3,8 @@ Azure SRE Agent Demo - Portable Windows Package
 
 Double-click "Start Azure SRE Agent Demo.cmd" to launch the application.
 The browser opens automatically at http://127.0.0.1:8765.
+The startup terminal closes after handing the application to a background
+process. Use the Shutdown button in the browser to stop that process.
 
 Keep the complete folder together. The included python directory contains the
 official Python Software Foundation 3.14.7 embeddable runtime, so Python does
