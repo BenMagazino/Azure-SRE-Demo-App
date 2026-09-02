@@ -1101,13 +1101,13 @@ async function loadSummary() {
   currentSummary = summary;
   const legacyEnvironment =
     summary.existing_environment && summary.environment_detection === "legacy";
-  teardownButton.disabled = legacyEnvironment;
   teardownButton.textContent = legacyEnvironment
     ? "Teardown unavailable"
     : "Tear down Azure resources";
   teardownButton.title = legacyEnvironment
     ? "Compatible legacy labs must be removed through their original deployment workflow."
     : "";
+  updateDemoActionAvailability();
   const fields = [
     ["Lab", summary.lab_name, ""],
     ["Environment", summary.environment, ""],
@@ -1200,6 +1200,15 @@ function formatCountdown(seconds) {
 
 function selectedScenario() {
   return currentLab()?.scenarios.find((item) => item.id === selectedScenarioId) || null;
+}
+
+function updateDemoActionAvailability() {
+  document.querySelector("#run-scenario").disabled = !selectedScenario();
+  document.querySelector("#restore-baseline").disabled = false;
+  teardownButton.disabled = Boolean(
+    currentSummary?.existing_environment
+    && currentSummary?.environment_detection === "legacy"
+  );
 }
 
 function renderInvestigationCountdownEstimate(scenario) {
@@ -1376,9 +1385,7 @@ async function runDemoAction(
       activeButton.removeAttribute("aria-busy");
       activeButton.textContent = activeButtonLabel;
     }
-    buttons.forEach((button) => {
-      button.disabled = false;
-    });
+    updateDemoActionAvailability();
   }
 }
 

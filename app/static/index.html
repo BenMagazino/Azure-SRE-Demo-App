@@ -249,7 +249,11 @@
         <div id="scenario-picker" class="picker-grid" aria-live="polite"></div>
         <div class="demo-actions">
           <button id="run-scenario" class="danger" disabled>Run selected scenario</button>
-          <button id="restore-baseline">Restore baseline</button>
+          <button
+            id="restore-baseline"
+            title="Reapply the declared infrastructure, application images, and SRE Agent configuration to repair demo drift.">
+            Restore baseline
+          </button>
           <button id="teardown" class="secondary">Tear down Azure resources</button>
         </div>
         <pre id="demo-log" class="log large"></pre>
@@ -260,6 +264,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260902.23"></script>
+    <script src="/app.js?v=20260902.24"></script>
   </body>
 </html>

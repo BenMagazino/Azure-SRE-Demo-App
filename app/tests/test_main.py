@@ -1621,6 +1621,20 @@ class ProcessTests(unittest.TestCase):
             "Validation checks only this lab.`;",
             script,
         )
+        self.assertIn("updateDemoActionAvailability();", script)
+        self.assertIn(
+            "teardownButton.disabled = Boolean(",
+            script,
+        )
+        self.assertNotIn(
+            'buttons.forEach((button) => {\n      button.disabled = false;',
+            script,
+        )
+        self.assertIn(
+            'title="Reapply the declared infrastructure, application images, '
+            'and SRE Agent configuration to repair demo drift."',
+            page,
+        )
         self.assertIn('externalIcon.textContent = "↗"', script)
         self.assertIn(".external-link-icon", styles)
         self.assertIn("Use these settings only when deploying a new lab.", page)
