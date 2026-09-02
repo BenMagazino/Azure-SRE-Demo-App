@@ -422,6 +422,37 @@ def azure_resource_group_portal_url(
     )
 
 
+def sre_agent_portal_url(
+    subscription_id: str,
+    resource_group: str,
+    agent_name: str,
+) -> str:
+    if not subscription_id or not resource_group or not agent_name:
+        return ""
+    return (
+        "https://sre.azure.com/agents/subscriptions/"
+        f"{quote(subscription_id, safe='')}/resourceGroups/"
+        f"{quote(resource_group, safe='')}/providers/Microsoft.App/agents/"
+        f"{quote(agent_name, safe='')}"
+    )
+
+
+def resolved_sre_agent_portal_url(
+    state: dict[str, Any],
+    values: dict[str, str],
+) -> str:
+    deep_link = sre_agent_portal_url(
+        str(
+            state.get("subscription_id")
+            or values.get("AZURE_SUBSCRIPTION_ID")
+            or ""
+        ),
+        values.get("AZURE_RESOURCE_GROUP", ""),
+        values.get("SRE_AGENT_NAME", ""),
+    )
+    return deep_link or values.get("AGENT_PORTAL_URL") or "https://sre.azure.com"
+
+
 def command_version(executable: str, args: tuple[str, ...]) -> Optional[str]:
     command = resolved_process_command([executable, *args])
     if command is None:
@@ -973,7 +1004,11 @@ def validate_existing_lab(
             ),
             "SRE_AGENT_NAME": str(agent_details.get("name") or ""),
             "SRE_AGENT_ENDPOINT": agent_endpoint,
-            "AGENT_PORTAL_URL": "https://sre.azure.com",
+            "AGENT_PORTAL_URL": sre_agent_portal_url(
+                subscription_id,
+                resource_group,
+                str(agent_details.get("name") or ""),
+            ),
             "CONTAINER_APP_NAME": str(api_app.get("name") or ""),
             "CONTAINER_APP_URL": (
                 f"https://{str(api_app.get('fqdn') or '')}"
@@ -2049,7 +2084,7 @@ def demo_external_urls(
     return {
         url
         for url in (
-            values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
+            resolved_sre_agent_portal_url(state, values),
             values.get("CONTAINER_APP_URL", ""),
             values.get("FRONTEND_APP_URL", ""),
             azure_resource_group_portal_url(
@@ -3192,7 +3227,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                     str(state.get("subscription_id") or ""),
                     resource_group,
                 ),
-                "agent_portal_url": values.get("AGENT_PORTAL_URL", "https://sre.azure.com"),
+                "agent_portal_url": resolved_sre_agent_portal_url(state, values),
                 "agent_endpoint": values.get("SRE_AGENT_ENDPOINT", ""),
                 "api_url": values.get("CONTAINER_APP_URL", ""),
                 "frontend_url": values.get("FRONTEND_APP_URL", ""),

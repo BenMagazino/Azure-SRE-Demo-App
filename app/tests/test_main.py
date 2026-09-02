@@ -62,6 +62,7 @@ from app.main import (
     response_plan_status_is_retryable,
     restore_baseline_worker,
     restore_container_baseline,
+    resolved_sre_agent_portal_url,
     resolved_process_command,
     run_capture,
     run_process,
@@ -72,6 +73,7 @@ from app.main import (
     set_azd_values,
     should_open_browser,
     should_fallback_open_client,
+    sre_agent_portal_url,
     shutdown_application,
     teardown_worker,
     upsert_response_plan,
@@ -114,6 +116,20 @@ class LabWorkflowTests(unittest.TestCase):
             (
                 f"https://portal.azure.com/#@{TENANT_A}/resource/subscriptions/"
                 f"{SUBSCRIPTION_A}/resourceGroups/rg-sre%20lab/overview"
+            ),
+        )
+
+    def test_builds_deployed_sre_agent_portal_link(self) -> None:
+        self.assertEqual(
+            sre_agent_portal_url(
+                SUBSCRIPTION_A,
+                "rg-sre lab",
+                "sre-agent-a",
+            ),
+            (
+                "https://sre.azure.com/agents/subscriptions/"
+                f"{SUBSCRIPTION_A}/resourceGroups/rg-sre%20lab/"
+                "providers/Microsoft.App/agents/sre-agent-a"
             ),
         )
 
@@ -167,6 +183,7 @@ class LabWorkflowTests(unittest.TestCase):
         values = {
             "AZURE_RESOURCE_GROUP": "rg-sre-lab",
             "AGENT_PORTAL_URL": "https://sre.azure.com",
+            "SRE_AGENT_NAME": "sre-agent-a",
             "CONTAINER_APP_URL": "https://api.example.test",
             "FRONTEND_APP_URL": "https://app.example.test",
         }
@@ -174,10 +191,22 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertEqual(len(demo_external_urls(state, values)), 4)
         self.assertTrue(
             is_allowed_demo_external_url(
-                "https://app.example.test",
+                (
+                    "https://sre.azure.com/agents/subscriptions/"
+                    f"{SUBSCRIPTION_A}/resourceGroups/rg-sre-lab/"
+                    "providers/Microsoft.App/agents/sre-agent-a"
+                ),
                 state,
                 values,
             )
+        )
+        self.assertEqual(
+            resolved_sre_agent_portal_url(state, values),
+            (
+                "https://sre.azure.com/agents/subscriptions/"
+                f"{SUBSCRIPTION_A}/resourceGroups/rg-sre-lab/"
+                "providers/Microsoft.App/agents/sre-agent-a"
+            ),
         )
         self.assertFalse(
             is_allowed_demo_external_url(
@@ -379,6 +408,17 @@ class LabWorkflowTests(unittest.TestCase):
         )
         self.assertIn(
             "'azure-sre-agent-environment': environmentName",
+            bicep,
+        )
+
+    def test_sre_agent_bicep_outputs_resource_deep_link(self) -> None:
+        bicep = (
+            VENDOR_DIR / "infra" / "modules" / "sre-agent.bicep"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "output agentPortalUrl string = "
+            "'https://sre.azure.com/agents${sreAgent.id}'",
             bicep,
         )
 
