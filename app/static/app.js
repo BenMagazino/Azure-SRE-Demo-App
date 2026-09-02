@@ -871,9 +871,8 @@ function selectExistingEnvironment(environment) {
   validateEnvironmentButton.disabled = false;
   environmentValidationStatus.className = "";
   environmentValidationStatus.textContent =
-    `Validate ${environment.environment} to confirm it is ready for the demo.`;
-  document.querySelector("#configure-status").textContent =
     `${environment.environment} selected. Validation checks only this lab.`;
+  document.querySelector("#configure-status").textContent = "";
   document.querySelectorAll(".environment-card").forEach((card) => {
     const selected = card.dataset.environment === environment.environment;
     card.classList.toggle("selected", selected);

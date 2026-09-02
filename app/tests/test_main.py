@@ -1615,6 +1615,12 @@ class ProcessTests(unittest.TestCase):
             '["SRE Agent portal", summary.agent_name, summary.agent_portal_url]',
             script,
         )
+        self.assertIn(
+            "environmentValidationStatus.textContent =\n"
+            "    `${environment.environment} selected. "
+            "Validation checks only this lab.`;",
+            script,
+        )
         self.assertIn('externalIcon.textContent = "↗"', script)
         self.assertIn(".external-link-icon", styles)
         self.assertIn("Use these settings only when deploying a new lab.", page)
