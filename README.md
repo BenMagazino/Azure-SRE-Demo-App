@@ -21,14 +21,12 @@ only when running directly from the source repository.
 
 The app requires Azure CLI 2.88.0 or newer and Azure Developer CLI 1.28.0 or
 newer. The prerequisite screen verifies these versions and can install, repair,
-or update tools sequentially with one action. Azure CLI remediation uses
-Microsoft's 64-bit ZIP distribution, verifies its pinned SHA-256 checksum, and
-installs version 2.90.0 under
-`%LOCALAPPDATA%\AzureSREAgentDemo\tools\azure-cli`. This user-profile
-installation does not require administrator approval or change the machine
-`PATH`. The ZIP distribution is currently marked preview by Microsoft. WinGet
-1.29.280 or newer handles Azure Developer CLI remediation. Copy-command and
-official-documentation fallbacks remain available for WinGet-managed tools.
+or update both tools sequentially with one action. Remediation downloads the
+official 64-bit ZIP distributions, verifies pinned SHA-256 checksums, and
+installs Azure CLI 2.90.0 and Azure Developer CLI 1.32.0 under
+`%LOCALAPPDATA%\AzureSREAgentDemo\tools`. These user-profile installations do
+not require administrator approval or change the machine `PATH`. Microsoft
+currently marks the Azure CLI ZIP distribution as preview.
 
 These minimums were reviewed on September 1, 2026 and should be refreshed by
 December 1, 2026 to preserve the three-month tool-age policy.
@@ -121,7 +119,7 @@ and vendored lab assets. The complete extracted folder must remain together.
 ## Current wizard flow
 
 1. Choose a lab from the catalog.
-2. Verify the selected lab's minimum Azure CLI, Azure Developer CLI, and WinGet versions.
+2. Verify the selected lab's minimum Azure CLI and Azure Developer CLI versions.
 3. Run Azure CLI and azd device-code sign-in while streaming output in the browser.
 4. Choose a discovered Microsoft Entra tenant and Azure subscription. The current
    Azure CLI default is shown first, and cross-tenant selections are reauthenticated

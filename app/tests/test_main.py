@@ -39,6 +39,7 @@ from app.main import (
     discover_existing_environments,
     http_json,
     install_all_worker,
+    install_managed_azd,
     install_managed_azure_cli,
     is_device_login_url,
     launch_client_if_unclaimed,
@@ -89,7 +90,7 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertEqual(len(LABS), 1)
         self.assertEqual(payload["selected_lab_id"], "grubify-starter-lab")
         self.assertEqual(len(payload["labs"]), 1)
-        self.assertEqual(payload["labs"][0]["dependency_ids"], ("winget", "az", "azd"))
+        self.assertEqual(payload["labs"][0]["dependency_ids"], ("az", "azd"))
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
 
     @patch("app.main.save_state")
@@ -933,41 +934,34 @@ class PrerequisiteTests(unittest.TestCase):
         refresh_process_path,
     ) -> None:
         versions = {
-            "winget": "1.29.290",
             "az": "2.90.0",
             "azd": "1.32.0",
         }
         command_version.side_effect = lambda executable, _args: versions[executable]
         statuses = prerequisite_statuses()
         refresh_process_path.assert_called_once_with()
-        self.assertEqual([item.id for item in statuses], ["winget", "az", "azd"])
+        self.assertEqual([item.id for item in statuses], ["az", "azd"])
         self.assertTrue(all(item.installed for item in statuses))
         self.assertTrue(all(item.ready for item in statuses))
         self.assertTrue(all(item.state == "ready" for item in statuses))
-        self.assertFalse(statuses[0].required)
-        self.assertTrue(all(item.required for item in statuses[1:]))
+        self.assertTrue(all(item.required for item in statuses))
         self.assertEqual(
             MINIMUM_VERSIONS,
-            {"winget": "1.29.280", "az": "2.88.0", "azd": "1.28.0"},
+            {"az": "2.88.0", "azd": "1.28.0"},
         )
         which.assert_called()
 
-    def test_install_commands_are_allowlisted_and_noninteractive(self) -> None:
-        expected = {"winget", "az", "azd"}
+    def test_install_commands_are_app_managed(self) -> None:
+        expected = {"az", "azd"}
         self.assertEqual(set(INSTALL_COMMANDS), expected)
         self.assertEqual(set(UPDATE_COMMANDS), expected)
         self.assertEqual(set(REPAIR_COMMANDS), expected)
-        self.assertEqual(INSTALL_ORDER, ("winget", "az", "azd"))
+        self.assertEqual(INSTALL_ORDER, ("az", "azd"))
         for commands in (INSTALL_COMMANDS, UPDATE_COMMANDS, REPAIR_COMMANDS):
             for tool_id in ("az", "azd"):
                 command = commands[tool_id]
-                self.assertIn("--source", command)
-                self.assertIn("winget", command)
-                self.assertIn("--disable-interactivity", command)
-        self.assertEqual(UPDATE_COMMANDS["az"][1], "upgrade")
-        self.assertEqual(UPDATE_COMMANDS["azd"][1], "upgrade")
-        self.assertIn("--force", REPAIR_COMMANDS["az"])
-        self.assertIn("--force", REPAIR_COMMANDS["azd"])
+                self.assertEqual(command[0], "app-managed")
+                self.assertNotIn("winget", command)
 
     @patch("app.main.refresh_process_path")
     @patch("app.main.command_version")
@@ -979,7 +973,6 @@ class PrerequisiteTests(unittest.TestCase):
         _refresh_process_path,
     ) -> None:
         command_version.side_effect = lambda executable, _args: {
-            "winget": "1.29.279",
             "az": "2.87.0",
             "azd": "1.27.1",
         }[executable]
@@ -989,7 +982,7 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertTrue(all(item.installed for item in statuses))
         self.assertTrue(all(not item.ready for item in statuses))
         self.assertTrue(all(item.state == "outdated" for item in statuses))
-        self.assertTrue(all("upgrade" in item.install_command for item in statuses[1:]))
+        self.assertTrue(all("app-managed" in item.install_command for item in statuses))
 
     def test_compares_normalized_semantic_versions(self) -> None:
         self.assertTrue(version_meets_minimum("2.88.0", "2.88.0"))
@@ -998,12 +991,14 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertFalse(version_meets_minimum("installed", "2.88.0"))
 
     @patch("app.main.install_managed_azure_cli")
+    @patch("app.main.install_managed_azd")
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_install_all_runs_missing_tools_sequentially(
         self,
         prerequisite_statuses,
         run_process,
+        install_managed_azd,
         install_managed_azure_cli,
     ) -> None:
         installed = set()
@@ -1020,35 +1015,29 @@ class PrerequisiteTests(unittest.TestCase):
                     state="ready" if tool_id in installed else "missing",
                     install_command="",
                     install_url="",
-                    required=tool_id != "winget",
+                    required=True,
                 )
                 for tool_id in INSTALL_ORDER
             ]
-
-        def install(_job, command):
-            installed.add(next(
-                tool_id
-                for tool_id, configured_command in INSTALL_COMMANDS.items()
-                if configured_command == command
-            ))
-            return True, ""
 
         def install_azure_cli(_job):
             installed.add("az")
             return True
 
+        def install_azd(_job):
+            installed.add("azd")
+            return True
+
         prerequisite_statuses.side_effect = statuses
-        run_process.side_effect = install
         install_managed_azure_cli.side_effect = install_azure_cli
+        install_managed_azd.side_effect = install_azd
         job = Job()
 
         install_all_worker(job)
 
-        self.assertEqual(
-            [call.args[1] for call in run_process.call_args_list],
-            [INSTALL_COMMANDS["winget"], INSTALL_COMMANDS["azd"]],
-        )
+        run_process.assert_not_called()
         install_managed_azure_cli.assert_called_once_with(job)
+        install_managed_azd.assert_called_once_with(job)
         events = list(job.events.queue)
         tool_events = [
             event
@@ -1153,6 +1142,40 @@ class PrerequisiteTests(unittest.TestCase):
 
             self.assertTrue((cli_dir / "bin" / "az.cmd").is_file())
             self.assertFalse((tools_dir / "azure-cli-staging").exists())
+            self.assertFalse(any(tools_dir.glob("*.zip")))
+        refresh_process_path.assert_called_once_with()
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.urlopen")
+    def test_installs_checksum_verified_azd_in_user_profile(
+        self,
+        urlopen,
+        refresh_process_path,
+    ) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("azd-windows-amd64.exe", "executable")
+            archive.writestr("NOTICE.txt", "notices")
+        payload = archive_bytes.getvalue()
+        urlopen.return_value = io.BytesIO(payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            azd_dir = tools_dir / "azd"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.AZD_DIR", azd_dir),
+                patch(
+                    "app.main.AZD_SHA256",
+                    hashlib.sha256(payload).hexdigest().upper(),
+                ),
+            ):
+                job = Job()
+                self.assertTrue(install_managed_azd(job))
+
+            self.assertTrue((azd_dir / "azd.exe").is_file())
+            self.assertFalse((azd_dir / "azd-windows-amd64.exe").exists())
+            self.assertFalse((tools_dir / "azd-staging").exists())
             self.assertFalse(any(tools_dir.glob("*.zip")))
         refresh_process_path.assert_called_once_with()
 

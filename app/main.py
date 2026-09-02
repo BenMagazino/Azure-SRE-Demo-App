@@ -56,6 +56,19 @@ AZURE_CLI_DOCS_URL = (
     "https://learn.microsoft.com/cli/azure/install-azure-cli-windows"
     "?view=azure-cli-latest#zip-package"
 )
+AZD_VERSION = "1.32.0"
+AZD_URL = (
+    "https://github.com/Azure/azure-dev/releases/download/"
+    f"azure-dev-cli_{AZD_VERSION}/azd-windows-amd64.zip"
+)
+AZD_SHA256 = (
+    "EA71A4B1CF7E67B766553108507E66E37510AE7F2ED59C02BC160AC3F8A87B8A"
+)
+AZD_DIR = MANAGED_TOOLS_DIR / "azd"
+AZD_DOCS_URL = (
+    "https://learn.microsoft.com/azure/developer/"
+    "azure-developer-cli/install-azd"
+)
 if FROZEN or PORTABLE:
     VENDOR_DIR = STATE_DIR / "starter-lab"
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
@@ -255,18 +268,10 @@ class LabDefinition:
 
 
 TOOLS = (
-    (
-        "winget",
-        "WinGet (recommended installer)",
-        ("--version",),
-        "1.29.280",
-        "https://learn.microsoft.com/windows/package-manager/winget/",
-        False,
-    ),
     ("az", "Azure CLI", ("version",), "2.88.0",
      AZURE_CLI_DOCS_URL, True),
     ("azd", "Azure Developer CLI", ("version",), "1.28.0",
-     "https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd", True),
+     AZD_DOCS_URL, True),
 )
 LABS = (
     LabDefinition(
@@ -276,7 +281,7 @@ LABS = (
             "Deploy Grubify to Azure Container Apps and observe Azure SRE Agent "
             "investigate an application incident."
         ),
-        dependency_ids=("winget", "az", "azd"),
+        dependency_ids=("az", "azd"),
         scenarios=(
             ScenarioDefinition(
                 id="memory-leak",
@@ -365,79 +370,16 @@ CLIENT_HEARTBEAT_LOCK = threading.Lock()
 LAST_CLIENT_HEARTBEAT: Optional[float] = None
 
 INSTALL_COMMANDS = {
-    "winget": [
-        "powershell.exe",
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        (
-            "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 "
-            "-Force | Out-Null; "
-            "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; "
-            "Install-Module -Name Microsoft.WinGet.Client -Scope CurrentUser "
-            "-Force -AllowClobber -Repository PSGallery; "
-            "Import-Module Microsoft.WinGet.Client; "
-            "Repair-WinGetPackageManager -Force -Latest"
-        ),
-    ],
-    "az": [
-        "winget",
-        "install",
-        "--id",
-        "Microsoft.AzureCLI",
-        "--exact",
-        "--source",
-        "winget",
-        "--accept-source-agreements",
-        "--accept-package-agreements",
-        "--disable-interactivity",
-    ],
-    "azd": [
-        "winget",
-        "install",
-        "--id",
-        "Microsoft.Azd",
-        "--exact",
-        "--source",
-        "winget",
-        "--accept-source-agreements",
-        "--accept-package-agreements",
-        "--disable-interactivity",
-    ],
+    "az": ["app-managed", "azure-cli", AZURE_CLI_VERSION],
+    "azd": ["app-managed", "azure-developer-cli", AZD_VERSION],
 }
 UPDATE_COMMANDS = {
-    "winget": INSTALL_COMMANDS["winget"],
-    "az": [
-        "winget",
-        "upgrade",
-        "--id",
-        "Microsoft.AzureCLI",
-        "--exact",
-        "--source",
-        "winget",
-        "--accept-source-agreements",
-        "--accept-package-agreements",
-        "--disable-interactivity",
-    ],
-    "azd": [
-        "winget",
-        "upgrade",
-        "--id",
-        "Microsoft.Azd",
-        "--exact",
-        "--source",
-        "winget",
-        "--accept-source-agreements",
-        "--accept-package-agreements",
-        "--disable-interactivity",
-    ],
+    "az": INSTALL_COMMANDS["az"],
+    "azd": INSTALL_COMMANDS["azd"],
 }
 REPAIR_COMMANDS = {
-    "winget": INSTALL_COMMANDS["winget"],
-    "az": [*INSTALL_COMMANDS["az"], "--force"],
-    "azd": [*INSTALL_COMMANDS["azd"], "--force"],
+    "az": INSTALL_COMMANDS["az"],
+    "azd": INSTALL_COMMANDS["azd"],
 }
 INSTALL_ORDER = tuple(INSTALL_COMMANDS)
 MINIMUM_VERSIONS = {
@@ -1032,6 +974,8 @@ def refresh_process_path() -> None:
     managed_azure_cli_bin = AZURE_CLI_DIR / "bin"
     if (managed_azure_cli_bin / "az.cmd").is_file():
         managed_paths.append(str(managed_azure_cli_bin))
+    if (AZD_DIR / "azd.exe").is_file():
+        managed_paths.append(str(AZD_DIR))
 
     registry_paths = []
     try:
@@ -1094,33 +1038,47 @@ def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
     archive.extractall(destination)
 
 
-def install_managed_azure_cli(job: Job) -> bool:
+def install_managed_zip_tool(
+    job: Job,
+    *,
+    display_name: str,
+    slug: str,
+    version: str,
+    url: str,
+    expected_sha256: str,
+    install_dir: Path,
+    archive_executable: Path,
+    installed_executable: Path,
+) -> bool:
     MANAGED_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
-    archive_path = MANAGED_TOOLS_DIR / f"azure-cli-{AZURE_CLI_VERSION}.zip"
-    staging_dir = MANAGED_TOOLS_DIR / "azure-cli-staging"
-    backup_dir = MANAGED_TOOLS_DIR / "azure-cli-backup"
+    archive_path = MANAGED_TOOLS_DIR / f"{slug}-{version}.zip"
+    staging_dir = MANAGED_TOOLS_DIR / f"{slug}-staging"
+    backup_dir = MANAGED_TOOLS_DIR / f"{slug}-backup"
 
     try:
         archive_path.unlink(missing_ok=True)
         if staging_dir.exists():
             shutil.rmtree(staging_dir)
         if backup_dir.exists():
-            if not AZURE_CLI_DIR.exists():
-                backup_dir.replace(AZURE_CLI_DIR)
+            if not install_dir.exists():
+                backup_dir.replace(install_dir)
             else:
                 shutil.rmtree(backup_dir)
     except OSError as error:
-        LOGGER.exception("Managed Azure CLI staging cleanup failed")
+        LOGGER.exception("Managed %s staging cleanup failed", display_name)
         job.emit(
             "output",
-            line=f"Azure CLI installation could not prepare its staging folder: {error}",
+            line=(
+                f"{display_name} installation could not prepare its staging "
+                f"folder: {error}"
+            ),
         )
         return False
 
     job.emit(
         "output",
         line=(
-            f"Downloading Azure CLI {AZURE_CLI_VERSION} to the current user "
+            f"Downloading {display_name} {version} to the current user "
             "profile (no administrator approval required)..."
         ),
     )
@@ -1128,7 +1086,7 @@ def install_managed_azure_cli(job: Job) -> bool:
     downloaded = 0
     last_reported_megabytes = 0
     request = Request(
-        AZURE_CLI_URL,
+        url,
         headers={"User-Agent": "AzureSREAgentDemo/1.0"},
     )
     try:
@@ -1146,26 +1104,33 @@ def install_managed_azure_cli(job: Job) -> bool:
                     )
 
         actual_hash = digest.hexdigest().upper()
-        if actual_hash != AZURE_CLI_SHA256:
+        if actual_hash != expected_sha256:
             raise ValueError(
-                "Azure CLI download checksum mismatch. "
-                f"Expected {AZURE_CLI_SHA256}, received {actual_hash}."
+                f"{display_name} download checksum mismatch. "
+                f"Expected {expected_sha256}, received {actual_hash}."
             )
 
-        job.emit("output", line="Checksum verified. Extracting Azure CLI...")
+        job.emit("output", line=f"Checksum verified. Extracting {display_name}...")
         staging_dir.mkdir()
         with zipfile.ZipFile(archive_path) as archive:
             safe_extract_zip(archive, staging_dir)
-        if not (staging_dir / "bin" / "az.cmd").is_file():
-            raise ValueError("Azure CLI archive does not contain bin\\az.cmd.")
+        archive_target = staging_dir / archive_executable
+        if not archive_target.is_file():
+            raise ValueError(
+                f"{display_name} archive does not contain {archive_executable}."
+            )
+        installed_target = staging_dir / installed_executable
+        if archive_target != installed_target:
+            installed_target.parent.mkdir(parents=True, exist_ok=True)
+            archive_target.replace(installed_target)
 
-        if AZURE_CLI_DIR.exists():
-            AZURE_CLI_DIR.replace(backup_dir)
+        if install_dir.exists():
+            install_dir.replace(backup_dir)
         try:
-            staging_dir.replace(AZURE_CLI_DIR)
+            staging_dir.replace(install_dir)
         except OSError:
-            if backup_dir.exists() and not AZURE_CLI_DIR.exists():
-                backup_dir.replace(AZURE_CLI_DIR)
+            if backup_dir.exists() and not install_dir.exists():
+                backup_dir.replace(install_dir)
             raise
         if backup_dir.exists():
             shutil.rmtree(backup_dir)
@@ -1173,12 +1138,12 @@ def install_managed_azure_cli(job: Job) -> bool:
         refresh_process_path()
         job.emit(
             "output",
-            line=f"Azure CLI installed privately at {AZURE_CLI_DIR}.",
+            line=f"{display_name} installed privately at {install_dir}.",
         )
         return True
     except (OSError, URLError, ValueError, zipfile.BadZipFile) as error:
-        LOGGER.exception("Managed Azure CLI installation failed")
-        job.emit("output", line=f"Azure CLI installation failed: {error}")
+        LOGGER.exception("Managed %s installation failed", display_name)
+        job.emit("output", line=f"{display_name} installation failed: {error}")
         return False
     finally:
         try:
@@ -1187,13 +1152,42 @@ def install_managed_azure_cli(job: Job) -> bool:
                 shutil.rmtree(staging_dir)
         except OSError as cleanup_error:
             LOGGER.warning(
-                "Managed Azure CLI temporary-file cleanup failed: %s",
+                "Managed %s temporary-file cleanup failed: %s",
+                display_name,
                 cleanup_error,
             )
             job.emit(
                 "output",
                 line=f"Temporary-file cleanup needs attention: {cleanup_error}",
             )
+
+
+def install_managed_azure_cli(job: Job) -> bool:
+    return install_managed_zip_tool(
+        job,
+        display_name="Azure CLI",
+        slug="azure-cli",
+        version=AZURE_CLI_VERSION,
+        url=AZURE_CLI_URL,
+        expected_sha256=AZURE_CLI_SHA256,
+        install_dir=AZURE_CLI_DIR,
+        archive_executable=Path("bin") / "az.cmd",
+        installed_executable=Path("bin") / "az.cmd",
+    )
+
+
+def install_managed_azd(job: Job) -> bool:
+    return install_managed_zip_tool(
+        job,
+        display_name="Azure Developer CLI",
+        slug="azd",
+        version=AZD_VERSION,
+        url=AZD_URL,
+        expected_sha256=AZD_SHA256,
+        install_dir=AZD_DIR,
+        archive_executable=Path("azd-windows-amd64.exe"),
+        installed_executable=Path("azd.exe"),
+    )
 
 
 def run_tool_install(job: Job, tool_id: str) -> bool:
@@ -1224,6 +1218,8 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
     )
     if tool_id == "az":
         success = install_managed_azure_cli(job)
+    elif tool_id == "azd":
+        success = install_managed_azd(job)
     else:
         success, _ = run_process(job, command)
     if not success:
@@ -1257,32 +1253,10 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
 def install_tool_worker(
     job: Job,
     tool_id: str,
-    lab_id: Optional[str] = None,
 ) -> None:
     with INSTALL_LOCK:
         job.emit("started", command=job.command)
-        success = True
-        lab = LABS_BY_ID.get(lab_id) if lab_id else None
-        tool_ids = lab.dependency_ids if lab else None
-        statuses = {
-            tool.id: tool
-            for tool in (
-                prerequisite_statuses(tool_ids)
-                if tool_ids
-                else prerequisite_statuses()
-            )
-        }
-        winget_status = statuses.get("winget")
-        if winget_status is None:
-            winget_status = prerequisite_statuses(("winget",))[0]
-        if tool_id == "azd" and not winget_status.ready:
-            job.emit(
-                "output",
-                line="WinGet must be current before it can update other dependencies.",
-            )
-            success = run_tool_install(job, "winget")
-        if success:
-            success = run_tool_install(job, tool_id)
+        success = run_tool_install(job, tool_id)
         job.emit("done", success=success, exit_code=0 if success else 1)
 
 
@@ -1311,27 +1285,10 @@ def install_all_worker(job: Job, lab_id: Optional[str] = None) -> None:
             job.emit("done", success=True, exit_code=0)
             return
 
-        install_ids = unresolved_required
-        winget_status = statuses.get("winget")
-        if winget_status is None:
-            winget_status = prerequisite_statuses(("winget",))[0]
-        if (
-            "azd" in install_ids
-            and not winget_status.ready
-            and "winget" not in install_ids
-        ):
-            install_ids = ["winget", *install_ids]
-
         failures = []
-        for tool_id in install_ids:
+        for tool_id in unresolved_required:
             if not run_tool_install(job, tool_id):
                 failures.append(tool_id)
-                if tool_id == "winget":
-                    job.emit(
-                        "error",
-                        message="WinGet is required to install the remaining dependencies.",
-                    )
-                    break
 
         ready = all(
             tool.ready
@@ -3187,7 +3144,6 @@ class AppHandler(SimpleHTTPRequestHandler):
                 worker=lambda current_job: install_tool_worker(
                     current_job,
                     tool_id,
-                    lab.id,
                 ),
             )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)

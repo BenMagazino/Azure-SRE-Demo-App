@@ -9,11 +9,10 @@ Azure SRE Agent Demo
 - An Azure subscription where you can create resources and role assignments
 - Azure CLI 2.88.0 or newer
 - Azure Developer CLI (azd) 1.28.0 or newer
-- WinGet 1.29.280 or newer if azd must be installed or updated
 
 Python is included in this package. Git is not required. The prerequisite step
-checks the required tools, installs a private copy of Azure CLI when needed,
-and can install or update azd.
+checks the required tools and can install private copies of Azure CLI and azd
+when needed.
 
 2. Install
 ----------
@@ -63,11 +62,5 @@ with help from its Azure owner.
 
 1. Shut down the application.
 2. Delete the extracted Azure SRE Agent Demo folder.
-3. Delete "%LOCALAPPDATA%\AzureSREAgentDemo" to remove the private Azure CLI,
-   cached application state, and logs.
-
-Azure Developer CLI remains installed because it may be shared with other
-applications. If it was installed only for this demo, remove it separately
-from Windows Installed apps or run:
-
-winget uninstall --id Microsoft.Azd --exact
+3. Delete "%LOCALAPPDATA%\AzureSREAgentDemo" to remove the private Azure CLI
+   and azd installations, cached application state, and logs.

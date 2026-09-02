@@ -227,7 +227,7 @@ function renderLabPicker() {
 function updateLabCopy() {
   const lab = currentLab();
   if (!lab) return;
-  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. Azure CLI is installed privately without administrator approval; WinGet handles other tool remediation.`;
+  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. Azure CLI and Azure Developer CLI are installed privately without administrator approval.`;
   document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}.`;
   document.querySelector("#deploy-title").textContent = `Deploy ${lab.name}`;
   document.querySelector("#deploy-copy").textContent = `${lab.description} Azure resources and lab automation are created automatically.`;
@@ -568,7 +568,8 @@ function renderTool(tool) {
     const install = document.createElement("div");
     install.className = "install";
     const code = document.createElement("code");
-    code.textContent = tool.id === "az"
+    const appManaged = ["az", "azd"].includes(tool.id);
+    code.textContent = appManaged
       ? "App-managed user-profile installation (no UAC)"
       : tool.install_command;
     const copy = document.createElement("button");
@@ -595,7 +596,7 @@ function renderTool(tool) {
     progress.className = "install-progress hidden";
     progress.setAttribute("aria-live", "polite");
     install.append(installButton, code);
-    if (tool.id !== "az") install.append(copy);
+    if (!appManaged) install.append(copy);
     install.append(link, progress);
     row.append(install);
   }
