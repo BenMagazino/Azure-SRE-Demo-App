@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Run Python tests
+        shell: pwsh
+        run: python -m unittest discover -s app\tests -p "test_*.py"
+
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: node --check app\static\app.js
+
+  package:
+    name: Build portable package
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build Windows package
+        shell: pwsh
+        run: .\scripts\build-windows.ps1
+
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $archive = "dist\AzureSREAgentDemo-portable-win-x64.zip"
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  AzureSREAgentDemo-portable-win-x64.zip" |
+            Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
+
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: AzureSREAgentDemo-portable-win-x64-${{ github.sha }}
+          path: |
+            dist/AzureSREAgentDemo-portable-win-x64.zip
+            dist/AzureSREAgentDemo-portable-win-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
