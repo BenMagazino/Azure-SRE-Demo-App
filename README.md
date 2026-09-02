@@ -1,3 +1,5 @@
+![Azure SRE Agent Demo Setup](docs/assets/readme-hero.svg)
+
 # Azure SRE Agent Demo Setup
 
 A Windows-first local web application for deploying and running an

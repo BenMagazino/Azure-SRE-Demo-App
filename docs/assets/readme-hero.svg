@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title description">
+  <title id="title">Azure SRE Agent Demo Setup</title>
+  <desc id="description">A dark navy banner with the Azure SRE Agent Demo shield and pulse logo on the left.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#15345a" />
+      <stop offset="0.42" stop-color="#08111f" />
+      <stop offset="1" stop-color="#050b13" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(182 112) rotate(34) scale(430 300)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4ba3ff" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#4ba3ff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="pulse" x1="63" y1="163" x2="250" y2="163" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#72bcff" />
+      <stop offset="0.52" stop-color="#e8f0fa" />
+      <stop offset="1" stop-color="#72bcff" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="320" rx="28" fill="url(#background)" />
+  <rect width="1200" height="320" rx="28" fill="url(#glow)" />
+  <path d="M0 272C220 224 344 300 550 262s342-14 650-80v138H0Z" fill="#0d1a2a" opacity="0.72" />
+  <path d="M770 0h430v320H890C1005 235 951 104 770 0Z" fill="#15304d" opacity="0.25" />
+
+  <g aria-label="Azure SRE Agent Demo logo">
+    <rect x="46" y="42" width="224" height="224" rx="52" fill="#0d1a2a" stroke="#28415f" stroke-width="6" />
+    <path d="M158 66 232 96v56c0 51-30 88-74 110-44-22-74-59-74-110V96Z" fill="#15304d" stroke="#4ba3ff" stroke-linejoin="miter" stroke-width="12" />
+    <path d="M63 163h56l19-38 33 76 20-38h59" fill="none" stroke="url(#pulse)" stroke-linecap="round" stroke-linejoin="round" stroke-width="12" />
+    <circle cx="63" cy="163" r="6" fill="#4ba3ff" />
+    <circle cx="250" cy="163" r="6" fill="#4ba3ff" />
+  </g>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="318" y="78" fill="#72bcff" font-size="18" font-weight="700" letter-spacing="3">GUIDED LABS</text>
+    <text x="318" y="132" fill="#e8f0fa" font-size="42" font-weight="700">Azure SRE Agent</text>
+    <text x="318" y="178" fill="#e8f0fa" font-size="42" font-weight="700">Demo Setup</text>
+    <text x="320" y="214" fill="#b9c9dc" font-size="20">From Windows workstation to demo-ready environment.</text>
+
+    <g font-size="15" font-weight="600">
+      <rect x="318" y="242" width="188" height="38" rx="19" fill="#15304d" stroke="#28415f" />
+      <circle cx="339" cy="261" r="6" fill="#22c55e" />
+      <text x="354" y="267" fill="#e8f0fa">Resolve prerequisites</text>
+
+      <rect x="520" y="242" width="174" height="38" rx="19" fill="#15304d" stroke="#28415f" />
+      <circle cx="541" cy="261" r="6" fill="#4ba3ff" />
+      <text x="556" y="267" fill="#e8f0fa">Deploy or reuse</text>
+
+      <rect x="708" y="242" width="222" height="38" rx="19" fill="#15304d" stroke="#28415f" />
+      <circle cx="729" cy="261" r="6" fill="#f59e0b" />
+      <text x="744" y="267" fill="#e8f0fa">Run incident &amp; recover</text>
+    </g>
+  </g>
+
+  <g fill="#4ba3ff" opacity="0.55">
+    <circle cx="1038" cy="82" r="4" />
+    <circle cx="1082" cy="82" r="4" />
+    <circle cx="1126" cy="82" r="4" />
+    <path d="M1038 82h88M1082 82v72" fill="none" stroke="#4ba3ff" stroke-width="2" stroke-dasharray="5 7" />
+    <rect x="1017" y="154" width="130" height="72" rx="14" fill="#0d1a2a" stroke="#36506d" stroke-width="2" />
+    <path d="m1041 191 18 18 55-55" fill="none" stroke="#72bcff" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" />
+  </g>
+</svg>
