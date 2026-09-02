@@ -182,19 +182,32 @@ pre {
   width: min(1000px, calc(100% - 2rem));
   margin: 0 auto;
   padding: 3rem 0;
+  transition: padding 320ms ease;
 }
 
 .eyebrow {
+  display: block;
+  max-height: 1.25rem;
+  overflow: hidden;
   color: var(--cp-accent);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  transition:
+    max-height 260ms ease,
+    opacity 180ms ease,
+    transform 260ms ease;
 }
 
-h1 {
+.brand-title {
   margin: 0.35rem 0 0.5rem;
   font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.08;
+  transition:
+    margin 320ms ease,
+    font-size 320ms ease,
+    line-height 320ms ease;
 }
 
 h2,
@@ -212,14 +225,90 @@ header p,
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+  min-height: 96px;
+  transition:
+    min-height 320ms ease,
+    gap 320ms ease;
 }
 
-.app-header > div {
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
   min-width: 0;
+  transition: gap 320ms ease;
+}
+
+.brand-copy {
+  min-width: 0;
+}
+
+.brand-logo {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  transition:
+    width 320ms ease,
+    height 320ms ease,
+    transform 320ms ease;
+}
+
+.brand-tagline {
+  max-height: 3rem;
+  margin: 0;
+  overflow: hidden;
+  transition:
+    max-height 260ms ease,
+    opacity 180ms ease,
+    transform 260ms ease;
 }
 
 .app-header > button {
   flex: none;
+  transition:
+    padding 320ms ease,
+    font-size 320ms ease;
+}
+
+.workflow-compact {
+  padding-top: 1rem;
+}
+
+.workflow-compact .app-header {
+  align-items: center;
+  min-height: 40px;
+  gap: 0.75rem;
+}
+
+.workflow-compact .brand {
+  gap: 0.6rem;
+}
+
+.workflow-compact .brand-logo {
+  width: 36px;
+  height: 36px;
+  transform: translateY(-1px);
+}
+
+.workflow-compact .eyebrow,
+.workflow-compact .brand-tagline {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-0.4rem);
+}
+
+.workflow-compact .brand-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 1.05rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-compact .app-header > button {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
 }
 
 .app-footer {
@@ -234,6 +323,11 @@ header p,
   gap: 1rem;
   margin: 2rem 0 1rem;
   color: var(--cp-text-muted);
+  transition: margin 320ms ease;
+}
+
+.workflow-compact .steps {
+  margin-top: 0.75rem;
 }
 
 .steps .active {
@@ -586,6 +680,28 @@ select {
     align-self: flex-end;
   }
 
+  .brand {
+    width: 100%;
+  }
+
+  .brand-logo {
+    width: 72px;
+    height: 72px;
+  }
+
+  .workflow-compact .app-header {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .workflow-compact .brand {
+    width: auto;
+  }
+
+  .workflow-compact .app-header > button {
+    align-self: center;
+  }
+
   .tool {
     grid-template-columns: auto 1fr;
   }
@@ -596,5 +712,19 @@ select {
 
   .install {
     grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .eyebrow,
+  .brand-title,
+  .app-header,
+  .brand,
+  .brand-logo,
+  .brand-tagline,
+  .app-header > button,
+  .steps {
+    transition: none;
   }
 }

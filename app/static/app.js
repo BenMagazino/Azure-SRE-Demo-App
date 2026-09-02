@@ -9,6 +9,7 @@ const azureContextStatus = document.querySelector("#azure-context-status");
 const applyAzureContextButton = document.querySelector("#apply-azure-context");
 const backButton = document.querySelector("#back");
 const shutdownButton = document.querySelector("#shutdown");
+const shell = document.querySelector(".shell");
 const workflowPanels = [
   "labs",
   "prerequisites",
@@ -124,6 +125,7 @@ function showPanel(id) {
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
   document.querySelector(`#${id}`).classList.remove("hidden");
   activePanelId = id;
+  shell.classList.toggle("workflow-compact", id !== "labs");
   backButton.disabled = workflowPanels.indexOf(id) === 0;
   document.querySelectorAll(".steps [data-panel]").forEach((step) => {
     const active = step.dataset.panel === id;

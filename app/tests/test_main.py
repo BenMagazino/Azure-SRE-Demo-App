@@ -1165,6 +1165,8 @@ class ProcessTests(unittest.TestCase):
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        styles = (STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
         manifest = json.loads(
             (STATIC_DIR / "manifest.webmanifest").read_text(encoding="utf-8")
         )
@@ -1179,6 +1181,14 @@ class ProcessTests(unittest.TestCase):
         )
         self.assertEqual(icon[:4], b"\x00\x00\x01\x00")
         self.assertEqual(int.from_bytes(icon[4:6], "little"), 7)
+        self.assertIn('class="brand-logo"', page)
+        self.assertIn('src="/favicon.svg', page)
+        self.assertIn(".workflow-compact .brand-logo", styles)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", styles)
+        self.assertIn(
+            'classList.toggle("workflow-compact", id !== "labs")',
+            script,
+        )
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
