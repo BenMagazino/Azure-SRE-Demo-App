@@ -2667,6 +2667,56 @@ class RequestAuthenticationTests(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
 
 
+class HttpResilienceTests(unittest.TestCase):
+    @patch("app.main.urlopen", side_effect=TimeoutError("timed out"))
+    def test_http_json_returns_transport_failure_for_timeout(self, urlopen) -> None:
+        status, response = http_json(
+            "GET",
+            "https://example.test/api",
+            "token-value",
+            timeout_seconds=12,
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(response, "timed out")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 12)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.http_json")
+    def test_retry_http_json_retries_transient_failure(
+        self,
+        http_json,
+        sleep,
+    ) -> None:
+        http_json.side_effect = [(0, "timed out"), (503, "busy"), (200, "{}")]
+
+        status, response = main_module.retry_http_json(
+            "POST",
+            "https://example.test/api",
+            "token-value",
+            {"name": "connector"},
+            delay_seconds=0.1,
+        )
+
+        self.assertEqual((status, response), (200, "{}"))
+        self.assertEqual(http_json.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(0.1), call(0.1)])
+
+    def test_job_worker_reports_unhandled_failure(self) -> None:
+        job = Job()
+
+        def fail(_job: Job) -> None:
+            raise TimeoutError("must remain diagnostic-only")
+
+        with self.assertLogs(main_module.LOGGER, level="ERROR"):
+            main_module.run_job_worker(job, fail)
+
+        events = list(job.events.queue)
+        self.assertTrue(job.finished)
+        self.assertEqual(events[-1], {"type": "done", "success": False, "exit_code": 1})
+        self.assertNotIn("must remain diagnostic-only", json.dumps(events))
+
+
 class ResponsePlanTests(unittest.TestCase):
     def test_payload_uses_current_incident_filter_schema(self) -> None:
         payload = response_plan_payload(

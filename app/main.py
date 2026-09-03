@@ -957,6 +957,25 @@ CLIENT_HEARTBEAT_LOCK = threading.Lock()
 ACTIVE_SCENARIO_LOCK = threading.Lock()
 LAST_CLIENT_HEARTBEAT: Optional[float] = None
 
+
+def run_job_worker(job: Job, worker: Callable[[Job], None]) -> None:
+    try:
+        worker(job)
+    except Exception:
+        LOGGER.exception(
+            "Unhandled job failure job=%s worker=%s",
+            job.id,
+            getattr(worker, "__name__", worker.__class__.__name__),
+        )
+        job.emit(
+            "error",
+            message=(
+                "The operation stopped unexpectedly. Review the diagnostic log and retry."
+            ),
+        )
+        job.finish(False, 1)
+
+
 INSTALL_COMMANDS = {
     "az": ["app-managed", "azure-cli", AZURE_CLI_VERSION],
     "azd": ["app-managed", "azure-developer-cli", AZD_VERSION],
@@ -4101,8 +4120,8 @@ def create_job(
         redact_command(job.command),
     )
     threading.Thread(
-        target=target,
-        args=(job,),
+        target=run_job_worker,
+        args=(job, target),
         daemon=True,
         name=f"job-{job.id[:8]}",
     ).start()
@@ -4516,6 +4535,7 @@ def http_json(
     url: str,
     token: str,
     payload: Optional[dict[str, Any]] = None,
+    timeout_seconds: float = 90,
 ) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     request = Request(
@@ -4530,12 +4550,40 @@ def http_json(
     )
     request.add_header("Authorization", "Bearer " + token)
     try:
-        with urlopen(request, timeout=90) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             return response.status, response.read().decode("utf-8", errors="replace")
     except HTTPError as error:
         return error.code, error.read().decode("utf-8", errors="replace")
-    except URLError as error:
+    except (OSError, URLError) as error:
         return 0, str(error)
+
+
+def retry_http_json(
+    method: str,
+    url: str,
+    token: str,
+    payload: Optional[dict[str, Any]] = None,
+    *,
+    attempts: int = 3,
+    timeout_seconds: float = 30,
+    delay_seconds: float = 5,
+) -> tuple[int, str]:
+    transient_statuses = {0, 408, 429, 500, 502, 503, 504}
+    status = 0
+    response = ""
+    for attempt in range(attempts):
+        status, response = http_json(
+            method,
+            url,
+            token,
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+        if status not in transient_statuses:
+            return status, response
+        if attempt + 1 < attempts:
+            time.sleep(delay_seconds)
+    return status, response
 
 
 def secret_http_request(
@@ -4978,7 +5026,7 @@ def ensure_zava_core_connectors(
             "tags": [],
             "properties": properties,
         }
-        status, _ = http_json("PUT", url, token, body)
+        status, _ = retry_http_json("PUT", url, token, body)
         if status not in (200, 201, 202, 204):
             job.emit(
                 "error",
@@ -4986,7 +5034,7 @@ def ensure_zava_core_connectors(
                 f"(HTTP {status}).",
             )
             return False
-        status, _ = http_json("GET", url, token)
+        status, _ = retry_http_json("GET", url, token)
         if status != HTTPStatus.OK:
             job.emit(
                 "error",
@@ -4995,7 +5043,7 @@ def ensure_zava_core_connectors(
             )
             return False
         if name == "microsoft-learn":
-            status, response = http_json(
+            status, response = retry_http_json(
                 "POST",
                 f"{url}/testconnection",
                 token,

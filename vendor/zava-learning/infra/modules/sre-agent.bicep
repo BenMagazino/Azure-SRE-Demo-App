@@ -210,15 +210,15 @@ resource miOperatorAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalId: agentUami.properties.principalId
     principalType: 'ServicePrincipal'
   }
+}
 
-  resource postgresStartAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-    name: guid(postgresServer.id, identityId, 'postgres-start-agent')
-    scope: postgresServer
-    properties: {
-      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f8717311-09b5-4153-8abe-edb3c595c35f')
-      principalId: agentUami.properties.principalId
-      principalType: 'ServicePrincipal'
-    }
+resource postgresStartAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(postgresServer.id, identityId, 'postgres-start-agent')
+  scope: postgresServer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f8717311-09b5-4153-8abe-edb3c595c35f')
+    principalId: agentUami.properties.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 
