@@ -1487,6 +1487,29 @@ def save_environment_cache(
         LOGGER.exception("Unable to save the environment discovery cache")
 
 
+def hydrate_zava_local_environment(
+    environment: dict[str, Any],
+    values: dict[str, str],
+) -> None:
+    mappings = (
+        ("location", "AZURE_LOCATION"),
+        ("db_location", "AZURE_DB_LOCATION"),
+        ("agent_location", "AZURE_AGENT_LOCATION"),
+    )
+    runtime_values = environment.setdefault("runtime_values", {})
+    for field, key in mappings:
+        location = normalize_azure_location(values.get(key))
+        if location:
+            environment[field] = location
+            runtime_values[key] = location
+    for key in (
+        "AZURE_RESOURCE_GROUP",
+        "ZAVA_CORE_CONFIG_VERSION",
+    ):
+        if values.get(key):
+            runtime_values[key] = values[key]
+
+
 def probe_http_endpoint(url: str, path: str) -> tuple[bool, str]:
     endpoint = f"{url.rstrip('/')}/{path.lstrip('/')}"
     request = Request(
@@ -1712,11 +1735,7 @@ def discover_existing_environments(
             if not item.get("local"):
                 continue
             local_values = azd_values(str(item["environment"]), lab)
-            version = local_values.get("ZAVA_CORE_CONFIG_VERSION", "")
-            if version:
-                item.setdefault("runtime_values", {})[
-                    "ZAVA_CORE_CONFIG_VERSION"
-                ] = version
+            hydrate_zava_local_environment(item, local_values)
     save_environment_cache(subscription_id, lab_id, environments)
     return {
         "environments": environments,

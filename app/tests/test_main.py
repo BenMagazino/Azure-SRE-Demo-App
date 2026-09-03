@@ -3391,6 +3391,31 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertEqual(environments[0]["db_location"], "westus3")
         self.assertEqual(environments[0]["agent_location"], "westus2")
 
+    def test_local_azd_values_recover_partial_deployment_regions(self) -> None:
+        environment = {
+            "environment": "auto-3",
+            "agent_location": "",
+            "runtime_values": {},
+        }
+
+        main_module.hydrate_zava_local_environment(
+            environment,
+            {
+                "AZURE_LOCATION": "South Central US",
+                "AZURE_DB_LOCATION": "West US 3",
+                "AZURE_AGENT_LOCATION": "East US 2",
+                "AZURE_RESOURCE_GROUP": "rg-zava-learning-auto-3",
+            },
+        )
+
+        self.assertEqual(environment["location"], "southcentralus")
+        self.assertEqual(environment["db_location"], "westus3")
+        self.assertEqual(environment["agent_location"], "eastus2")
+        self.assertEqual(
+            environment["runtime_values"]["AZURE_RESOURCE_GROUP"],
+            "rg-zava-learning-auto-3",
+        )
+
     def test_scenario_signal_queries_match_alert_sources(self) -> None:
         injected = main_module.datetime(2026, 1, 1, tzinfo=main_module.timezone.utc)
         self.assertIn(
