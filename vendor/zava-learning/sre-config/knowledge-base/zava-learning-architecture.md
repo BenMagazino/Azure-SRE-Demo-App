@@ -77,7 +77,8 @@ the edge and replica health are clean, **the database is a surface you must insp
   table scan and quiz loading slows — an index-health problem looks like a latency incident.
 - **Connection pool / roles:** quiz services connect through a least-privilege login. The pool lane
   uses the `app_pool` role; a too-low `rolconnlimit` (per-role connection limit) makes connections
-  fail intermittently **under load** while a single request still succeeds.
+  fail intermittently **under load** while a single request still succeeds. Its healthy controlled
+  baseline is `rolconnlimit = -1` (unlimited).
 - **Credentials (Key Vault):** each lane reads its DB password from Key Vault (`db-password`,
   `db-pool-password`, and the lane-only `db-password-secretlane`). A rotated/invalid secret surfaces as
   **authentication failures** from that lane only. The vault has public access disabled and resolves
@@ -114,7 +115,10 @@ There are several independent surfaces; any one can produce the **same** student
 
 The agent's managed identities have **Reader + Monitoring Reader + Contributor** on the lab resource
 group — enough to read telemetry/config and to remediate (update a blocking NSG rule's access,
-correct an App Gateway probe, restart/scale a Container App). For the controlled
+correct an App Gateway probe, restart/scale a Container App). Through the reporting VM's private
+managed-identity bridge, the permitted database correction is limited to restoring the controlled
+pool baseline with `ALTER ROLE app_pool CONNECTION LIMIT -1`; it must be followed by a `-1` readback
+and concurrent port-8086 verification. For the controlled
 `legacy-cross-subnet-deny` fault, live recovery means changing that exact rule from `Deny` to
 `Allow`; changing only its priority is not a valid mitigation. The agent does **not** have
 `roleAssignments/write`; never attempt `az role assignment create`.

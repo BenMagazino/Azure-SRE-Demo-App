@@ -51,6 +51,15 @@ spec:
                        and escalate instead of polling or writing again.
                        Every note, RCA, and report must state the effective change actually read back:
                        `access: Deny -> Allow`. Never claim a priority-only change restored service.
+                       For `Zava-quiz-errors-elevated` / `quiz-pool`, follow performance-investigation's
+                       mandatory connection-exhaustion workflow. Read `app_pool.rolconnlimit` and
+                       `pg_stat_activity` through the reporting VM bridge, run
+                       `ALTER ROLE app_pool CONNECTION LIMIT -1`, and require the `-1` readback before
+                       refreshing the revision. Restart-only recovery is forbidden. Verify with a
+                       30-request concurrent batch on port 8086 and require 0/30 failures; sparse logs,
+                       a single health check, or a restart are not recovery evidence. After at most
+                       three rounds, escalate with final role/activity/revision/load evidence instead
+                       of repeating writes or health checks.
                        IMMEDIATELY mark the incident MITIGATED on PagerDuty: reload the
                        pagerduty-incident-update skill and post a plain-text "Status: Mitigated" note
                        recording the live fix. The incident stays ACKNOWLEDGED (now mitigated) — do
@@ -108,7 +117,8 @@ spec:
   customReflectionNote: |-
     UNRECOVERED ESCALATION OVERRIDE: If the bounded mitigation verification in the active incident
     skill is exhausted without recovery, stop further health polls and writes. Capture the final
-    rule/configuration, backend-health, endpoint, and replica evidence; post one escalation summary;
+    rule/configuration, database role/activity, backend-health, endpoint, replica, and concurrent-load
+    evidence as applicable; post one escalation summary;
     leave the incident acknowledged and unresolved; and end the autonomous attempt. This is an
     accepted terminal outcome and MUST NOT be rejected merely because the closure artifacts below
     do not exist. Never fabricate recovery to satisfy this gate.
@@ -116,6 +126,14 @@ spec:
     `--access Allow` update is read back and both the `quiz-nsg` backend and port 8081 endpoint recover.
     Every note, RCA, evidence table, and report must state the observed effective change as
     `access: Deny -> Allow`. A priority-only change is never accepted or described as causal recovery.
+    POOL CAUSALITY SELF-AUDIT: For `Zava-quiz-errors-elevated` / `quiz-pool`, recovery is valid only
+    after the reporting VM bridge reads `app_pool.rolconnlimit`, the exact
+    `ALTER ROLE app_pool CONNECTION LIMIT -1` correction succeeds, a second read returns `-1`, and a
+    30-request concurrent batch on port 8086 has 0/30 failures. A revision refresh is allowed only
+    after the database readback. Restart-only mitigation, sparse/zero recent 500 logs, and a single
+    health check must never be credited with recovery or cited as the cause. Exhaust at most three
+    verification rounds, then accept an acknowledged unresolved escalation with the final database,
+    revision, and load evidence.
     For a recovered incident, do not conclude unless ALL of the following exist: (1) a root-cause analysis
     narrative that includes an explicit, rendered 5-Whys ladder (symptom → … → latent cause), not a
     one-line trigger/latent summary. The rendered HTML report's Root Cause section MUST contain a

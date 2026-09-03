@@ -3415,6 +3415,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("did not match", error)
 
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "3")
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
         self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
@@ -3498,6 +3499,91 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             / "configure-agent.mjs"
         ).read_text(encoding="utf-8")
         self.assertIn("mergeEnabled: false", configure_agent)
+
+    def test_performance_runbook_requires_deterministic_pool_recovery(self) -> None:
+        config_root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills"
+            / "performance-investigation" / "SKILL.md",
+            "performance-investigation",
+        )
+        content = skill["skillContent"]
+        self.assertIn(
+            "When the trigger is `Zava-quiz-errors-elevated` or the affected "
+            "workload is `quiz-pool`",
+            content,
+        )
+        self.assertIn("pool-lane database checks below are mandatory", content)
+        self.assertNotIn("Optionally confirm against the database", content)
+        self.assertIn("az vm run-command invoke", content)
+        self.assertIn(
+            "SELECT rolname,rolconnlimit FROM pg_roles "
+            "WHERE rolname='app_pool';",
+            content,
+        )
+        self.assertIn(
+            "FROM pg_stat_activity WHERE usename='app_pool'",
+            content,
+        )
+        self.assertIn(
+            "ALTER ROLE app_pool CONNECTION LIMIT -1",
+            content,
+        )
+        self.assertIn("app_pool.rolconnlimit = -1", content)
+        self.assertIn(
+            "expected side effect of terminating sessions during fault injection",
+            content,
+        )
+        self.assertIn("FORCE_RECONNECT=<timestamp>", content)
+        self.assertIn("Restart-only\n   recovery is forbidden", content)
+        self.assertIn("30 concurrent\n   requests", content)
+        self.assertIn("0/30 failed requests", content)
+        self.assertIn("at most **three verification rounds**", content)
+        self.assertIn("zero recent\n   500 log rows", content)
+        self.assertIn("rolconnlimit: 1 -> -1", content)
+        self.assertIn(
+            "only the controlled pool baseline with "
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            content,
+        )
+
+        responder_source = (
+            config_root / "agent-config" / "agents"
+            / "zava-incident-responder" / "zava-incident-responder.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("POOL CAUSALITY SELF-AUDIT", responder_source)
+        self.assertIn(
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            responder_source,
+        )
+        self.assertIn("require 0/30 failures", responder_source)
+        self.assertIn("Restart-only recovery is forbidden", responder_source)
+        self.assertIn(
+            "A revision refresh is allowed only\n"
+            "    after the database readback",
+            responder_source,
+        )
+        self.assertIn(
+            "accepted terminal outcome",
+            responder_source,
+        )
+
+        architecture = (
+            config_root / "knowledge-base" / "zava-learning-architecture.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "healthy controlled\n  baseline is `rolconnlimit = -1`",
+            architecture,
+        )
+        self.assertIn(
+            "permitted database correction is limited to restoring the "
+            "controlled\npool baseline with "
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            architecture,
+        )
 
     def test_parses_all_weekly_scheduled_task_manifests(self) -> None:
         root = (
