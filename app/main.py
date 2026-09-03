@@ -4664,6 +4664,63 @@ def parse_zava_agent_manifest(
     return properties
 
 
+def zava_response_plan_payload() -> dict[str, Any]:
+    return {
+        "id": "zava-learning-response",
+        "name": "Zava Learning Response",
+        "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
+        "alertId": "",
+        "titleContains": "Zava",
+        "titleContainsAll": [],
+        "titleContainsAny": [],
+        "titleNotContains": [],
+        "handlingAgent": "zava-incident-responder",
+        "agentMode": "autonomous",
+        "maxAutomatedInvestigationAttempts": 3,
+        "mergeEnabled": True,
+        "mergeWindowHours": 3,
+        "isEnabled": True,
+    }
+
+
+def zava_response_plan_is_valid(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("id") == "zava-learning-response"
+        and payload.get("titleContains") == "Zava"
+        and payload.get("handlingAgent") == "zava-incident-responder"
+        and payload.get("agentMode") == "autonomous"
+        and payload.get("isEnabled", True) is True
+    )
+
+
+def ensure_zava_response_plan(
+    endpoint: str,
+    token: str,
+) -> tuple[bool, str]:
+    url = (
+        f"{endpoint.rstrip('/')}/api/v1/incidentPlayground/filters/"
+        "zava-learning-response"
+    )
+    status, response = upsert_response_plan(
+        url,
+        token,
+        zava_response_plan_payload(),
+    )
+    if status not in (200, 201, 202, 204):
+        return False, f"response-plan upsert returned HTTP {status}: {response[:300]}"
+    status, response = http_json("GET", url, token)
+    if status != HTTPStatus.OK:
+        return False, f"response-plan readback returned HTTP {status}"
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        return False, "response-plan readback returned invalid JSON"
+    if not zava_response_plan_is_valid(payload):
+        return False, "response-plan readback did not match the required Zava plan"
+    return True, ""
+
+
 def configure_zava_agent_core(
     job: Job,
     environment: str,
@@ -4799,14 +4856,6 @@ def configure_zava_agent_core(
             )
             return False
 
-    response_plan = {
-        "incidentPlatform": "AzMonitor",
-        "titleContains": "Zava",
-        "handlingAgent": "zava-incident-responder",
-        "agentMode": "autonomous",
-        "maxAutomatedInvestigationAttempts": 3,
-        "isEnabled": True,
-    }
     success, management_token = run_secret_capture(
         [
             "az", "account", "get-access-token",
@@ -4845,23 +4894,14 @@ def configure_zava_agent_core(
                 message=f"Unable to enforce Azure Monitor core mode (HTTP {status}).",
             )
             return False
-        encoded_filter = __import__("base64").b64encode(
-            json.dumps(response_plan, separators=(",", ":")).encode("utf-8")
-        ).decode("ascii")
-        job.emit("step", name="Applying zava-learning-response")
-        status, _ = http_json(
-            "PUT",
-            f"{agent_url}/incidentFilters/zava-learning-response"
-            "?api-version=2025-05-01-preview",
-            management_token,
-            {"properties": {"value": encoded_filter}},
+    job.emit("step", name="Applying and verifying zava-learning-response")
+    plan_ready, plan_error = ensure_zava_response_plan(endpoint, token)
+    if not plan_ready:
+        job.emit(
+            "error",
+            message=f"Unable to configure zava-learning-response: {plan_error}.",
         )
-        if status not in (200, 201, 202, 204):
-            job.emit(
-                "error",
-                message=f"Unable to apply zava-learning-response (HTTP {status}).",
-            )
-            return False
+        return False
     saved, error = set_azd_values(
         environment,
         {"ZAVA_CORE_CONFIG_VERSION": ZAVA_CORE_CONFIG_VERSION},
@@ -5144,26 +5184,12 @@ def configure_zava_optional_integrations(
         return False, status_by_integration
 
     if requested["pagerduty"]:
-        response_plan = {
-            "incidentPlatform": "PagerDuty",
-            "titleContains": "Zava",
-            "handlingAgent": "zava-incident-responder",
-            "agentMode": "autonomous",
-            "maxAutomatedInvestigationAttempts": 3,
-            "isEnabled": True,
-        }
-        encoded = __import__("base64").b64encode(
-            json.dumps(response_plan, separators=(",", ":")).encode("utf-8")
-        ).decode("ascii")
-        code, _ = http_json(
-            "PUT",
-            f"{agent_url}/incidentFilters/zava-learning-response"
-            "?api-version=2025-05-01-preview",
-            management_token,
-            {"properties": {"value": encoded}},
-        )
-        if code not in (200, 201, 202, 204):
-            job.emit("error", message=f"PagerDuty response plan failed (HTTP {code}).")
+        plan_ready, plan_error = ensure_zava_response_plan(endpoint, data_token)
+        if not plan_ready:
+            job.emit(
+                "error",
+                message=f"PagerDuty response plan failed: {plan_error}.",
+            )
             return False, status_by_integration
     return True, status_by_integration
 

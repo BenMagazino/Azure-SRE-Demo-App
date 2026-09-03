@@ -3253,6 +3253,40 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertEqual(links[3]["value"], "Open learning portal")
         self.assertFalse(any(link["id"].startswith("lane-") for link in links))
 
+    @patch("app.main.http_json")
+    @patch("app.main.upsert_response_plan")
+    def test_zava_response_plan_requires_successful_readback(
+        self,
+        upsert,
+        http_json,
+    ) -> None:
+        payload = main_module.zava_response_plan_payload()
+        upsert.return_value = (200, json.dumps(payload))
+        http_json.return_value = (200, json.dumps(payload))
+
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(error, "")
+        upsert.assert_called_once()
+        http_json.assert_called_once_with(
+            "GET",
+            "https://agent.example.test/api/v1/incidentPlayground/filters/"
+            "zava-learning-response",
+            "token",
+        )
+
+        http_json.return_value = (404, "")
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+        )
+        self.assertFalse(ready)
+        self.assertIn("readback returned HTTP 404", error)
+
     def test_discovery_preserves_all_three_zava_regions(self) -> None:
         environments = build_existing_environment_catalog(
             [{
