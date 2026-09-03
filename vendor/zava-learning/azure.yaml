@@ -19,15 +19,18 @@ services:
     host: containerapp
     docker:
       path: ./Dockerfile
+      remoteBuild: true
   course-api:
     project: ./src/course-api
     language: js
     host: containerapp
     docker:
       path: ./Dockerfile
+      remoteBuild: true
   assessment-api:
     project: ./src/assessment-api
     language: js
     host: containerapp
     docker:
       path: ./Dockerfile
+      remoteBuild: true

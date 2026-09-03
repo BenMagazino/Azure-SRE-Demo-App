@@ -3221,6 +3221,42 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.zava_scenario_signal_query("disk", injected),
         )
 
+    def test_zava_azure_yaml_uses_remote_container_builds(self) -> None:
+        azure_yaml = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "azure.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(azure_yaml.count("remoteBuild: true"), 3)
+
+    @patch("app.main.resolved_process_command", return_value=["tool"])
+    @patch("app.main.subprocess.Popen")
+    def test_process_output_redacts_environment_values(
+        self,
+        popen,
+        _resolved,
+    ) -> None:
+        process = MagicMock()
+        process.pid = 123
+        process.stdout = iter(["failure included PreviewOnly-Secret\n"])
+        process.wait.return_value = 1
+        popen.return_value = process
+        job = Job()
+
+        success, output = run_process(
+            job,
+            ["tool"],
+            environment_overrides={"PASSWORD": "PreviewOnly-Secret"},
+        )
+
+        self.assertFalse(success)
+        self.assertNotIn("PreviewOnly-Secret", output)
+        self.assertIn("<redacted-environment-value>", output)
+        self.assertNotIn(
+            "PreviewOnly-Secret",
+            json.dumps(list(job.events.queue)),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

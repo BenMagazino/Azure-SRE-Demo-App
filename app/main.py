@@ -3017,13 +3017,20 @@ def run_process(
         assert process.stdout is not None
         for raw_line in process.stdout:
             line = raw_line.rstrip()
+            safe_line = redact_text(line)
+            for sensitive_value in (environment_overrides or {}).values():
+                if sensitive_value:
+                    safe_line = safe_line.replace(
+                        sensitive_value,
+                        "<redacted-environment-value>",
+                    )
             if not no_log_output:
-                captured.append(line)
+                captured.append(safe_line)
                 LOGGER.debug(
                     "job=%s pid=%s output=%s",
                     job.id,
                     process.pid,
-                    redact_text(line),
+                    safe_line,
                 )
             if line_interceptor and line_interceptor(line):
                 LOGGER.info(
@@ -3035,7 +3042,7 @@ def run_process(
                 break
             if no_log_output:
                 continue
-            job.emit("output", line=line)
+            job.emit("output", line=safe_line)
             device = parse_device_code(line)
             if device:
                 browser_opened = open_browser_url(device["verification_url"])
@@ -5694,7 +5701,6 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         ["azd", "provision", "--preview", "-e", environment, "--no-prompt"],
         vendor_dir,
         environment_overrides=process_environment,
-        no_log_output=True,
     )
     if not success:
         job.emit("error", message="Zava infrastructure preview failed.")
