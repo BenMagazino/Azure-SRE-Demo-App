@@ -3697,7 +3697,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertEqual(alerts.count("autoMitigate: true"), len(expected_alerts))
 
     @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
-    @patch("app.main.generate_zava_scenario_traffic", return_value=(True, "impact"))
+    @patch("app.main.wait_for_zava_customer_impact", return_value=(True, "impact"))
     @patch("app.main.probe_http_endpoint", return_value=(True, ""))
     @patch("app.main.run_process", return_value=(True, ""))
     @patch("app.main.azd_values")
@@ -3746,6 +3746,149 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                     events[countdown_index]["scenario_id"],
                     scenario.id,
                 )
+
+    @patch("app.main.wait_for_zava_monitor_signal")
+    @patch(
+        "app.main.wait_for_zava_customer_impact",
+        return_value=(False, "no required impact within 240 seconds"),
+    )
+    @patch("app.main.probe_http_endpoint", return_value=(True, ""))
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch(
+        "app.main.azd_values",
+        return_value={
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+            "APPGW_PUBLIC_FQDN": "zava.example.test",
+            "LOG_ANALYTICS_WORKSPACE_ID": "workspace",
+        },
+    )
+    @patch(
+        "app.main.load_state",
+        return_value={
+            "lab_id": "zava-learning",
+            "environment": "demo",
+            "resource_group": "rg-zava",
+            "scenario_id": "appgw",
+        },
+    )
+    def test_appgw_countdown_does_not_start_when_impact_deadline_expires(
+        self,
+        _load_state,
+        _azd_values,
+        _run_process,
+        _probe,
+        _wait_for_impact,
+        wait_for_signal,
+    ) -> None:
+        job = Job()
+
+        main_module._run_zava_scenario(job)
+
+        events = list(job.events.queue)
+        self.assertFalse(
+            any(event["type"] == "investigation_countdown" for event in events)
+        )
+        wait_for_signal.assert_not_called()
+        self.assertTrue(
+            any(
+                event["type"] == "error"
+                and "expected customer impact was not observed"
+                in event["message"]
+                for event in events
+            )
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_appgw_customer_impact_polls_until_gateway_converges(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "appgw"
+        )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests returned a failure"),
+            (False, "0/12 requests returned a failure"),
+            (True, "6/12 requests returned a failure"),
+        ]
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8082",
+            timeout_seconds=60,
+            retry_seconds=5,
+        )
+
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(5), call(5)])
+        self.assertEqual(
+            detail,
+            "6/12 requests returned a failure after 3 traffic batches",
+        )
+
+    @patch("app.main.time.sleep")
+    @patch(
+        "app.main.generate_zava_scenario_traffic",
+        return_value=(False, "0/12 requests returned a failure"),
+    )
+    def test_non_appgw_customer_impact_uses_one_batch(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "nsg"
+        )
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8081",
+        )
+
+        self.assertFalse(impact)
+        self.assertEqual(detail, "0/12 requests returned a failure")
+        generate_traffic.assert_called_once_with(
+            scenario,
+            "http://zava.example.test:8081",
+        )
+        sleep.assert_not_called()
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 10])
+    @patch(
+        "app.main.generate_zava_scenario_traffic",
+        return_value=(False, "0/12 requests returned a failure"),
+    )
+    def test_appgw_customer_impact_stops_at_convergence_deadline(
+        self,
+        generate_traffic,
+        _monotonic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "appgw"
+        )
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8082",
+            timeout_seconds=10,
+            retry_seconds=10,
+        )
+
+        self.assertFalse(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(10)
+        self.assertIn("after 2 traffic batches within 10 seconds", detail)
 
     def test_zava_azure_yaml_uses_remote_container_builds(self) -> None:
         azure_yaml = (

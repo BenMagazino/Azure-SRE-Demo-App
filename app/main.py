@@ -640,6 +640,10 @@ ZAVA_CONTAINER_APPS = frozenset({
     "quiz-secret",
 })
 ZAVA_LANE_PORTS = tuple(range(8081, 8088))
+ZAVA_IMPACT_CONVERGENCE_SECONDS = {
+    "appgw": 240,
+}
+ZAVA_IMPACT_RETRY_SECONDS = 15
 ZAVA_CORE_AGENTS = (
     "zava-cost-analyst",
     "zava-incident-responder",
@@ -6980,6 +6984,41 @@ def generate_zava_scenario_traffic(
     )
 
 
+def wait_for_zava_customer_impact(
+    scenario: ScenarioDefinition,
+    scenario_url: str,
+    timeout_seconds: Optional[float] = None,
+    retry_seconds: float = ZAVA_IMPACT_RETRY_SECONDS,
+) -> tuple[bool, str]:
+    convergence_seconds = (
+        float(ZAVA_IMPACT_CONVERGENCE_SECONDS.get(scenario.id, 0))
+        if timeout_seconds is None
+        else max(0.0, timeout_seconds)
+    )
+    deadline = time.monotonic() + convergence_seconds
+    batches = 0
+    while True:
+        batches += 1
+        impact, detail = generate_zava_scenario_traffic(scenario, scenario_url)
+        if impact:
+            suffix = (
+                f" after {batches} traffic batches"
+                if batches > 1
+                else ""
+            )
+            return True, detail + suffix
+        if convergence_seconds == 0:
+            return False, detail
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return (
+                False,
+                f"{detail}; no required impact after {batches} traffic batches "
+                f"within {convergence_seconds:g} seconds",
+            )
+        time.sleep(min(retry_seconds, remaining))
+
+
 def zava_scenario_signal_query(
     scenario_id: str,
     injected_at: datetime,
@@ -7137,7 +7176,7 @@ def _run_zava_scenario(job: Job) -> None:
         return
     job.emit("phase", name="generating_telemetry", scenario_id=scenario.id)
     if scenario.web_health:
-        impact, impact_detail = generate_zava_scenario_traffic(
+        impact, impact_detail = wait_for_zava_customer_impact(
             scenario,
             scenario_url,
         )
