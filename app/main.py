@@ -641,6 +641,17 @@ ZAVA_CONTAINER_APPS = frozenset({
     "quiz-secret",
 })
 ZAVA_LANE_PORTS = tuple(range(8081, 8088))
+ZAVA_SCENARIO_ALERT_NAMES = {
+    "nsg": "Zava-quiz-launch-failing",
+    "appgw": "Zava-portal-5xx-elevated",
+    "app": "Zava-quiz-content-unavailable",
+    "perf": "Zava-quiz-api-latency-elevated",
+    "query": "Zava-quiz-loading-latency-elevated",
+    "pool": "Zava-quiz-errors-elevated",
+    "secret": "Zava-quiz-launch-errors-elevated",
+    "disk": "Zava-grade-exports-failing",
+}
+ZAVA_REQUIRED_ALERT_COUNT = len(ZAVA_SCENARIO_ALERT_NAMES)
 ZAVA_IMPACT_CONVERGENCE_SECONDS = {
     "appgw": 240,
     "perf": 240,
@@ -2210,7 +2221,10 @@ def validate_zava_existing_lab(
             "VM data collection rule",
             1,
         ),
-        "microsoft.insights/scheduledqueryrules": ("Zava symptom alerts", 4),
+        "microsoft.insights/scheduledqueryrules": (
+            "Zava symptom alerts",
+            ZAVA_REQUIRED_ALERT_COUNT,
+        ),
     }
     issues = []
     if (
@@ -2228,6 +2242,25 @@ def validate_zava_existing_lab(
         count = len(resources_by_type.get(resource_type, []))
         if count < minimum:
             issues.append(f"Missing {label} (expected at least {minimum}, found {count}).")
+    scheduled_query_rules = resources_by_type.get(
+        "microsoft.insights/scheduledqueryrules",
+        [],
+    )
+    deployed_alert_names = {
+        str(alert.get("name") or "").casefold()
+        for alert in scheduled_query_rules
+    }
+    missing_alert_names = [
+        name
+        for name in ZAVA_SCENARIO_ALERT_NAMES.values()
+        if name.casefold() not in deployed_alert_names
+    ]
+    if missing_alert_names:
+        issues.append(
+            "Missing Zava scenario alerts: "
+            + ", ".join(missing_alert_names)
+            + "."
+        )
     for resource in resources:
         provisioning_state = str(resource.get("provisioningState") or "").strip()
         if provisioning_state and provisioning_state.casefold() != "succeeded":
@@ -2293,7 +2326,7 @@ def validate_zava_existing_lab(
         if not available:
             issues.append(f"Zava Container App {name} is not ready.")
     alert_issues, alert_checks = validate_metric_alert_availability(
-        resources_by_type.get("microsoft.insights/scheduledqueryrules", [])
+        scheduled_query_rules
     )
     issues.extend(alert_issues)
     availability_checks.extend(alert_checks)

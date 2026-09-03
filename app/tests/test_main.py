@@ -3670,48 +3670,127 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             / "modules"
             / "alerts.bicep"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            'listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", '
-            '"quiz-secret-listener")',
-            alerts,
-        )
-        self.assertIn(
-            'listenerName_s == "quiz-nsg-listener" and '
-            "(status == 499 or status >= 500)",
-            alerts,
-        )
-        self.assertIn(
-            'listenerName_s == "quiz-app-listener" and '
-            "(status == 404 or status >= 500)",
-            alerts,
-        )
-        self.assertIn(
-            'listenerName_s == "quiz-secret-listener" and status >= 500',
-            alerts,
-        )
-        self.assertIn(
-            'listenerName_s == "quiz-appgw-listener"',
-            alerts,
-        )
-        self.assertIn(
-            'listenerName_s == "quiz-pool-listener"',
-            alerts,
-        )
-        self.assertIn(
-            'ContainerAppName_s in ("quiz-perf", "quiz-query")',
-            alerts,
-        )
-        self.assertNotIn('ContainerAppName_s startswith "quiz-"', alerts)
         expected_alerts = {
-            "Zava-grade-exports-failing",
-            "Zava-portal-5xx-elevated",
-            "Zava-quiz-api-latency-elevated",
-            "Zava-quiz-errors-elevated",
-            "Zava-quiz-launch-failing",
+            "nsg": (
+                "Zava-quiz-launch-failing",
+                'listenerName_s == "quiz-nsg-listener"',
+                "| where status == 499 or status >= 500",
+            ),
+            "appgw": (
+                "Zava-portal-5xx-elevated",
+                'listenerName_s == "quiz-appgw-listener"',
+                "| where status >= 500",
+            ),
+            "app": (
+                "Zava-quiz-content-unavailable",
+                'listenerName_s == "quiz-app-listener"',
+                "| where status == 404 or status >= 500",
+            ),
+            "perf": (
+                "Zava-quiz-api-latency-elevated",
+                'ContainerAppName_s == "quiz-perf"',
+                "| summarize P95 = percentile(ms, 95)",
+            ),
+            "query": (
+                "Zava-quiz-loading-latency-elevated",
+                'ContainerAppName_s == "quiz-query"',
+                "| summarize P95 = percentile(ms, 95)",
+            ),
+            "pool": (
+                "Zava-quiz-errors-elevated",
+                'listenerName_s == "quiz-pool-listener"',
+                "| where status >= 500",
+            ),
+            "secret": (
+                "Zava-quiz-launch-errors-elevated",
+                'listenerName_s == "quiz-secret-listener"',
+                "| where status >= 500",
+            ),
+            "disk": (
+                "Zava-grade-exports-failing",
+                'ProcessName == "zava-export"',
+                'SyslogMessage has "FAILED"',
+            ),
         }
-        for alert_name in expected_alerts:
-            with self.subTest(alert_name=alert_name):
-                self.assertIn(f"name: '{alert_name}'", alerts)
+        expected_alert_names = {
+            scenario_id: contract[0]
+            for scenario_id, contract in expected_alerts.items()
+        }
+        self.assertEqual(
+            main_module.ZAVA_SCENARIO_ALERT_NAMES,
+            expected_alert_names,
+        )
+        self.assertEqual(main_module.ZAVA_REQUIRED_ALERT_COUNT, 8)
+        root_cause_tokens = {
+            "app",
+            "appgw",
+            "connection",
+            "credential",
+            "database",
+            "disk",
+            "nsg",
+            "pool",
+            "query",
+            "release",
+            "secret",
+        }
+        for alert_name in expected_alert_names.values():
+            with self.subTest(symptom_only_name=alert_name):
+                self.assertTrue(
+                    set(alert_name.casefold().split("-")).isdisjoint(
+                        root_cause_tokens
+                    )
+                )
+        self.assertEqual(
+            alerts.count(
+                "'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {"
+            ),
+            len(expected_alerts),
+        )
+        for scenario_id, contract in expected_alerts.items():
+            alert_name, *required_fragments = contract
+            with self.subTest(scenario_id=scenario_id, alert_name=alert_name):
+                name_marker = f"name: '{alert_name}'"
+                start = alerts.index(name_marker)
+                end = alerts.find("\nresource ", start)
+                if end < 0:
+                    end = alerts.find("\noutput ", start)
+                alert_block = alerts[start:end]
+                for fragment in required_fragments:
+                    self.assertIn(fragment, alert_block)
+                self.assertIn("| where TimeGenerated >= ago(30m)", alert_block)
+                self.assertIn(
+                    "| where ingestion_time() >= ago(10m)",
+                    alert_block,
+                )
+                self.assertIn(
+                    "scopes: [ logAnalyticsWorkspaceId ]",
+                    alert_block,
+                )
+                self.assertIn("autoMitigate: true", alert_block)
+                self.assertIn(
+                    "actions: { actionGroups: routePagerDuty ?",
+                    alert_block,
+                )
+        for alert_name in (
+            "Zava-portal-5xx-elevated",
+            "Zava-quiz-errors-elevated",
+            "Zava-quiz-launch-errors-elevated",
+        ):
+            start = alerts.index(f"name: '{alert_name}'")
+            end = alerts.find("\nresource ", start)
+            alert_block = alerts[start:end]
+            self.assertNotIn("status == 404", alert_block)
+            self.assertNotIn("status == 499", alert_block)
+        nsg_start = alerts.index("name: 'Zava-quiz-launch-failing'")
+        nsg_end = alerts.find("\nresource ", nsg_start)
+        self.assertNotIn("status == 404", alerts[nsg_start:nsg_end])
+        app_start = alerts.index("name: 'Zava-quiz-content-unavailable'")
+        app_end = alerts.find("\nresource ", app_start)
+        self.assertNotIn("status == 499", alerts[app_start:app_end])
+        self.assertNotIn("listenerName_s in (", alerts)
+        self.assertNotIn("ContainerAppName_s in (", alerts)
+        self.assertNotIn('ContainerAppName_s startswith "quiz-"', alerts)
         self.assertIn("var alertEvaluationFrequency = 'PT5M'", alerts)
         self.assertIn("var delayedTelemetryWindow = 'PT30M'", alerts)
         self.assertEqual(
@@ -3733,23 +3812,34 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertNotIn("by bin(TimeGenerated, 5m)", alerts)
         self.assertEqual(
             alerts.count("| summarize AggregatedValue = count()"),
-            4,
+            6,
         )
         self.assertEqual(
             alerts.count("| summarize P95 = percentile(ms, 95)"),
-            1,
+            2,
         )
         self.assertEqual(
             alerts.count(
                 "| project AggregatedValue = coalesce(todouble(P95), 0.0)"
             ),
-            1,
+            2,
         )
         self.assertEqual(
             alerts.count("scopes: [ logAnalyticsWorkspaceId ]"),
             len(expected_alerts),
         )
         self.assertEqual(alerts.count("autoMitigate: true"), len(expected_alerts))
+        simulator = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "simulator"
+            / "demo.py"
+        ).read_text(encoding="utf-8")
+        simulator_alerts = re.findall(
+            r'"symptom_alert": "([^"]+)"',
+            simulator,
+        )
+        self.assertEqual(len(simulator_alerts), len(expected_alerts))
+        self.assertEqual(set(simulator_alerts), set(expected_alert_names.values()))
 
     @patch("app.main.time.sleep")
     @patch("app.main.time.monotonic", side_effect=[0, 0, 10, 30])

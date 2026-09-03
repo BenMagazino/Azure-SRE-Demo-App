@@ -121,8 +121,9 @@ correct an App Gateway probe, restart/scale a Container App). For the controlled
 
 ## Incident lifecycle in this lab
 
-- Alerts are **symptom-only** (e.g. `Zava-quiz-launch-failing`, `Zava-portal-5xx-elevated`). They never
-  name NSG/LB/AppGW/app — that's the diagnosis.
+- All eight scenarios have an independent **symptom-only** alert (for example,
+  `Zava-quiz-launch-failing` and `Zava-portal-5xx-elevated`). Each alert is isolated to one
+  listener, workload, or export signal and never names the underlying fault — that's the diagnosis.
 - Response-plan merging is disabled so each scenario alert creates its own independently verifiable
   incident thread, even when all eight demos run sequentially within a few hours.
 - Incidents are managed in **PagerDuty**: Azure Monitor raises the PagerDuty incident; the agent

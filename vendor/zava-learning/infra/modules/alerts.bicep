@@ -56,7 +56,65 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where (listenerName_s == "quiz-nsg-listener" and (status == 499 or status >= 500))\n    or (listenerName_s == "quiz-app-listener" and (status == 404 or status >= 500))\n    or (listenerName_s == "quiz-secret-listener" and status >= 500)\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-nsg-listener"\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count()'
+          metricMeasureColumn: 'AggregatedValue'
+          timeAggregation: 'Total'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
+        }
+      ]
+    }
+    skipQueryValidation: true
+    autoMitigate: true
+    actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
+  }
+}
+
+resource quizContentUnavailable 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'Zava-quiz-content-unavailable'
+  location: location
+  tags: tags
+  properties: {
+    description: 'Quiz content is unavailable to students.'
+    severity: 1
+    enabled: true
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
+    scopes: [ logAnalyticsWorkspaceId ]
+    criteria: {
+      allOf: [
+        {
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-app-listener"\n| extend status = toint(httpStatus_d)\n| where status == 404 or status >= 500\n| summarize AggregatedValue = count()'
+          metricMeasureColumn: 'AggregatedValue'
+          timeAggregation: 'Total'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
+        }
+      ]
+    }
+    skipQueryValidation: true
+    autoMitigate: true
+    actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
+  }
+}
+
+resource quizLaunchErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'Zava-quiz-launch-errors-elevated'
+  location: location
+  tags: tags
+  properties: {
+    description: 'Quiz launches consistently return errors for students.'
+    severity: 1
+    enabled: true
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
+    scopes: [ logAnalyticsWorkspaceId ]
+    criteria: {
+      allOf: [
+        {
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-secret-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -143,7 +201,36 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s in ("quiz-perf", "quiz-query")\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize P95 = percentile(ms, 95)\n| project AggregatedValue = coalesce(todouble(P95), 0.0)'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize P95 = percentile(ms, 95)\n| project AggregatedValue = coalesce(todouble(P95), 0.0)'
+          metricMeasureColumn: 'AggregatedValue'
+          timeAggregation: 'Average'
+          operator: 'GreaterThan'
+          threshold: 500
+          failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
+        }
+      ]
+    }
+    skipQueryValidation: true
+    autoMitigate: true
+    actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
+  }
+}
+
+resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'Zava-quiz-loading-latency-elevated'
+  location: location
+  tags: tags
+  properties: {
+    description: 'Quiz loading times are elevated for students.'
+    severity: 2
+    enabled: true
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
+    scopes: [ logAnalyticsWorkspaceId ]
+    criteria: {
+      allOf: [
+        {
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize P95 = percentile(ms, 95)\n| project AggregatedValue = coalesce(todouble(P95), 0.0)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Average'
           operator: 'GreaterThan'
