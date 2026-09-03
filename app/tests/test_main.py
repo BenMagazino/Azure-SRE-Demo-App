@@ -3415,7 +3415,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("did not match", error)
 
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
-        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "3")
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "4")
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
         self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
@@ -3582,6 +3582,136 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             "permitted database correction is limited to restoring the "
             "controlled\npool baseline with "
             "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            architecture,
+        )
+
+    def test_secret_recovery_preserves_dedicated_reference(self) -> None:
+        vendor_root = main_module.vendor_dir_for_lab(
+            main_module.LABS_BY_ID["zava-learning"]
+        )
+        chaos_root = vendor_root / "chaos"
+        common = (chaos_root / "_common.ps1").read_text(encoding="utf-8")
+        break_secret = (chaos_root / "break-secret.ps1").read_text(
+            encoding="utf-8"
+        )
+        fix_secret = (chaos_root / "fix-secret.ps1").read_text(
+            encoding="utf-8"
+        )
+        reset = (chaos_root / "reset.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("function Ensure-SecretLaneReference", common)
+        self.assertIn("function Assert-SecretLaneReference", common)
+        self.assertIn("function Wait-SecretLaneRecovery", common)
+        self.assertIn(
+            'keyVaultUrl = "$vaultUri/secrets/db-password-secretlane"',
+            common,
+        )
+        self.assertIn('$identityName = "id-zava-$token"', common)
+        self.assertIn(
+            "--query \"[?name=='$SecretName'] | "
+            "[0].{keyVaultUrl:keyVaultUrl,identity:identity}\"",
+            common,
+        )
+        self.assertIn("az containerapp identity assign", common)
+        self.assertIn(
+            '"pg-password=keyvaultref:$($expected.keyVaultUrl),'
+            'identityref:$($expected.identity)"',
+            common,
+        )
+        self.assertIn("az containerapp secret set", common)
+        self.assertIn(
+            'if [ "$destination_value" = "$source_value" ]; then',
+            common,
+        )
+        self.assertIn("$state.latest -ne $PreviousRevision", common)
+        self.assertIn('$runningState -eq "Running"', common)
+        self.assertIn("$statusCode -eq 200", common)
+        self.assertIn("Assert-SecretLaneReference", common)
+        self.assertNotIn("--show-values", common)
+
+        break_ensure = break_secret.index("Ensure-SecretLaneReference")
+        break_rotate = break_secret.index("Set-KvSecret")
+        break_revision = break_secret.index("az containerapp update")
+        break_assert = break_secret.index("Assert-SecretLaneReference")
+        self.assertLess(break_ensure, break_rotate)
+        self.assertLess(break_rotate, break_revision)
+        self.assertLess(break_revision, break_assert)
+        self.assertIn('-Name "db-password-secretlane"', break_secret)
+
+        fix_copy = fix_secret.index("Copy-KvSecret")
+        fix_ensure = fix_secret.index("Ensure-SecretLaneReference")
+        fix_revision = fix_secret.index("az containerapp update")
+        fix_verify = fix_secret.index("Wait-SecretLaneRecovery")
+        self.assertLess(fix_copy, fix_ensure)
+        self.assertLess(fix_ensure, fix_revision)
+        self.assertLess(fix_revision, fix_verify)
+        self.assertIn('-SourceName "db-password"', fix_secret)
+        self.assertIn(
+            '-DestinationName "db-password-secretlane"',
+            fix_secret,
+        )
+        self.assertIn(
+            '-PreviousRevision $previousRevision',
+            fix_secret,
+        )
+        self.assertIn('"fix-$target.ps1"', reset)
+
+        config_root = vendor_root / "sre-config"
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills"
+            / "performance-investigation" / "SKILL.md",
+            "performance-investigation",
+        )["skillContent"]
+        self.assertIn("### Mandatory invalid-secret workflow", skill)
+        self.assertIn(
+            "The only valid\n   reference is the **versionless** URL ending "
+            "`/secrets/db-password-secretlane`",
+            skill,
+        )
+        self.assertIn(
+            "only permitted secret-value mutation",
+            skill,
+        )
+        self.assertIn(
+            "Repointing `pg-password` to the shared\n"
+            "   `/secrets/db-password` reference is prohibited",
+            skill,
+        )
+        self.assertIn("Never request, print, log, or attach a secret value", skill)
+        self.assertIn("Check at most 17 times, 15 seconds apart", skill)
+        self.assertIn(
+            "a second metadata readback still ending\n"
+            "   `/secrets/db-password-secretlane`",
+            skill,
+        )
+
+        responder = (
+            config_root / "agent-config" / "agents"
+            / "zava-incident-responder" / "zava-incident-responder.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("SECRET CAUSALITY SELF-AUDIT", responder)
+        self.assertIn(
+            "Repointing it to shared `/secrets/db-password` is\n"
+            "                       prohibited",
+            responder,
+        )
+        self.assertIn(
+            "the dedicated URL and\n"
+            "                       UAMI still read back",
+            responder,
+        )
+        self.assertIn("never secret values", responder)
+
+        architecture = (
+            config_root / "knowledge-base" / "zava-learning-architecture.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "`quiz-secret` must always bind `pg-password` to the versionless",
+            architecture,
+        )
+        self.assertIn(
+            "the shared `/secrets/db-password` reference is never a valid "
+            "recovery",
             architecture,
         )
 

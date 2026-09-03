@@ -8,8 +8,11 @@ param(
 )
 . "$PSScriptRoot\_common.ps1"
 
+Write-Host "[break-secret] Verifying the isolated secret-lane reference..." -ForegroundColor Yellow
+Ensure-SecretLaneReference -ResourceGroup $ResourceGroup -AppName $AppName
+
 Write-Host "[break-secret] Rotating the secret-lane DB password to an invalid value..." -ForegroundColor Yellow
-$stamp = Get-Date -Format "yyyyMMddHHmmss"
+$stamp = Get-Date -Format "yyyyMMddHHmmssfff"
 Set-KvSecret -ResourceGroup $ResourceGroup -Name "db-password-secretlane" -Value "rotated-invalid-$stamp"
 
 Write-Host "  Forcing $AppName to re-read Key Vault secret state..." -ForegroundColor Gray
@@ -17,6 +20,7 @@ az containerapp update --resource-group $ResourceGroup --name $AppName --set-env
 if ($LASTEXITCODE -ne 0) {
   throw "[break-secret] The Container App did not accept the secret refresh; fault was not injected."
 }
+Assert-SecretLaneReference -ResourceGroup $ResourceGroup -AppName $AppName
 
 Write-Host "[break-secret] Live secret drift applied. The secret lane will fail DB authentication." -ForegroundColor Red
 New-PagerDutyIncident -Title "Zava quiz service failing — authentication errors" `

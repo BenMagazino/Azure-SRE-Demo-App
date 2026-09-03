@@ -60,6 +60,15 @@ spec:
                        a single health check, or a restart are not recovery evidence. After at most
                        three rounds, escalate with final role/activity/revision/load evidence instead
                        of repeating writes or health checks.
+                       For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, copy the baseline
+                       `db-password` value only into `db-password-secretlane` through the reporting VM
+                       bridge; never print either value. Read and, if needed, restore `pg-password` to
+                       the versionless Key Vault URL ending `/secrets/db-password-secretlane` with the
+                       expected Zava app UAMI. Repointing it to shared `/secrets/db-password` is
+                       prohibited. Create a new revision only after the value and reference readbacks.
+                       Recovery requires the new revision latest-ready/Running, the dedicated URL and
+                       UAMI still read back, and port 8087 `/quiz/BIO-101` returns HTTP 200. Check at
+                       most 17 times, 15 seconds apart; otherwise escalate with secret-safe evidence.
                        IMMEDIATELY mark the incident MITIGATED on PagerDuty: reload the
                        pagerduty-incident-update skill and post a plain-text "Status: Mitigated" note
                        recording the live fix. The incident stays ACKNOWLEDGED (now mitigated) — do
@@ -134,6 +143,14 @@ spec:
     health check must never be credited with recovery or cited as the cause. Exhaust at most three
     verification rounds, then accept an acknowledged unresolved escalation with the final database,
     revision, and load evidence.
+    SECRET CAUSALITY SELF-AUDIT: For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, reject
+    completion unless the baseline value was copied only into `db-password-secretlane`, the
+    `pg-password` metadata readback still ends `/secrets/db-password-secretlane` with the expected
+    Zava app UAMI, a new revision is latest-ready and `Running`, and port 8087 `/quiz/BIO-101` returns
+    HTTP 200. A shared `/secrets/db-password` reference is prohibited even when the endpoint is
+    healthy. Evidence must contain only URL/identity/revision/status metadata and never secret values.
+    Exhaust the bounded checks, then accept acknowledged unresolved escalation rather than repointing
+    the reference, restarting repeatedly, or fabricating recovery.
     For a recovered incident, do not conclude unless ALL of the following exist: (1) a root-cause analysis
     narrative that includes an explicit, rendered 5-Whys ladder (symptom → … → latent cause), not a
     one-line trigger/latent summary. The rendered HTML report's Root Cause section MUST contain a

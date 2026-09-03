@@ -685,7 +685,7 @@ ZAVA_CORE_SKILLS = (
     "zava-audit-report",
     "zava-reporting",
 )
-ZAVA_CORE_CONFIG_VERSION = "3"
+ZAVA_CORE_CONFIG_VERSION = "4"
 ZAVA_OPTIONAL_SKILLS = {
     "pagerduty": "pagerduty-incident-update",
     "servicenow": "servicenow-change-management",

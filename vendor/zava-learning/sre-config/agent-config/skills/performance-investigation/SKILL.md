@@ -72,23 +72,45 @@ relevant database state. The pool-lane database checks below are mandatory, not 
      A missing index on `question_bank` with seq-scans climbing is the root cause; the durable fix is
      to (re)build it (REINDEX/CREATE INDEX) — delivered as a PR.
    - **Errors under load (pool lane, db `zava`):** follow the mandatory deterministic workflow below.
-   - **Authentication errors (secret lane):** the lane's Key Vault DB secret (`db-password-secretlane`)
-     was rotated to an invalid value — confirm the auth-failure log signature; the fix is to **restore a
-     valid value INTO `db-password-secretlane`**. Use `az vm run-command invoke` so the reporting VM
-     privately reads `db-password` and writes that value to `db-password-secretlane` with its managed
-     identity, without printing either value. Then force the lane to re-read it by **creating a NEW revision**
-     (`az containerapp update --set-env-vars FORCE_ROTATE=<timestamp>`). A plain `az containerapp
-     revision restart` is NOT enough — Container Apps resolve Key Vault secret references at
-     revision-creation time, so a restart reuses the cached (still-invalid) value; only a new revision
-     re-reads the secret. Then re-check the lane returns 200. Do **NOT** run `az containerapp secret set` /
-     re-assert the secret's `identityref` (unnecessary — the reference is already correct), and do **NOT**
-     repoint `pg-password` to a different Key Vault secret (e.g. the shared `db-password`) — that masks the
-     fault and breaks lane isolation; only the `db-password-secretlane` **value** should change.
+   - **Authentication errors (secret lane):** follow the mandatory invalid-secret workflow below. Do
+     not assume the Container App secret reference is still isolated merely because the dedicated Key
+     Vault value was restored.
 4. Mitigate live with the smallest corrective action (rebuild the index / restore the connection limit
    / restore the secret), verify with the lane-specific standard below, then deliver the durable fix
    as a PR.
 Base the RCA on the confirmed surface above — DB-internal faults must resolve to a named cause (index,
 connection limit, or secret), never "root cause unknown."
+
+### Mandatory invalid-secret workflow
+When the trigger is `Zava-quiz-launch-errors-elevated` or the affected workload is `quiz-secret`,
+this workflow overrides generic secret and restart guidance:
+
+1. Confirm the auth-failure signature without printing a credential. Read only the `pg-password`
+   secret-reference metadata with `az containerapp secret list --resource-group @@RG@@ --name
+   quiz-secret --query "[?name=='pg-password'] | [0].{keyVaultUrl:keyVaultUrl,identity:identity}"`.
+   Never request, print, log, or attach a secret value.
+2. Resolve the expected app UAMI (`id-zava-<resource-token>`) and the Key Vault URI. The only valid
+   reference is the **versionless** URL ending `/secrets/db-password-secretlane` with that exact UAMI
+   resource ID. A reference ending `/secrets/db-password` is cross-lane drift, even if HTTP requests
+   currently succeed.
+3. Through the reporting VM managed-identity/private-Key-Vault bridge, copy the baseline
+   `db-password` **value into `db-password-secretlane`** without emitting either value. This is the
+   only permitted secret-value mutation. Never alter the baseline `db-password`.
+4. If the reference or identity drifted, restore `pg-password` with `az containerapp secret set`
+   using `keyvaultref:<vault-uri>/secrets/db-password-secretlane` and
+   `identityref:<expected-app-uami>`. Repointing `pg-password` to the shared
+   `/secrets/db-password` reference is prohibited and must never be described as recovery.
+5. Read back the same two metadata fields and require the versionless dedicated suffix plus the
+   expected UAMI. Only after the value copy and reference readback succeed, create a **new revision**
+   with `az containerapp update --set-env-vars FORCE_ROTATE=<timestamp>`. A revision restart does not
+   re-resolve the Key Vault reference and is not recovery.
+6. Check at most 17 times, 15 seconds apart (a four-minute convergence budget). Completion requires
+   a new latest-ready revision in `Running` state, a second metadata readback still ending
+   `/secrets/db-password-secretlane` with the expected UAMI, and HTTP 200 from port 8087
+   `/quiz/BIO-101`. If any condition remains false, stop writes and escalate acknowledged/unresolved
+   with sanitized reference, identity, revision, and HTTP-status evidence.
+7. Every note, RCA, evidence table, and report must distinguish the value copy from any reference
+   repair and record only secret-safe metadata. Never include either secret value.
 
 ### Mandatory connection-exhaustion workflow
 When the trigger is `Zava-quiz-errors-elevated` or the affected workload is `quiz-pool`, this workflow

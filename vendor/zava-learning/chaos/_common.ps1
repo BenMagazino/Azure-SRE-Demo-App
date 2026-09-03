@@ -301,8 +301,11 @@ test -n "$source_value"
 payload=$(ZAVA_SECRET_VALUE="$source_value" python3 -c 'import json,os; print(json.dumps({"value":os.environ["ZAVA_SECRET_VALUE"]}))')
 for attempt in $(seq 1 18); do
   if curl -fsS -X PUT -H "Authorization: Bearer $token" -H 'Content-Type: application/json' --data "$payload" '__KV_URI__secrets/__DESTINATION_NAME__?api-version=7.4' >/dev/null 2>&1; then
-    echo ZAVA_COMMAND_SUCCEEDED
-    exit 0
+    destination_value=$(curl -fsS -H "Authorization: Bearer $token" '__KV_URI__secrets/__DESTINATION_NAME__?api-version=7.4' 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])') || true
+    if [ "$destination_value" = "$source_value" ]; then
+      echo ZAVA_COMMAND_SUCCEEDED
+      exit 0
+    fi
   fi
   sleep 10
 done
@@ -311,6 +314,181 @@ exit 1
   $script = $script.Replace('__KV_URI__', $kvUri).Replace('__SOURCE_NAME__', $SourceName).Replace('__DESTINATION_NAME__', $DestinationName)
   Invoke-VmPrivateCommand -ResourceGroup $ResourceGroup -Script $script `
     -Operation "Copying Key Vault secret '$SourceName' to '$DestinationName'"
+}
+
+function Get-ZavaAppIdentityId {
+  param([Parameter(Mandatory)][string]$ResourceGroup)
+  $token = Get-ResourceToken -ResourceGroup $ResourceGroup
+  $identityName = "id-zava-$token"
+  $identityId = az identity show -g $ResourceGroup -n $identityName --query id -o tsv --only-show-errors
+  if ($LASTEXITCODE -ne 0 -or -not $identityId) {
+    throw "Could not resolve the Zava app identity '$identityName' in $ResourceGroup."
+  }
+  return ([string]$identityId).Trim()
+}
+
+function Get-SecretLaneExpectedReference {
+  param([Parameter(Mandatory)][string]$ResourceGroup)
+  $vaultUri = (Get-KeyVaultUri -ResourceGroup $ResourceGroup).TrimEnd('/')
+  return [pscustomobject]@{
+    keyVaultUrl = "$vaultUri/secrets/db-password-secretlane"
+    identity = Get-ZavaAppIdentityId -ResourceGroup $ResourceGroup
+  }
+}
+
+function Get-ContainerAppSecretReference {
+  param(
+    [Parameter(Mandatory)][string]$ResourceGroup,
+    [Parameter(Mandatory)][string]$AppName,
+    [Parameter(Mandatory)][ValidatePattern('^[0-9A-Za-z-]+$')][string]$SecretName
+  )
+  $json = az containerapp secret list -g $ResourceGroup -n $AppName `
+    --query "[?name=='$SecretName'] | [0].{keyVaultUrl:keyVaultUrl,identity:identity}" `
+    -o json --only-show-errors
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not read secret-reference metadata for '$SecretName' on $AppName."
+  }
+  $text = ($json | Out-String).Trim()
+  if (-not $text -or $text -eq "null") { return $null }
+  return ($text | ConvertFrom-Json)
+}
+
+function Test-SecretLaneReference {
+  param(
+    [AllowNull()][object]$Actual,
+    [Parameter(Mandatory)][object]$Expected
+  )
+  if (-not $Actual) { return $false }
+  $urlMatches = [string]::Equals(
+    ([string]$Actual.keyVaultUrl).Trim(),
+    ([string]$Expected.keyVaultUrl).Trim(),
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
+  $identityMatches = [string]::Equals(
+    ([string]$Actual.identity).Trim(),
+    ([string]$Expected.identity).Trim(),
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
+  return ($urlMatches -and $identityMatches)
+}
+
+function Assert-SecretLaneReference {
+  param(
+    [Parameter(Mandatory)][string]$ResourceGroup,
+    [string]$AppName = "quiz-secret"
+  )
+  $expected = Get-SecretLaneExpectedReference -ResourceGroup $ResourceGroup
+  $assignedIds = @(az containerapp show -g $ResourceGroup -n $AppName `
+    --query "keys(identity.userAssignedIdentities)" -o tsv --only-show-errors)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not read managed identities assigned to $AppName."
+  }
+  $hasExpectedIdentity = @($assignedIds | Where-Object {
+    [string]::Equals(
+      ([string]$_).Trim(),
+      ([string]$expected.identity).Trim(),
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  }).Count -gt 0
+  if (-not $hasExpectedIdentity) {
+    throw "$AppName does not have the expected Zava app identity assigned."
+  }
+  $actual = Get-ContainerAppSecretReference -ResourceGroup $ResourceGroup `
+    -AppName $AppName -SecretName "pg-password"
+  if (-not (Test-SecretLaneReference -Actual $actual -Expected $expected)) {
+    throw "$AppName pg-password is not using the dedicated versionless secret-lane reference and expected identity."
+  }
+  Write-Host "  Dedicated secret-lane reference and Zava app identity read back successfully." -ForegroundColor DarkGray
+}
+
+function Ensure-SecretLaneReference {
+  param(
+    [Parameter(Mandatory)][string]$ResourceGroup,
+    [string]$AppName = "quiz-secret"
+  )
+  $expected = Get-SecretLaneExpectedReference -ResourceGroup $ResourceGroup
+  $assignedIds = @(az containerapp show -g $ResourceGroup -n $AppName `
+    --query "keys(identity.userAssignedIdentities)" -o tsv --only-show-errors)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not read managed identities assigned to $AppName."
+  }
+  $hasExpectedIdentity = @($assignedIds | Where-Object {
+    [string]::Equals(
+      ([string]$_).Trim(),
+      ([string]$expected.identity).Trim(),
+      [System.StringComparison]::OrdinalIgnoreCase
+    )
+  }).Count -gt 0
+  if (-not $hasExpectedIdentity) {
+    Write-Host "  Restoring the expected Zava app identity assignment..." -ForegroundColor Gray
+    az containerapp identity assign -g $ResourceGroup -n $AppName `
+      --user-assigned $expected.identity -o none --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+      throw "Could not assign the expected Zava app identity to $AppName."
+    }
+  }
+
+  $actual = Get-ContainerAppSecretReference -ResourceGroup $ResourceGroup `
+    -AppName $AppName -SecretName "pg-password"
+  if (-not (Test-SecretLaneReference -Actual $actual -Expected $expected)) {
+    Write-Host "  Restoring the dedicated versionless secret-lane reference..." -ForegroundColor Gray
+    $secretDefinition = "pg-password=keyvaultref:$($expected.keyVaultUrl),identityref:$($expected.identity)"
+    az containerapp secret set -g $ResourceGroup -n $AppName `
+      --secrets $secretDefinition -o none --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+      throw "Could not restore the dedicated secret-lane reference on $AppName."
+    }
+  }
+  Assert-SecretLaneReference -ResourceGroup $ResourceGroup -AppName $AppName
+}
+
+function Wait-SecretLaneRecovery {
+  param(
+    [Parameter(Mandatory)][string]$ResourceGroup,
+    [string]$AppName = "quiz-secret",
+    [Parameter(Mandatory)][string]$PreviousRevision,
+    [int]$MaxAttempts = 17,
+    [int]$IntervalSec = 15
+  )
+  $endpoint = (Get-PortalUrl -ResourceGroup $ResourceGroup).TrimEnd('/') + ":8087/quiz/BIO-101"
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    $json = az containerapp show -g $ResourceGroup -n $AppName `
+      --query "{latest:properties.latestRevisionName,ready:properties.latestReadyRevisionName}" `
+      -o json --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+      throw "Could not read revision state for $AppName."
+    }
+    $state = (($json | Out-String).Trim() | ConvertFrom-Json)
+    $isNewReadyRevision = (
+      $state.latest -and
+      $state.ready -and
+      $state.latest -eq $state.ready -and
+      $state.latest -ne $PreviousRevision
+    )
+    $runningState = ""
+    if ($isNewReadyRevision) {
+      $runningState = az containerapp revision show -g $ResourceGroup -n $AppName `
+        --revision $state.latest --query "properties.runningState" -o tsv --only-show-errors
+      if ($LASTEXITCODE -ne 0) { $runningState = "" }
+    }
+    $statusCode = 0
+    try {
+      $response = Invoke-WebRequest -UseBasicParsing -Uri $endpoint -TimeoutSec 10
+      $statusCode = [int]$response.StatusCode
+    } catch {
+      try { $statusCode = [int]$_.Exception.Response.StatusCode.value__ } catch {}
+    }
+    Write-Host (
+      "  Recovery check {0}/{1}: newReady={2}; running={3}; endpoint HTTP {4}" -f
+      $attempt, $MaxAttempts, $isNewReadyRevision, $runningState, $statusCode
+    ) -ForegroundColor Gray
+    if ($isNewReadyRevision -and $runningState -eq "Running" -and $statusCode -eq 200) {
+      Assert-SecretLaneReference -ResourceGroup $ResourceGroup -AppName $AppName
+      return
+    }
+    if ($attempt -lt $MaxAttempts) { Start-Sleep -Seconds $IntervalSec }
+  }
+  throw "$AppName did not produce a new running revision with HTTP 200 while retaining its dedicated secret reference."
 }
 
 function Get-AppGwName {

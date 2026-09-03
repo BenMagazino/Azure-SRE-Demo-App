@@ -82,14 +82,18 @@ the edge and replica health are clean, **the database is a surface you must insp
 - **Credentials (Key Vault):** each lane reads its DB password from Key Vault (`db-password`,
   `db-pool-password`, and the lane-only `db-password-secretlane`). A rotated/invalid secret surfaces as
   **authentication failures** from that lane only. The vault has public access disabled and resolves
-  through its VNet private endpoint.
+  through its VNet private endpoint. `quiz-secret` must always bind `pg-password` to the versionless
+  URL ending `/secrets/db-password-secretlane` with the shared Zava application UAMI; binding it to
+  `/secrets/db-password` makes the controlled fault non-repeatable and violates lane isolation.
 
 Inspect the DB with a read-only query by using `az vm run-command invoke` against the
 `vm-zava-reporting-*` VM. The command running inside that VNet retrieves `db-password` with the VM's
 managed identity and Key Vault REST API, then invokes `psql`; it must never print or return the secret.
 Use the same private bridge to copy `db-password` to `db-password-secretlane` during secret-lane
 recovery. Direct workstation or SRE Agent calls to `az keyvault secret show/set` are intentionally
-blocked by the vault network policy.
+blocked by the vault network policy. Only the value is copied: recovery must never repoint
+`quiz-secret` to the shared secret reference. Secret-reference checks select only `keyVaultUrl` and
+`identity`; credentials must never be printed, logged, or attached as evidence.
 
 ## Enforcement / failure surfaces between the student and a working quiz
 
@@ -118,7 +122,10 @@ group — enough to read telemetry/config and to remediate (update a blocking NS
 correct an App Gateway probe, restart/scale a Container App). Through the reporting VM's private
 managed-identity bridge, the permitted database correction is limited to restoring the controlled
 pool baseline with `ALTER ROLE app_pool CONNECTION LIMIT -1`; it must be followed by a `-1` readback
-and concurrent port-8086 verification. For the controlled
+and concurrent port-8086 verification. Secret-lane recovery may copy the baseline value only into
+`db-password-secretlane`, restore its versionless dedicated reference and expected app UAMI if they
+drifted, and create a new revision. Completion requires the dedicated reference readback plus HTTP
+200 from port 8087; the shared `/secrets/db-password` reference is never a valid recovery. For the controlled
 `legacy-cross-subnet-deny` fault, live recovery means changing that exact rule from `Deny` to
 `Allow`; changing only its priority is not a valid mitigation. The agent does **not** have
 `roleAssignments/write`; never attempt `az role assignment create`.
