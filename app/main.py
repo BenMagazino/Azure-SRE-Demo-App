@@ -6474,15 +6474,22 @@ def zava_scenario_signal_query(
             '| extend ms=toint(extract(@"ms=(\\d+)", 1, Log_s)) '
             "| where ms > 500"
         )
-    else:
+    elif scenario_id in {"nsg", "appgw", "app", "pool", "secret"}:
+        status_filter = (
+            "| where toint(httpStatus_d) == 499 or toint(httpStatus_d) >= 500"
+            if scenario_id == "nsg"
+            else "| where toint(httpStatus_d) >= 500"
+        )
         source = (
             "AzureDiagnostics "
             f"| where TimeGenerated >= datetime({timestamp}) "
             '| where ResourceType == "APPLICATIONGATEWAYS" '
             'and Category == "ApplicationGatewayAccessLog" '
             f'| where listenerName_s == "quiz-{scenario_id}-listener" '
-            "| where toint(httpStatus_d) >= 500"
+            f"{status_filter}"
         )
+    else:
+        raise ValueError(f"Unsupported Zava scenario signal: {scenario_id}")
     return source + " | summarize Count=count()"
 
 
@@ -6620,6 +6627,17 @@ def _run_zava_scenario(job: Job) -> None:
             )
             job.finish(False, 1)
             return
+    job.emit("phase", name="impact_confirmed", scenario_id=scenario.id)
+    job.emit(
+        "step",
+        name="Fault impact confirmed; waiting for Azure Monitor ingestion",
+    )
+    job.emit(
+        "investigation_countdown",
+        scenario_id=scenario.id,
+        seconds=scenario.investigation_delay_seconds,
+        started_at=time.time(),
+    )
     workspace = str(runtime_values.get("LOG_ANALYTICS_WORKSPACE_ID") or "")
     if not workspace:
         job.emit(
@@ -6643,16 +6661,10 @@ def _run_zava_scenario(job: Job) -> None:
         )
         job.finish(False, 1)
         return
-    job.emit("phase", name="impact_confirmed", scenario_id=scenario.id)
+    job.emit("phase", name="signal_confirmed", scenario_id=scenario.id)
     job.emit(
         "step",
-        name=f"Fault impact and Azure Monitor signal confirmed ({signal_count})",
-    )
-    job.emit(
-        "investigation_countdown",
-        scenario_id=scenario.id,
-        seconds=scenario.investigation_delay_seconds,
-        started_at=time.time(),
+        name=f"Azure Monitor signal confirmed ({signal_count})",
     )
     job.emit(
         "output",

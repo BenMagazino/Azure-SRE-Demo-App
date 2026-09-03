@@ -49,7 +49,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'

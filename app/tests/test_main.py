@@ -3324,6 +3324,10 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.zava_scenario_signal_query("nsg", injected),
         )
         self.assertIn(
+            "toint(httpStatus_d) == 499",
+            main_module.zava_scenario_signal_query("nsg", injected),
+        )
+        self.assertIn(
             'ContainerAppName_s == "quiz-perf"',
             main_module.zava_scenario_signal_query("perf", injected),
         )
@@ -3331,6 +3335,65 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             'ProcessName == "zava-export"',
             main_module.zava_scenario_signal_query("disk", injected),
         )
+        for scenario in main_module.LABS_BY_ID["zava-learning"].scenarios:
+            with self.subTest(scenario=scenario.id):
+                self.assertTrue(
+                    main_module.zava_scenario_signal_query(
+                        scenario.id,
+                        injected,
+                    )
+                )
+
+    @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
+    @patch("app.main.generate_zava_scenario_traffic", return_value=(True, "impact"))
+    @patch("app.main.probe_http_endpoint", return_value=(True, ""))
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.azd_values")
+    @patch("app.main.load_state")
+    def test_all_zava_countdowns_start_when_impact_is_confirmed(
+        self,
+        load_state,
+        azd_values,
+        _run_process,
+        _probe,
+        _traffic,
+        _wait_for_signal,
+    ) -> None:
+        lab = main_module.LABS_BY_ID["zava-learning"]
+        azd_values.return_value = {
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+            "APPGW_PUBLIC_FQDN": "zava.example.test",
+            "LOG_ANALYTICS_WORKSPACE_ID": "workspace",
+        }
+        for scenario in lab.scenarios:
+            with self.subTest(scenario=scenario.id):
+                load_state.return_value = {
+                    "lab_id": lab.id,
+                    "environment": "demo",
+                    "resource_group": "rg-zava",
+                    "scenario_id": scenario.id,
+                }
+                job = Job()
+
+                main_module._run_zava_scenario(job)
+
+                events = list(job.events.queue)
+                countdown_index = next(
+                    index
+                    for index, event in enumerate(events)
+                    if event["type"] == "investigation_countdown"
+                )
+                signal_index = next(
+                    index
+                    for index, event in enumerate(events)
+                    if event["type"] == "phase"
+                    and event.get("name") == "signal_confirmed"
+                )
+                self.assertLess(countdown_index, signal_index)
+                self.assertEqual(
+                    events[countdown_index]["scenario_id"],
+                    scenario.id,
+                )
 
     def test_zava_azure_yaml_uses_remote_container_builds(self) -> None:
         azure_yaml = (
