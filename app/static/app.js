@@ -183,6 +183,14 @@ window.addEventListener("unhandledrejection", (event) => {
   reportClientError(`Unhandled promise rejection: ${event.reason}`);
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && sessionToken) {
+    void sendClientHeartbeat().catch((error) => {
+      console.warn("Unable to renew the visible application heartbeat.", error);
+    });
+  }
+});
+
 function showPanel(id) {
   if (!workflowPanels.includes(id)) return;
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));

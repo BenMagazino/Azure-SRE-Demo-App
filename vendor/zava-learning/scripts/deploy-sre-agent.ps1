@@ -32,7 +32,7 @@ if (-not $ModelProvider) {
 
 if (-not $AgentName) {
   $envName = ($ResourceGroup -replace '^rg-zava-learning-', '')
-  $AgentName = "sre-zava-$envName"
+  $AgentName = "sre-zava-learning-$envName"
 }
 if (-not $EnvironmentName) {
   $EnvironmentName = ($ResourceGroup -replace '^rg-zava-learning-', '')

@@ -47,7 +47,7 @@ If the application window is unavailable, run
 "app\Stop Azure SRE Agent Demo.cmd".
 
 Closing the browser without using Shutdown also stops the local application
-after approximately two minutes, once active operations have finished.
+after approximately five minutes, once active operations have finished.
 
 5. Test mode
 ------------

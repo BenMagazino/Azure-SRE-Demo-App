@@ -104,7 +104,7 @@ HOST = "127.0.0.1"
 PORT = 8765
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 AUTH_RETRY_GRACE_SECONDS = 4.0
-CLIENT_LEASE_TIMEOUT_SECONDS = 120.0
+CLIENT_LEASE_TIMEOUT_SECONDS = 300.0
 CLIENT_LEASE_CHECK_SECONDS = 10.0
 CLIENT_LAUNCH_FALLBACK_SECONDS = 5.0
 SESSION_TOKEN = uuid.uuid4().hex
@@ -739,7 +739,7 @@ def zava_resource_group_name(environment: str) -> str:
 
 
 def zava_agent_name(environment: str) -> str:
-    return f"sre-zava-{zava_environment_suffix(environment)}"
+    return f"sre-zava-learning-{zava_environment_suffix(environment)}"
 
 
 def validate_lab_regions(
@@ -5448,20 +5448,59 @@ def discover_zava_secure_resource_names(
     return values
 
 
+def azure_resource_group_exists(resource_group: str) -> bool:
+    if not resource_group:
+        return False
+    success, output = run_capture(
+        ["az", "group", "exists", "--name", resource_group],
+        timeout=30,
+    )
+    return success and output.strip().casefold() == "true"
+
+
+def discover_zava_agent_names(resource_group: str) -> list[str]:
+    if not resource_group:
+        return []
+    success, output = run_capture(
+        [
+            "az", "resource", "list",
+            "--resource-group", resource_group,
+            "--resource-type", "Microsoft.App/agents",
+            "--query", "[].name",
+            "--output", "json",
+        ],
+        timeout=60,
+    )
+    if not success:
+        return []
+    try:
+        names = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(names, list):
+        return []
+    return [
+        str(name)
+        for name in names
+        if isinstance(name, str) and name.strip()
+    ]
+
+
 def zava_process_environment(
     state: dict[str, Any],
     environment: str,
     values: dict[str, str],
 ) -> tuple[Optional[dict[str, str]], Optional[str]]:
     stored = get_in_memory_secrets("zava-learning", environment)
+    resource_group = (
+        values.get("AZURE_RESOURCE_GROUP")
+        or str(state.get("resource_group") or "")
+    )
     existing = bool(
         state.get("existing_environment") or state.get("deployment_active")
+        or azure_resource_group_exists(resource_group)
     )
     if existing:
-        resource_group = (
-            values.get("AZURE_RESOURCE_GROUP")
-            or str(state.get("resource_group") or "")
-        )
         bridge_values = discover_zava_secure_resource_names(resource_group, values)
         missing_keys = [
             key
@@ -5541,6 +5580,9 @@ def hydrate_zava_runtime_outputs(
     job: Job,
     environment: str,
     state: dict[str, Any],
+    expected_agent_name: str = "",
+    attempts: int = 30,
+    delay_seconds: float = 10,
 ) -> Optional[dict[str, str]]:
     lab = LABS_BY_ID["zava-learning"]
     values = azd_values(environment, lab)
@@ -5549,23 +5591,54 @@ def hydrate_zava_runtime_outputs(
         or str(state.get("resource_group") or "")
         or zava_resource_group_name(environment)
     )
-    success, output = run_capture(
-        [
+    agent_query = (
+        f"[?name=='{expected_agent_name}'] | [0]."
+        "{name:name,endpoint:properties.agentEndpoint,location:location}"
+        if expected_agent_name
+        else "[0].{name:name,endpoint:properties.agentEndpoint,location:location}"
+    )
+    agent: dict[str, Any] = {}
+    for attempt in range(1, attempts + 1):
+        success, output = run_capture([
             "az", "resource", "list",
             "--resource-group", resource_group,
             "--resource-type", "Microsoft.App/agents",
-            "--query",
-            "[0].{name:name,endpoint:properties.agentEndpoint,location:location}",
+            "--query", agent_query,
             "--output", "json",
-        ],
-        timeout=60,
-    )
-    try:
-        agent = json.loads(output) if success else {}
-    except json.JSONDecodeError:
-        agent = {}
+        ], timeout=60)
+        try:
+            candidate = json.loads(output) if success else {}
+        except json.JSONDecodeError:
+            candidate = {}
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("name")
+            and candidate.get("endpoint")
+        ):
+            agent = candidate
+            break
+        if attempt == 1:
+            job.emit(
+                "step",
+                name="Waiting for the Zava SRE Agent endpoint",
+            )
+            job.emit(
+                "output",
+                line=(
+                    "The SRE Agent resource succeeded. Azure is still publishing "
+                    "its data-plane endpoint."
+                ),
+            )
+        if attempt < attempts:
+            time.sleep(delay_seconds)
     if not isinstance(agent, dict) or not agent.get("name") or not agent.get("endpoint"):
-        job.emit("error", message="Unable to resolve the deployed Zava SRE Agent.")
+        job.emit(
+            "error",
+            message=(
+                "Azure did not publish the deployed Zava SRE Agent endpoint "
+                f"after {attempts} readiness checks."
+            ),
+        )
         return None
     values.update({
         "AZURE_RESOURCE_GROUP": resource_group,
@@ -5691,7 +5764,28 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         or zava_resource_group_name(environment)
     )
     agent_location = region_values["agent_location"]
-    agent_name = zava_agent_name(environment)
+    configured_agent_name = str(values.get("SRE_AGENT_NAME") or "")
+    discovered_agent_names = discover_zava_agent_names(resource_group)
+    if configured_agent_name:
+        agent_name = configured_agent_name
+    elif len(discovered_agent_names) == 1:
+        agent_name = discovered_agent_names[0]
+        job.emit(
+            "output",
+            line=f"Resuming the existing Zava SRE Agent {agent_name}.",
+        )
+    elif len(discovered_agent_names) > 1:
+        job.emit(
+            "error",
+            message=(
+                "Multiple Zava SRE Agents exist in the resource group. "
+                "Select an existing managed environment before reconciling."
+            ),
+        )
+        job.finish(False, 1)
+        return
+    else:
+        agent_name = zava_agent_name(environment)
     preserve_agent_configuration = bool(
         values.get("SRE_AGENT_NAME") and values.get("SRE_AGENT_ENDPOINT")
     )
@@ -5776,7 +5870,12 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
             job.emit("error", message="Zava SRE Agent deployment failed.")
             job.finish(False, 1)
             return
-    values = hydrate_zava_runtime_outputs(job, environment, state)
+    values = hydrate_zava_runtime_outputs(
+        job,
+        environment,
+        state,
+        expected_agent_name=agent_name,
+    )
     if values is None:
         job.finish(False, 1)
         return

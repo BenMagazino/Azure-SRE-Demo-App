@@ -2039,6 +2039,11 @@ class ProcessTests(unittest.TestCase):
             self.assertFalse(client_lease_expired(100.0, now=319.9))
             self.assertTrue(client_lease_expired(100.0, now=320.0))
 
+    def test_default_client_lease_tolerates_browser_timer_throttling(self) -> None:
+        self.assertEqual(main_module.CLIENT_LEASE_TIMEOUT_SECONDS, 300.0)
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn('document.addEventListener("visibilitychange"', script)
+
     def test_manual_stop_launcher_uses_graceful_api_only(self) -> None:
         repository = STATIC_DIR.parents[1]
         stop_launcher = (
@@ -3247,11 +3252,80 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
         self.assertEqual(
             main_module.zava_agent_name("zava-learning-auto-1"),
-            "sre-zava-auto-1",
+            "sre-zava-learning-auto-1",
         )
         self.assertEqual(
             main_module.zava_resource_group_name("demo"),
             "rg-zava-learning-demo",
+        )
+
+    @patch("app.main.run_capture")
+    def test_discovers_single_existing_zava_agent_name(self, run_capture) -> None:
+        run_capture.return_value = (
+            True,
+            json.dumps(["sre-zava-zava-learning-auto-1"]),
+        )
+
+        self.assertEqual(
+            main_module.discover_zava_agent_names("rg-zava"),
+            ["sre-zava-zava-learning-auto-1"],
+        )
+
+    @patch("app.main.run_capture", return_value=(True, "true"))
+    def test_partial_zava_resource_group_is_treated_as_existing(
+        self,
+        _run_capture,
+    ) -> None:
+        self.assertTrue(main_module.azure_resource_group_exists("rg-zava"))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.set_azd_values", return_value=(True, ""))
+    @patch("app.main.run_capture")
+    @patch("app.main.azd_values", return_value={})
+    def test_zava_runtime_waits_for_agent_endpoint(
+        self,
+        _azd_values,
+        run_capture,
+        _set_values,
+        sleep,
+    ) -> None:
+        run_capture.side_effect = [
+            (
+                True,
+                json.dumps({
+                    "name": "sre-zava-learning-demo",
+                    "endpoint": None,
+                    "location": "eastus2",
+                }),
+            ),
+            (
+                True,
+                json.dumps({
+                    "name": "sre-zava-learning-demo",
+                    "endpoint": "https://agent.example.test",
+                    "location": "eastus2",
+                }),
+            ),
+        ]
+        job = Job()
+
+        values = main_module.hydrate_zava_runtime_outputs(
+            job,
+            "demo",
+            {
+                "resource_group": "rg-zava-learning-demo",
+                "subscription_id": "sub",
+            },
+            expected_agent_name="sre-zava-learning-demo",
+            attempts=2,
+            delay_seconds=0.01,
+        )
+
+        self.assertEqual(values["SRE_AGENT_ENDPOINT"], "https://agent.example.test")
+        sleep.assert_called_once_with(0.01)
+        self.assertIn(
+            "Waiting for the Zava SRE Agent endpoint",
+            [event.get("name") for event in job.events.queue],
         )
 
     @patch("app.main.resolved_process_command", return_value=["tool"])
