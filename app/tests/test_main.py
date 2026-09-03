@@ -3233,16 +3233,25 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         links = main_module.runtime_summary_links(
             {
                 "lab_id": "zava-learning",
+                "environment": "auto-2",
                 "tenant_id": "tenant",
                 "subscription_id": "sub",
             },
             {
                 "AZURE_RESOURCE_GROUP": "rg-zava",
                 "APPGW_PUBLIC_FQDN": "zava.example.test",
+                "SRE_AGENT_NAME": "sre-zava-learning-auto-2",
             },
         )
-        self.assertTrue(links)
-        self.assertTrue(all(link["value"] == link["url"] for link in links))
+        self.assertEqual(
+            [link["id"] for link in links],
+            ["environment", "resource-group", "sre-agent", "portal"],
+        )
+        self.assertEqual(links[0]["value"], "auto-2")
+        self.assertEqual(links[1]["value"], "rg-zava")
+        self.assertEqual(links[2]["value"], "sre-zava-learning-auto-2")
+        self.assertEqual(links[3]["value"], "Open learning portal")
+        self.assertFalse(any(link["id"].startswith("lane-") for link in links))
 
     def test_discovery_preserves_all_three_zava_regions(self) -> None:
         environments = build_existing_environment_catalog(

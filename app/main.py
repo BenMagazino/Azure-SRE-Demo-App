@@ -3789,9 +3789,12 @@ def runtime_summary_links(
 ) -> list[dict[str, str]]:
     def display(links: list[dict[str, str]]) -> list[dict[str, str]]:
         return [
-            {**link, "value": link["url"]}
+            {
+                **link,
+                "value": str(link.get("value") or link.get("url") or ""),
+            }
             for link in links
-            if link.get("url")
+            if link.get("url") or link.get("value")
         ]
 
     resource_group = values.get("AZURE_RESOURCE_GROUP", "")
@@ -3800,6 +3803,7 @@ def runtime_summary_links(
         {
             "id": "resource-group",
             "label": "Azure resource group",
+            "value": resource_group,
             "url": azure_resource_group_portal_url(
                 str(state.get("tenant_id") or ""),
                 str(state.get("subscription_id") or ""),
@@ -3809,6 +3813,7 @@ def runtime_summary_links(
         {
             "id": "sre-agent",
             "label": "SRE Agent portal",
+            "value": values.get("SRE_AGENT_NAME", ""),
             "url": resolved_sre_agent_portal_url(state, values),
         },
     ]
@@ -3821,18 +3826,21 @@ def runtime_summary_links(
         ):
             host = ""
         portal = f"http://{host}" if host else ""
-        links = [
-            {"id": "portal", "label": "Zava learning portal", "url": portal},
-        ]
-        for port in ZAVA_LANE_PORTS:
-            links.append({
-                "id": f"lane-{port}",
-                "label": f"Scenario lane {port}",
-                "url": (
-                    f"http://{host}:{port}" if host else ""
-                ),
-            })
-        return display([*links, *common])
+        return display([
+            {
+                "id": "environment",
+                "label": "Environment",
+                "value": str(state.get("environment") or ""),
+                "url": "",
+            },
+            *common,
+            {
+                "id": "portal",
+                "label": "Zava Learning portal",
+                "value": "Open learning portal",
+                "url": portal,
+            },
+        ])
     return display([
             {
                 "id": "api",
