@@ -9,7 +9,7 @@ Azure SRE Agent Demo
 - An Azure subscription where you can create resources and role assignments
 - Azure CLI 2.88.0 or newer
 - Azure Developer CLI (azd) 1.28.0 or newer
-- PowerShell 7.6.5 or newer for the Zava Learning lab
+- PowerShell 7.6.3 or newer for the Zava Learning lab
 
 Python is included in this package. Git, Docker, Node.js, and azmcp are not
 required for the core labs. The prerequisite step checks the tools required by

@@ -1635,7 +1635,7 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertTrue(all(item.required for item in statuses))
         self.assertEqual(
             MINIMUM_VERSIONS,
-            {"az": "2.88.0", "azd": "1.28.0", "pwsh": "7.6.5"},
+            {"az": "2.88.0", "azd": "1.28.0", "pwsh": "7.6.3"},
         )
         which.assert_called()
 
@@ -1678,6 +1678,8 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertTrue(version_meets_minimum("2.90.1", "2.88.0"))
         self.assertFalse(version_meets_minimum("2.87.9", "2.88.0"))
         self.assertFalse(version_meets_minimum("installed", "2.88.0"))
+        self.assertTrue(version_meets_minimum("7.6.3", "7.6.3"))
+        self.assertFalse(version_meets_minimum("7.6.2", "7.6.3"))
 
     @patch("app.main.install_managed_azure_cli")
     @patch("app.main.install_managed_azd")

@@ -75,6 +75,7 @@ AZD_DOCS_URL = (
     "azure-developer-cli/install-azd"
 )
 POWERSHELL_VERSION = "7.6.5"
+POWERSHELL_MINIMUM_VERSION = "7.6.3"
 POWERSHELL_URL = (
     "https://github.com/PowerShell/PowerShell/releases/download/"
     f"v{POWERSHELL_VERSION}/PowerShell-{POWERSHELL_VERSION}-win-x64.zip"
@@ -433,7 +434,7 @@ TOOLS = (
      AZURE_CLI_DOCS_URL, True),
     ("azd", "Azure Developer CLI", ("version",), "1.28.0",
      AZD_DOCS_URL, True),
-    ("pwsh", "PowerShell", ("--version",), "7.6.5",
+    ("pwsh", "PowerShell", ("--version",), POWERSHELL_MINIMUM_VERSION,
      POWERSHELL_DOCS_URL, True),
 )
 LABS = (
