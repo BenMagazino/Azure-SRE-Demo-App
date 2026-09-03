@@ -3106,7 +3106,11 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                 "zava_process_environment",
                 return_value=({"VM_ADMIN_PASSWORD": "hidden"}, None),
             ),
-            patch.object(main_module, "run_process", return_value=(True, "")),
+            patch.object(
+                main_module,
+                "run_process",
+                return_value=(True, ""),
+            ) as run_process_mock,
             patch.object(
                 main_module,
                 "hydrate_zava_runtime_outputs",
@@ -3129,6 +3133,13 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.reconcile_zava(job)
         clear.assert_called_once_with("zava-learning", "atomic-test")
         self.assertTrue(list(job.events.queue)[-1]["success"])
+        self.assertTrue(run_process_mock.call_args_list)
+        self.assertTrue(
+            all(
+                not call.kwargs.get("no_log_output", False)
+                for call in run_process_mock.call_args_list
+            )
+        )
 
     def test_incomplete_or_unsupported_integrations_fail_step_four(self) -> None:
         _values, error = main_module.parse_zava_integrations(

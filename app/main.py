@@ -5712,7 +5712,6 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         ["azd", "provision", "-e", environment, "--no-prompt"],
         vendor_dir,
         environment_overrides=process_environment,
-        no_log_output=True,
     )
     if not success:
         job.emit("error", message="Zava infrastructure provisioning failed.")
@@ -5728,7 +5727,6 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         ],
         vendor_dir,
         environment_overrides=process_environment,
-        no_log_output=True,
     )
     if not success:
         job.emit("error", message="Zava ACR build or post-provisioning failed.")
