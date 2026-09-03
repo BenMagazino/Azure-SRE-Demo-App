@@ -3963,11 +3963,41 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
 
     @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_perf_customer_impact_polls_until_revision_converges(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "perf"
+        )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests exceeded 500 ms"),
+            (True, "8/12 requests exceeded 500 ms"),
+        ]
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8084",
+        )
+
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            detail,
+            "8/12 requests exceeded 500 ms after 2 traffic batches",
+        )
+
+    @patch("app.main.time.sleep")
     @patch(
         "app.main.generate_zava_scenario_traffic",
         return_value=(False, "0/12 requests returned a failure"),
     )
-    def test_non_appgw_customer_impact_uses_one_batch(
+    def test_non_convergent_customer_impact_uses_one_batch(
         self,
         generate_traffic,
         sleep,
