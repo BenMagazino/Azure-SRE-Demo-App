@@ -7122,11 +7122,18 @@ class AppHandler(SimpleHTTPRequestHandler):
         subscription_id = context["subscription"]
         selected_resource_group = zava_resource_group_name(environment)
         if lab.id == "zava-learning" and existing_environment:
+            requested_resource_group = str(
+                payload.get("resource_group") or ""
+            ).strip()
             candidate = next(
                 (
                     item
                     for item in load_environment_cache(subscription_id, lab.id)
                     if item.get("environment") == environment
+                    and (
+                        not requested_resource_group
+                        or item.get("resource_group") == requested_resource_group
+                    )
                 ),
                 None,
             )

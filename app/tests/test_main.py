@@ -2404,6 +2404,15 @@ class ProcessTests(unittest.TestCase):
         self.assertIn("FindConnectedGitHubRepo", page)
         self.assertIn("<summary>Optional integrations <span>(advanced)</span></summary>", page)
         self.assertEqual(page.count("Optional integrations"), 2)
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn(
+            "card.dataset.resourceGroup === environment.resource_group",
+            script,
+        )
+        self.assertIn(
+            "resource_group: selectedExistingEnvironment?.resource_group",
+            script,
+        )
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

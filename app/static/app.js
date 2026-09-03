@@ -995,7 +995,9 @@ function selectExistingEnvironment(environment) {
     `${environment.environment} selected. Validation checks only this lab.`;
   document.querySelector("#configure-status").textContent = "";
   document.querySelectorAll(".environment-card").forEach((card) => {
-    const selected = card.dataset.environment === environment.environment;
+    const selected =
+      card.dataset.environment === environment.environment
+      && card.dataset.resourceGroup === environment.resource_group;
     card.classList.toggle("selected", selected);
     card.setAttribute("aria-pressed", selected ? "true" : "false");
   });
@@ -1015,6 +1017,7 @@ function renderExistingEnvironments(payload) {
     button.type = "button";
     button.className = "picker-card environment-card";
     button.dataset.environment = environment.environment;
+    button.dataset.resourceGroup = environment.resource_group;
     button.setAttribute("aria-pressed", "false");
 
     const title = document.createElement("span");
@@ -1109,6 +1112,7 @@ async function saveEnvironmentConfiguration() {
     ...regions,
     location: regions.location || "",
     existing_environment: Boolean(selectedExistingEnvironment),
+    resource_group: selectedExistingEnvironment?.resource_group || "",
     integrations,
   });
   const result = await response.json();
