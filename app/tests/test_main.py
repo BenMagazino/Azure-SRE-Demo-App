@@ -3193,6 +3193,33 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         run_process.assert_called_once()
         sleep.assert_not_called()
 
+    @patch("app.main.retry_http_json")
+    @patch("app.main.zava_core_connector_payloads")
+    def test_microsoft_learn_test_outage_does_not_block_deployment(
+        self,
+        connector_payloads,
+        retry_http_json,
+    ) -> None:
+        connector_payloads.return_value = {"microsoft-learn": {"endpoint": "learn"}}
+        retry_http_json.side_effect = [
+            (200, "{}"),
+            (200, "{}"),
+            (0, "timed out"),
+        ]
+        job = Job()
+
+        success = main_module.ensure_zava_core_connectors(
+            job,
+            "https://agent.example.test",
+            "token",
+            {},
+        )
+
+        self.assertTrue(success)
+        events = list(job.events.queue)
+        self.assertNotIn("error", {event["type"] for event in events})
+        self.assertIn("deployment will continue", events[-1]["line"])
+
     def test_private_bridge_allowlist_is_operational_only(self) -> None:
         self.assertEqual(
             main_module.ZAVA_SECRET_NAMES,
@@ -4476,8 +4503,17 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("postgresStartAgent", agent_bicep)
         self.assertIn("if (createPostgresStartAssignment)", agent_bicep)
         self.assertIn("postgresServerId=$postgresId", deploy_script)
-        self.assertIn("--assignee-object-id $identityPrincipalId", deploy_script)
-        self.assertIn("--scope $postgresId", deploy_script)
+        self.assertIn("function Invoke-AzTsv", deploy_script)
+        self.assertIn(
+            'Invoke-AzTsv -Description "the Application Insights App ID"',
+            deploy_script,
+        )
+        self.assertIn(
+            'Invoke-AzTsv -Description "the Application Insights connection string"',
+            deploy_script,
+        )
+        self.assertIn('"--assignee-object-id", $identityPrincipalId', deploy_script)
+        self.assertIn('"--scope", $postgresId', deploy_script)
         self.assertIn(
             "createPostgresStartAssignment=$createPostgresStartAssignment",
             deploy_script,

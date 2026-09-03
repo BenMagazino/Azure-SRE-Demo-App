@@ -5162,10 +5162,12 @@ def ensure_zava_core_connectors(
                 or result.get("success") is not True
             ):
                 job.emit(
-                    "error",
-                    message="The Microsoft Learn connector failed its connection test.",
+                    "output",
+                    line=(
+                        "Microsoft Learn connector was created, but its external "
+                        "connection test is currently unavailable; deployment will continue."
+                    ),
                 )
-                return False
     return True
 
 

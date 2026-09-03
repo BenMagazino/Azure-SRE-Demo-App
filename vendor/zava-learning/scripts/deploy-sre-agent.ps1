@@ -23,6 +23,27 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
+function Invoke-AzTsv {
+  param(
+    [Parameter(Mandatory)][string[]]$Arguments,
+    [Parameter(Mandatory)][string]$Description,
+    [switch]$AllowEmpty
+  )
+  for ($attempt = 1; $attempt -le 4; $attempt++) {
+    $result = & az @Arguments 2>$null
+    $code = $LASTEXITCODE
+    $value = ($result | Out-String).Trim()
+    if ($code -eq 0 -and ($AllowEmpty -or $value)) {
+      return $value
+    }
+    if ($attempt -lt 4) {
+      Write-Host "Retrying $Description ($attempt/4)..." -ForegroundColor DarkYellow
+      Start-Sleep -Seconds (10 * $attempt)
+    }
+  }
+  throw "Azure CLI could not resolve $Description."
+}
+
 # Prompt for the core values (rg / model / region) if not supplied.
 if (-not $ResourceGroup) { $ResourceGroup = Read-Host "Resource group (e.g. rg-zava-learning-demo)" }
 if (-not $ModelProvider) {
@@ -39,25 +60,60 @@ if (-not $EnvironmentName) {
 }
 
 Write-Host "Discovering lab resources in $ResourceGroup..." -ForegroundColor Cyan
-$identityId   = az identity list -g $ResourceGroup --query "[?starts_with(name,'id-zava-agent-')].id | [0]" -o tsv
-$aiName       = az resource list -g $ResourceGroup --resource-type "Microsoft.Insights/components" --query "[0].name" -o tsv
-$aiId         = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query id -o tsv
-$aiAppId      = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query properties.AppId -o tsv
-$aiConn       = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query properties.ConnectionString -o tsv
-$postgresId   = az postgres flexible-server list -g $ResourceGroup --query "[0].id" -o tsv
-$rgId         = az group show -n $ResourceGroup --query id -o tsv
-if (-not $Location) { $Location = az group show -n $ResourceGroup --query location -o tsv }
-
-if (-not ($identityId -and $aiId -and $postgresId)) { throw "Could not discover the dedicated SRE Agent identity, monitoring, and PostgreSQL resources in $ResourceGroup." }
-$identityPrincipalId = az identity show --ids $identityId --query principalId -o tsv
-if (-not $identityPrincipalId) { throw "Could not resolve the dedicated SRE Agent identity principal." }
-$postgresStartRoleDefinitionId = "/subscriptions/$((az account show --query id -o tsv))/providers/Microsoft.Authorization/roleDefinitions/f8717311-09b5-4153-8abe-edb3c595c35f"
-$existingPostgresStartAssignment = az role assignment list `
-  --assignee-object-id $identityPrincipalId `
-  --scope $postgresId `
-  --fill-principal-name false `
-  --query "[?roleDefinitionId=='$postgresStartRoleDefinitionId'].id | [0]" `
-  -o tsv
+$identityId = Invoke-AzTsv -Description "the dedicated SRE Agent identity" -Arguments @(
+  "identity", "list", "-g", $ResourceGroup,
+  "--query", "[?starts_with(name,'id-zava-agent-')].id | [0]", "-o", "tsv"
+)
+$aiName = Invoke-AzTsv -Description "Application Insights" -Arguments @(
+  "resource", "list", "-g", $ResourceGroup,
+  "--resource-type", "Microsoft.Insights/components",
+  "--query", "[0].name", "-o", "tsv"
+)
+$aiId = Invoke-AzTsv -Description "the Application Insights resource ID" -Arguments @(
+  "resource", "show", "-g", $ResourceGroup, "-n", $aiName,
+  "--resource-type", "Microsoft.Insights/components",
+  "--query", "id", "-o", "tsv"
+)
+$aiAppId = Invoke-AzTsv -Description "the Application Insights App ID" -Arguments @(
+  "resource", "show", "-g", $ResourceGroup, "-n", $aiName,
+  "--resource-type", "Microsoft.Insights/components",
+  "--query", "properties.AppId", "-o", "tsv"
+)
+$aiConn = Invoke-AzTsv -Description "the Application Insights connection string" -Arguments @(
+  "resource", "show", "-g", $ResourceGroup, "-n", $aiName,
+  "--resource-type", "Microsoft.Insights/components",
+  "--query", "properties.ConnectionString", "-o", "tsv"
+)
+$postgresId = Invoke-AzTsv -Description "PostgreSQL" -Arguments @(
+  "postgres", "flexible-server", "list", "-g", $ResourceGroup,
+  "--query", "[0].id", "-o", "tsv"
+)
+$rgId = Invoke-AzTsv -Description "the resource group ID" -Arguments @(
+  "group", "show", "-n", $ResourceGroup, "--query", "id", "-o", "tsv"
+)
+if (-not $Location) {
+  $Location = Invoke-AzTsv -Description "the resource group location" -Arguments @(
+    "group", "show", "-n", $ResourceGroup, "--query", "location", "-o", "tsv"
+  )
+}
+$identityPrincipalId = Invoke-AzTsv -Description "the SRE Agent identity principal" -Arguments @(
+  "identity", "show", "--ids", $identityId, "--query", "principalId", "-o", "tsv"
+)
+$subscriptionId = Invoke-AzTsv -Description "the Azure subscription" -Arguments @(
+  "account", "show", "--query", "id", "-o", "tsv"
+)
+$postgresStartRoleDefinitionId = "/subscriptions/$subscriptionId/providers/Microsoft.Authorization/roleDefinitions/f8717311-09b5-4153-8abe-edb3c595c35f"
+$existingPostgresStartAssignment = Invoke-AzTsv `
+  -Description "existing PostgreSQL start-role assignments" `
+  -AllowEmpty `
+  -Arguments @(
+    "role", "assignment", "list",
+    "--assignee-object-id", $identityPrincipalId,
+    "--scope", $postgresId,
+    "--fill-principal-name", "false",
+    "--query", "[?roleDefinitionId=='$postgresStartRoleDefinitionId'].id | [0]",
+    "-o", "tsv"
+  )
 $createPostgresStartAssignment = if ($existingPostgresStartAssignment) { "false" } else { "true" }
 if ($existingPostgresStartAssignment) {
   Write-Host "Reusing the existing PostgreSQL start-role assignment." -ForegroundColor DarkGray
