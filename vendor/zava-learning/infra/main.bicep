@@ -11,7 +11,11 @@ param environmentName string
 @minLength(1)
 @maxLength(90)
 @description('Exact name of the resource group to create.')
-param resourceGroupName string = 'rg-zava-learning-${environmentName}'
+param resourceGroupName string = startsWith(environmentName, 'zava-learning-')
+  ? 'rg-${environmentName}'
+  : environmentName == 'zava-learning'
+    ? 'rg-zava-learning-demo'
+    : 'rg-zava-learning-${environmentName}'
 
 @minLength(1)
 @description('Primary Azure region for all resources.')

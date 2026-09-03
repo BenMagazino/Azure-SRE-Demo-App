@@ -3240,6 +3240,20 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
 
         self.assertEqual(azure_yaml.count("remoteBuild: true"), 3)
 
+    def test_zava_names_do_not_repeat_the_lab_prefix(self) -> None:
+        self.assertEqual(
+            main_module.zava_resource_group_name("zava-learning-auto-1"),
+            "rg-zava-learning-auto-1",
+        )
+        self.assertEqual(
+            main_module.zava_agent_name("zava-learning-auto-1"),
+            "sre-zava-auto-1",
+        )
+        self.assertEqual(
+            main_module.zava_resource_group_name("demo"),
+            "rg-zava-learning-demo",
+        )
+
     @patch("app.main.resolved_process_command", return_value=["tool"])
     @patch("app.main.subprocess.Popen")
     def test_process_output_redacts_environment_values(

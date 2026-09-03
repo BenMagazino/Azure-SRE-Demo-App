@@ -465,7 +465,7 @@ LABS = (
         estimated_turnaround="25-45 min",
         dependency_ids=("az", "azd", "pwsh"),
         vendor_directory="zava-learning",
-        default_environment="zava-learning",
+        default_environment="demo",
         regions=(
             RegionDefinition(
                 id="location",
@@ -722,6 +722,24 @@ def new_zava_deployment_secrets() -> dict[str, str]:
         "POSTGRES_POOL_PASSWORD": generate_deployment_password(),
         "VM_ADMIN_PASSWORD": generate_deployment_password(),
     }
+
+
+def zava_environment_suffix(environment: str) -> str:
+    prefix = "zava-learning-"
+    normalized = environment.strip()
+    if normalized.casefold().startswith(prefix):
+        normalized = normalized[len(prefix):]
+    elif normalized.casefold() == "zava-learning":
+        normalized = ""
+    return normalized or "demo"
+
+
+def zava_resource_group_name(environment: str) -> str:
+    return f"rg-zava-learning-{zava_environment_suffix(environment)}"
+
+
+def zava_agent_name(environment: str) -> str:
+    return f"sre-zava-{zava_environment_suffix(environment)}"
 
 
 def validate_lab_regions(
@@ -5529,7 +5547,7 @@ def hydrate_zava_runtime_outputs(
     resource_group = (
         values.get("AZURE_RESOURCE_GROUP")
         or str(state.get("resource_group") or "")
-        or f"rg-zava-learning-{environment}"
+        or zava_resource_group_name(environment)
     )
     success, output = run_capture(
         [
@@ -5670,10 +5688,10 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
     resource_group = (
         values.get("AZURE_RESOURCE_GROUP")
         or str(state.get("resource_group") or "")
-        or f"rg-zava-learning-{environment}"
+        or zava_resource_group_name(environment)
     )
     agent_location = region_values["agent_location"]
-    agent_name = f"sre-zava-{environment}"
+    agent_name = zava_agent_name(environment)
     preserve_agent_configuration = bool(
         values.get("SRE_AGENT_NAME") and values.get("SRE_AGENT_ENDPOINT")
     )
@@ -6997,7 +7015,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
         subscription_id = context["subscription"]
-        selected_resource_group = f"rg-zava-learning-{environment}"
+        selected_resource_group = zava_resource_group_name(environment)
         if lab.id == "zava-learning" and existing_environment:
             candidate = next(
                 (
