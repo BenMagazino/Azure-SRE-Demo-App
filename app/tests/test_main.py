@@ -3287,6 +3287,80 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("readback returned HTTP 404", error)
 
+    def test_zava_core_asset_catalog_matches_baseline(self) -> None:
+        self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
+        self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
+        self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
+        self.assertEqual(len(main_module.ZAVA_SCHEDULED_TASKS), 4)
+        connector_payloads = main_module.zava_core_connector_payloads({
+            "AZURE_SRE_AGENT_IDENTITY_ID": "/identities/agent",
+            "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID": "/workspaces/log",
+            "LOG_ANALYTICS_WORKSPACE_NAME": "log-zava",
+            "APPLICATIONINSIGHTS_RESOURCE_ID": "/components/appi",
+            "APPLICATIONINSIGHTS_NAME": "appi-zava",
+        })
+        self.assertEqual(
+            set(connector_payloads),
+            set(main_module.ZAVA_CORE_CONNECTORS),
+        )
+
+    def test_parses_all_weekly_scheduled_task_manifests(self) -> None:
+        root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+            / "scheduled-tasks"
+        )
+        for name in (
+            "zava-nsg-weekly-audit",
+            "zava-rbac-weekly-audit",
+            "zava-cost-weekly-analysis",
+        ):
+            with self.subTest(task=name):
+                task = main_module.parse_zava_scheduled_task_manifest(
+                    root / f"{name}.yaml"
+                )
+                self.assertEqual(task["name"], name)
+                self.assertEqual(task["status"], "Active")
+                self.assertEqual(task["agentMode"], "autonomous")
+
+    @patch("app.main.http_json")
+    def test_creates_and_reads_back_all_required_scheduled_tasks(
+        self,
+        http_json,
+    ) -> None:
+        required = list(main_module.ZAVA_SCHEDULED_TASKS)
+        created = []
+
+        def request(method, _url, _token, payload=None):
+            if method == "GET":
+                return (
+                    200,
+                    json.dumps([{"name": name} for name in created]),
+                )
+            created.append(payload["name"])
+            return 201, ""
+
+        http_json.side_effect = request
+        job = Job()
+        root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+
+        ready = main_module.ensure_zava_scheduled_tasks(
+            job,
+            "https://agent.example.test",
+            "token",
+            {
+                "AZURE_RESOURCE_GROUP": "rg-zava-learning-demo",
+                "SRE_AGENT_NAME": "sre-zava-learning-demo",
+            },
+            root,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(set(created), set(required))
+
     def test_discovery_preserves_all_three_zava_regions(self) -> None:
         environments = build_existing_environment_catalog(
             [{

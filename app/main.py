@@ -659,12 +659,27 @@ ZAVA_CORE_SKILLS = (
     "zava-audit-report",
     "zava-reporting",
 )
-ZAVA_CORE_CONFIG_VERSION = "1"
+ZAVA_CORE_CONFIG_VERSION = "2"
 ZAVA_OPTIONAL_SKILLS = {
     "pagerduty": "pagerduty-incident-update",
     "servicenow": "servicenow-change-management",
     "github": "pr-delivery",
 }
+ZAVA_ALL_SKILLS = (
+    *ZAVA_CORE_SKILLS,
+    *ZAVA_OPTIONAL_SKILLS.values(),
+)
+ZAVA_CORE_CONNECTORS = (
+    "SRE-Zava-Log-Analytics-Workspace",
+    "SRE-Zava-Application-Insights",
+    "microsoft-learn",
+)
+ZAVA_SCHEDULED_TASKS = (
+    "zava-daily-baseline-keepalive",
+    "zava-cost-weekly-analysis",
+    "zava-rbac-weekly-audit",
+    "zava-nsg-weekly-audit",
+)
 ZAVA_PAGERDUTY_TOOLS = (
     "pagerduty_get_incident",
     "pagerduty_list_incidents",
@@ -2383,7 +2398,7 @@ def validate_zava_existing_lab(
             missing_configuration: dict[str, list[str]] = {}
             for kind, names in (
                 ("agents", ZAVA_CORE_AGENTS),
-                ("skills", ZAVA_CORE_SKILLS),
+                ("skills", ZAVA_ALL_SKILLS),
             ):
                 missing_names = []
                 for name in names:
@@ -2400,6 +2415,44 @@ def validate_zava_existing_lab(
                 issues.append(
                     f"Zava agent configuration is missing {len(missing_names)} "
                     f"required {kind}: {', '.join(missing_names)}."
+                )
+            missing_connectors = []
+            for name in ZAVA_CORE_CONNECTORS:
+                status, _ = http_json(
+                    "GET",
+                    f"{endpoint}/api/v2/extendedAgent/connectors/{quote(name)}",
+                    token,
+                )
+                if status != HTTPStatus.OK:
+                    missing_connectors.append(name)
+            if missing_connectors:
+                issues.append(
+                    "Zava agent configuration is missing required connectors: "
+                    + ", ".join(missing_connectors)
+                    + "."
+                )
+            status, response = http_json(
+                "GET",
+                f"{endpoint}/api/v1/scheduledtasks",
+                token,
+            )
+            try:
+                scheduled_tasks = (
+                    json.loads(response) if status == HTTPStatus.OK else []
+                )
+            except json.JSONDecodeError:
+                scheduled_tasks = []
+            scheduled_names = {
+                str(task.get("name") or "")
+                for task in scheduled_tasks
+                if isinstance(task, dict)
+            } if isinstance(scheduled_tasks, list) else set()
+            missing_tasks = sorted(set(ZAVA_SCHEDULED_TASKS) - scheduled_names)
+            if missing_tasks:
+                issues.append(
+                    "Zava agent configuration is missing required scheduled tasks: "
+                    + ", ".join(missing_tasks)
+                    + "."
                 )
             if str(agent_details.get("incidentType") or "").casefold() == "pagerduty":
                 action_groups = resources_by_type.get(
@@ -2530,6 +2583,21 @@ def validate_zava_existing_lab(
         resources_by_type,
         "microsoft.operationalinsights/workspaces",
     )
+    app_insights = _first_resource(
+        resources_by_type,
+        "microsoft.insights/components",
+    )
+    agent_identity = next(
+        (
+            resource
+            for resource in resources_by_type.get(
+                "microsoft.managedidentity/userassignedidentities",
+                [],
+            )
+            if str(resource.get("name") or "").startswith("id-zava-agent-")
+        ),
+        {},
+    )
     vault = _first_resource(resources_by_type, "microsoft.keyvault/vaults")
     vm = _first_resource(resources_by_type, "microsoft.compute/virtualmachines")
     postgres = _first_resource(
@@ -2583,6 +2651,10 @@ def validate_zava_existing_lab(
         "POSTGRES_SERVER_NAME": str(postgres.get("name") or ""),
         "LOG_ANALYTICS_WORKSPACE_ID": workspace_customer_id,
         "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID": str(workspace.get("id") or ""),
+        "LOG_ANALYTICS_WORKSPACE_NAME": str(workspace.get("name") or ""),
+        "APPLICATIONINSIGHTS_RESOURCE_ID": str(app_insights.get("id") or ""),
+        "APPLICATIONINSIGHTS_NAME": str(app_insights.get("name") or ""),
+        "AZURE_SRE_AGENT_IDENTITY_ID": str(agent_identity.get("id") or ""),
     }
     if all(values.get(name) for name in (
         "KEY_VAULT_NAME",
@@ -4721,6 +4793,280 @@ def ensure_zava_response_plan(
     return True, ""
 
 
+def zava_core_connector_payloads(
+    values: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    required = (
+        "AZURE_SRE_AGENT_IDENTITY_ID",
+        "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID",
+        "LOG_ANALYTICS_WORKSPACE_NAME",
+        "APPLICATIONINSIGHTS_RESOURCE_ID",
+        "APPLICATIONINSIGHTS_NAME",
+    )
+    missing = [name for name in required if not values.get(name)]
+    if missing:
+        raise ValueError(
+            "Missing Zava connector outputs: " + ", ".join(missing) + "."
+        )
+    identity = values["AZURE_SRE_AGENT_IDENTITY_ID"]
+    log_id = values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"]
+    app_id = values["APPLICATIONINSIGHTS_RESOURCE_ID"]
+    learn_tools = [
+        "microsoft_docs_search",
+        "microsoft_code_sample_search",
+        "microsoft_docs_fetch",
+    ]
+    return {
+        "SRE-Zava-Log-Analytics-Workspace": {
+            "dataConnectorType": "LogAnalytics",
+            "dataSource": log_id,
+            "extendedProperties": {
+                "armResourceId": log_id,
+                "workspace": {
+                    "name": values["LOG_ANALYTICS_WORKSPACE_NAME"],
+                },
+            },
+            "identity": identity,
+            "source": "Agent",
+        },
+        "SRE-Zava-Application-Insights": {
+            "dataConnectorType": "AppInsights",
+            "dataSource": app_id,
+            "extendedProperties": {
+                "armResourceId": app_id,
+                "resource": {
+                    "name": values["APPLICATIONINSIGHTS_NAME"],
+                },
+            },
+            "identity": identity,
+            "source": "Agent",
+        },
+        "microsoft-learn": {
+            "dataConnectorType": "Mcp",
+            "dataSource": "https://learn.microsoft.com",
+            "identity": "",
+            "endpoint": "https://learn.microsoft.com/api/mcp",
+            "source": "Agent",
+            "extendedProperties": {
+                "type": "http",
+                "endpoint": "https://learn.microsoft.com/api/mcp",
+                "authType": "CustomHeaders",
+                "selectedTools": learn_tools,
+                "toolsVisibleToMetaAgent": learn_tools,
+            },
+        },
+    }
+
+
+def ensure_zava_core_connectors(
+    job: Job,
+    endpoint: str,
+    token: str,
+    values: dict[str, str],
+) -> bool:
+    try:
+        payloads = zava_core_connector_payloads(values)
+    except ValueError as error:
+        job.emit("error", message=str(error))
+        return False
+    for name, properties in payloads.items():
+        job.emit("step", name=f"Applying Zava connector {name}")
+        url = (
+            f"{endpoint.rstrip('/')}/api/v2/extendedAgent/connectors/"
+            f"{quote(name)}"
+        )
+        body = {
+            "name": name,
+            "type": "AgentConnector",
+            "tags": [],
+            "properties": properties,
+        }
+        status, _ = http_json("PUT", url, token, body)
+        if status not in (200, 201, 202, 204):
+            job.emit(
+                "error",
+                message=f"Unable to apply required Zava connector {name} "
+                f"(HTTP {status}).",
+            )
+            return False
+        status, _ = http_json("GET", url, token)
+        if status != HTTPStatus.OK:
+            job.emit(
+                "error",
+                message=f"Required Zava connector {name} was not readable "
+                "after creation.",
+            )
+            return False
+        if name == "microsoft-learn":
+            status, response = http_json(
+                "POST",
+                f"{url}/testconnection",
+                token,
+                body,
+            )
+            try:
+                result = json.loads(response)
+            except json.JSONDecodeError:
+                result = {}
+            if (
+                status not in (200, 201, 202, 204)
+                or result.get("success") is not True
+            ):
+                job.emit(
+                    "error",
+                    message="The Microsoft Learn connector failed its connection test.",
+                )
+                return False
+    return True
+
+
+def parse_zava_scheduled_task_manifest(path: Path) -> dict[str, str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    def scalar(key: str) -> str:
+        prefix = f"  {key}:"
+        line = next((item for item in lines if item.startswith(prefix)), "")
+        return line.split(":", 1)[1].strip().strip("'\"") if line else ""
+
+    def block(key: str) -> str:
+        marker = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.fullmatch(rf"\s{{2}}{re.escape(key)}:\s*\|[-+]?", line)
+            ),
+            -1,
+        )
+        if marker < 0:
+            return ""
+        content = []
+        for line in lines[marker + 1:]:
+            if line.strip() and not line.startswith("    "):
+                break
+            content.append(line[4:] if line.startswith("    ") else "")
+        return "\n".join(content).strip()
+
+    task = {
+        "name": scalar("name"),
+        "description": scalar("description"),
+        "cronExpression": scalar("cron_expression"),
+        "agent": scalar("agent"),
+        "agentPrompt": block("agent_prompt"),
+        "agentMode": "autonomous",
+        "status": "Active",
+    }
+    if not all(task.get(name) for name in (
+        "name",
+        "description",
+        "cronExpression",
+        "agent",
+        "agentPrompt",
+    )):
+        raise ValueError(f"Scheduled task manifest is incomplete: {path.name}.")
+    return task
+
+
+def zava_daily_keepalive_task(values: dict[str, str]) -> dict[str, str]:
+    resource_group = values["AZURE_RESOURCE_GROUP"]
+    return {
+        "name": "zava-daily-baseline-keepalive",
+        "description": (
+            "Daily autonomous verification and restoration of the Zava Learning "
+            "scenario baseline at 8:00 AM Central Time."
+        ),
+        "cronExpression": "0 13,14 * * *",
+        "agent": values["SRE_AGENT_NAME"],
+        "agentMode": "autonomous",
+        "status": "Active",
+        "agentPrompt": (
+            "Schedule guard: this task runs at 13:00 and 14:00 UTC so one run "
+            "remains at 8:00 AM America/Chicago across daylight-saving changes. "
+            "Derive America/Chicago local time from the scheduled timestamp; if "
+            "the local hour is not 08, report a DST guard no-op and stop. Otherwise "
+            f"maintain the Zava Learning baseline in resource group {resource_group}. "
+            "Discover and verify the Application Gateway, PostgreSQL Flexible "
+            "Server, reporting VM and zava-export timer, every Container App and "
+            "baseline replica floor, learner portal, and quiz lanes on ports "
+            "8081-8087. Take only the minimum non-destructive action needed to "
+            "restore availability. Do not inject faults, redeploy infrastructure, "
+            "create incidents, open pull requests, or create change requests. "
+            "Report initial state, actions, final state, and unresolved blockers."
+        ),
+    }
+
+
+def ensure_zava_scheduled_tasks(
+    job: Job,
+    endpoint: str,
+    token: str,
+    values: dict[str, str],
+    config_root: Path,
+) -> bool:
+    collection_url = f"{endpoint.rstrip('/')}/api/v1/scheduledtasks"
+    status, response = http_json("GET", collection_url, token)
+    if status != HTTPStatus.OK:
+        job.emit(
+            "error",
+            message=f"Unable to list Zava scheduled tasks (HTTP {status}).",
+        )
+        return False
+    try:
+        existing = json.loads(response)
+    except json.JSONDecodeError:
+        existing = []
+    existing_names = {
+        str(item.get("name") or "")
+        for item in existing
+        if isinstance(item, dict)
+    } if isinstance(existing, list) else set()
+    tasks = [zava_daily_keepalive_task(values)]
+    task_root = config_root / "scheduled-tasks"
+    try:
+        tasks.extend(
+            parse_zava_scheduled_task_manifest(task_root / f"{name}.yaml")
+            for name in (
+                "zava-nsg-weekly-audit",
+                "zava-rbac-weekly-audit",
+                "zava-cost-weekly-analysis",
+            )
+        )
+    except (OSError, ValueError) as error:
+        job.emit("error", message=f"Invalid Zava scheduled task: {error}")
+        return False
+    for task in tasks:
+        if task["name"] in existing_names:
+            continue
+        job.emit("step", name=f"Creating scheduled task {task['name']}")
+        status, _ = http_json("POST", collection_url, token, task)
+        if status not in (200, 201, 202, 204):
+            job.emit(
+                "error",
+                message=f"Unable to create scheduled task {task['name']} "
+                f"(HTTP {status}).",
+            )
+            return False
+    status, response = http_json("GET", collection_url, token)
+    try:
+        current = json.loads(response) if status == HTTPStatus.OK else []
+    except json.JSONDecodeError:
+        current = []
+    current_names = {
+        str(item.get("name") or "")
+        for item in current
+        if isinstance(item, dict)
+    } if isinstance(current, list) else set()
+    missing = sorted(set(ZAVA_SCHEDULED_TASKS) - current_names)
+    if missing:
+        job.emit(
+            "error",
+            message="Required Zava scheduled tasks are missing: "
+            + ", ".join(missing)
+            + ".",
+        )
+        return False
+    return True
+
+
 def configure_zava_agent_core(
     job: Job,
     environment: str,
@@ -4737,8 +5083,11 @@ def configure_zava_agent_core(
         "LOG_ANALYTICS_WORKSPACE_ID",
         "APPLICATIONINSIGHTS_NAME",
         "APPLICATIONINSIGHTS_APP_ID",
+        "APPLICATIONINSIGHTS_RESOURCE_ID",
         "AZURE_CONTAINER_REGISTRY_NAME",
         "AZURE_CONTAINER_ENVIRONMENT_NAME",
+        "AZURE_SRE_AGENT_IDENTITY_ID",
+        "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID",
     )
     missing = [name for name in required if not values.get(name)]
     if missing:
@@ -4759,6 +5108,8 @@ def configure_zava_agent_core(
     endpoint = values["SRE_AGENT_ENDPOINT"].rstrip("/")
     vendor_dir = vendor_dir_for_lab(LABS_BY_ID["zava-learning"])
     config_root = vendor_dir / "sre-config"
+    if not ensure_zava_core_connectors(job, endpoint, token, values):
+        return False
     substitutions = {
         "RG": values["AZURE_RESOURCE_GROUP"],
         "REPO": "",
@@ -4778,7 +5129,7 @@ def configure_zava_agent_core(
                     name,
                 ),
             )
-            for name in (*ZAVA_CORE_SKILLS, *enabled_optional_skills)
+            for name in ZAVA_ALL_SKILLS
         ]
         agents = [
             (
@@ -4787,7 +5138,7 @@ def configure_zava_agent_core(
                     config_root / "agent-config" / "agents" / name / f"{name}.yaml",
                     name,
                     substitutions,
-                    enabled_optional_skills,
+                    tuple(ZAVA_OPTIONAL_SKILLS.values()),
                 ),
             )
             for name in ZAVA_CORE_AGENTS
@@ -4901,6 +5252,14 @@ def configure_zava_agent_core(
             "error",
             message=f"Unable to configure zava-learning-response: {plan_error}.",
         )
+        return False
+    if not ensure_zava_scheduled_tasks(
+        job,
+        endpoint,
+        token,
+        values,
+        config_root,
+    ):
         return False
     saved, error = set_azd_values(
         environment,
@@ -5792,13 +6151,24 @@ def hydrate_zava_runtime_outputs(
                 "az", "monitor", "app-insights", "component", "show",
                 "--app", app_insights_name,
                 "--resource-group", resource_group,
-                "--query", "appId",
-                "--output", "tsv",
+                "--query", "{id:id,appId:appId}",
+                "--output", "json",
             ],
             timeout=60,
         )
-        if success and output.strip():
-            values["APPLICATIONINSIGHTS_APP_ID"] = output.strip()
+        try:
+            app_insights = json.loads(output) if success else {}
+        except json.JSONDecodeError:
+            app_insights = {}
+        if isinstance(app_insights, dict):
+            if app_insights.get("appId"):
+                values["APPLICATIONINSIGHTS_APP_ID"] = str(
+                    app_insights["appId"]
+                )
+            if app_insights.get("id"):
+                values["APPLICATIONINSIGHTS_RESOURCE_ID"] = str(
+                    app_insights["id"]
+                )
     host = values.get("APPGW_PUBLIC_FQDN", "")
     values["ZAVA_PORTAL_URL"] = f"http://{host}" if host else ""
     for port in ZAVA_LANE_PORTS:

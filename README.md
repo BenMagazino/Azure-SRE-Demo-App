@@ -130,6 +130,12 @@ monitoring, symptom-based alerts, and an autonomous Azure SRE Agent. Its scenari
 connectivity, Application Gateway probes, app scale-to-zero, slow releases, database query and
 connection-pool failures, invalid secrets, and reporting-worker disk pressure.
 
+Core SRE Agent configuration includes the Application Insights, Log Analytics, and Microsoft Learn
+connectors; four custom agents; all fourteen Zava skill manifests; architecture/reporting knowledge;
+the autonomous response plan; three weekly governance audits; and a daily baseline keepalive.
+PagerDuty and ServiceNow connectors and the two ServiceNow custom tools are added only when their
+optional credentials are supplied.
+
 Azure Monitor and Azure SRE Agent are the core path. PagerDuty and ServiceNow can be configured
 for a new Zava environment, while GitHub OAuth is connected in the SRE Agent portal after
 deployment. Optional credentials are held only while their connector or protected tool is created;
