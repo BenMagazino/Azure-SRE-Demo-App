@@ -3413,6 +3413,19 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             json.dumps(list(job.events.queue)),
         )
 
+    def test_sanitizes_terminal_formatting_and_spinner_frames(self) -> None:
+        self.assertEqual(
+            main_module.sanitize_terminal_output(
+                "\x1b[K\x1b[93mSeeding database...\x1b[39m"
+            ),
+            "Seeding database...",
+        )
+        self.assertTrue(main_module.is_transient_cli_spinner("/ Running .."))
+        self.assertTrue(main_module.is_transient_cli_spinner(r"\ Running .."))
+        self.assertFalse(
+            main_module.is_transient_cli_spinner("Building learner-portal...")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,6 +114,11 @@ AZURE_DEVICE_LOGIN_URL = "https://microsoft.com/devicelogin"
 AZURE_GUID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 )
+ANSI_ESCAPE_PATTERN = re.compile(
+    r"\x1B(?:\][^\x07]*(?:\x07|\x1B\\)|[P^_].*?\x1B\\|"
+    r"[@-_][0-?]*[ -/]*[@-~])"
+)
+CLI_SPINNER_PATTERN = re.compile(r"^[|/\\-]\s+Running\s+\.*$")
 SRE_AGENT_REGIONS = frozenset({
     "australiaeast",
     "canadacentral",
@@ -261,6 +266,20 @@ def redact_text(value: str) -> str:
         r"\1<redacted>",
         redacted,
     )
+
+
+def sanitize_terminal_output(value: str) -> str:
+    without_ansi = ANSI_ESCAPE_PATTERN.sub("", value)
+    return "".join(
+        character
+        for character in without_ansi
+        if character in "\t"
+        or ord(character) >= 32
+    ).strip()
+
+
+def is_transient_cli_spinner(value: str) -> bool:
+    return bool(CLI_SPINNER_PATTERN.fullmatch(value))
 
 
 def redact_command(command: list[str]) -> list[str]:
@@ -3081,13 +3100,15 @@ def run_process(
         assert process.stdout is not None
         for raw_line in process.stdout:
             line = raw_line.rstrip()
-            safe_line = redact_text(line)
+            safe_line = sanitize_terminal_output(redact_text(line))
             for sensitive_value in (environment_overrides or {}).values():
                 if sensitive_value:
                     safe_line = safe_line.replace(
                         sensitive_value,
                         "<redacted-environment-value>",
                     )
+            if not safe_line or is_transient_cli_spinner(safe_line):
+                continue
             if not no_log_output:
                 captured.append(safe_line)
                 LOGGER.debug(
