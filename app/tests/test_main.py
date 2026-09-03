@@ -50,6 +50,7 @@ from app.main import (
     install_all_worker,
     install_managed_azd,
     install_managed_azure_cli,
+    install_managed_powershell,
     is_device_login_url,
     is_allowed_demo_external_url,
     launch_client_if_unclaimed,
@@ -182,9 +183,9 @@ class LabWorkflowTests(unittest.TestCase):
     def test_catalog_exposes_grubify_memory_leak_workflow(self) -> None:
         payload = lab_catalog_payload({"lab_id": "grubify-starter-lab"})
 
-        self.assertEqual(len(LABS), 1)
+        self.assertEqual(len(LABS), 2)
         self.assertEqual(payload["selected_lab_id"], "grubify-starter-lab")
-        self.assertEqual(len(payload["labs"]), 1)
+        self.assertEqual(len(payload["labs"]), 2)
         self.assertEqual(payload["labs"][0]["resource_count"], 17)
         self.assertEqual(payload["labs"][0]["estimated_turnaround"], "10-23 min")
         self.assertEqual(payload["labs"][0]["dependency_ids"], ("az", "azd"))
@@ -193,6 +194,20 @@ class LabWorkflowTests(unittest.TestCase):
             240,
         )
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
+
+    def test_catalog_exposes_all_zava_scenarios_and_regions(self) -> None:
+        payload = lab_catalog_payload({"lab_id": "zava-learning"})
+        zava = next(lab for lab in payload["labs"] if lab["id"] == "zava-learning")
+
+        self.assertEqual(zava["dependency_ids"], ("az", "azd", "pwsh"))
+        self.assertEqual(
+            [region["id"] for region in zava["regions"]],
+            ["location", "db_location", "agent_location"],
+        )
+        self.assertEqual(
+            [scenario["id"] for scenario in zava["scenarios"]],
+            ["nsg", "appgw", "app", "perf", "query", "pool", "secret", "disk"],
+        )
 
     def test_builds_tenant_scoped_resource_group_portal_link(self) -> None:
         self.assertEqual(
@@ -1568,29 +1583,30 @@ class PrerequisiteTests(unittest.TestCase):
         versions = {
             "az": "2.90.0",
             "azd": "1.32.0",
+            "pwsh": "7.6.5",
         }
         command_version.side_effect = lambda executable, _args: versions[executable]
         statuses = prerequisite_statuses()
         refresh_process_path.assert_called_once_with()
-        self.assertEqual([item.id for item in statuses], ["az", "azd"])
+        self.assertEqual([item.id for item in statuses], ["az", "azd", "pwsh"])
         self.assertTrue(all(item.installed for item in statuses))
         self.assertTrue(all(item.ready for item in statuses))
         self.assertTrue(all(item.state == "ready" for item in statuses))
         self.assertTrue(all(item.required for item in statuses))
         self.assertEqual(
             MINIMUM_VERSIONS,
-            {"az": "2.88.0", "azd": "1.28.0"},
+            {"az": "2.88.0", "azd": "1.28.0", "pwsh": "7.6.5"},
         )
         which.assert_called()
 
     def test_install_commands_are_app_managed(self) -> None:
-        expected = {"az", "azd"}
+        expected = {"az", "azd", "pwsh"}
         self.assertEqual(set(INSTALL_COMMANDS), expected)
         self.assertEqual(set(UPDATE_COMMANDS), expected)
         self.assertEqual(set(REPAIR_COMMANDS), expected)
-        self.assertEqual(INSTALL_ORDER, ("az", "azd"))
+        self.assertEqual(INSTALL_ORDER, ("az", "azd", "pwsh"))
         for commands in (INSTALL_COMMANDS, UPDATE_COMMANDS, REPAIR_COMMANDS):
-            for tool_id in ("az", "azd"):
+            for tool_id in ("az", "azd", "pwsh"):
                 command = commands[tool_id]
                 self.assertEqual(command[0], "app-managed")
                 self.assertNotIn("winget", command)
@@ -1607,6 +1623,7 @@ class PrerequisiteTests(unittest.TestCase):
         command_version.side_effect = lambda executable, _args: {
             "az": "2.87.0",
             "azd": "1.27.1",
+            "pwsh": "7.5.0",
         }[executable]
 
         statuses = prerequisite_statuses()
@@ -1624,12 +1641,14 @@ class PrerequisiteTests(unittest.TestCase):
 
     @patch("app.main.install_managed_azure_cli")
     @patch("app.main.install_managed_azd")
+    @patch("app.main.install_managed_powershell")
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_install_all_runs_missing_tools_sequentially(
         self,
         prerequisite_statuses,
         run_process,
+        install_managed_powershell,
         install_managed_azd,
         install_managed_azure_cli,
     ) -> None:
@@ -1660,9 +1679,14 @@ class PrerequisiteTests(unittest.TestCase):
             installed.add("azd")
             return True
 
+        def install_powershell(_job):
+            installed.add("pwsh")
+            return True
+
         prerequisite_statuses.side_effect = statuses
         install_managed_azure_cli.side_effect = install_azure_cli
         install_managed_azd.side_effect = install_azd
+        install_managed_powershell.side_effect = install_powershell
         job = Job()
 
         install_all_worker(job)
@@ -1670,6 +1694,7 @@ class PrerequisiteTests(unittest.TestCase):
         run_process.assert_not_called()
         install_managed_azure_cli.assert_called_once_with(job)
         install_managed_azd.assert_called_once_with(job)
+        install_managed_powershell.assert_called_once_with(job)
         events = list(job.events.queue)
         tool_events = [
             event
@@ -1808,6 +1833,39 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertTrue((azd_dir / "azd.exe").is_file())
             self.assertFalse((azd_dir / "azd-windows-amd64.exe").exists())
             self.assertFalse((tools_dir / "azd-staging").exists())
+            self.assertFalse(any(tools_dir.glob("*.zip")))
+        refresh_process_path.assert_called_once_with()
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.urlopen")
+    def test_installs_checksum_verified_powershell_in_user_profile(
+        self,
+        urlopen,
+        refresh_process_path,
+    ) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("pwsh.exe", "executable")
+            archive.writestr("LICENSE.txt", "license")
+        payload = archive_bytes.getvalue()
+        urlopen.return_value = io.BytesIO(payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            powershell_dir = tools_dir / "powershell"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.POWERSHELL_DIR", powershell_dir),
+                patch(
+                    "app.main.POWERSHELL_SHA256",
+                    hashlib.sha256(payload).hexdigest().upper(),
+                ),
+            ):
+                job = Job()
+                self.assertTrue(install_managed_powershell(job))
+
+            self.assertTrue((powershell_dir / "pwsh.exe").is_file())
+            self.assertFalse((tools_dir / "powershell-staging").exists())
             self.assertFalse(any(tools_dir.glob("*.zip")))
         refresh_process_path.assert_called_once_with()
 
@@ -2163,8 +2221,13 @@ class ProcessTests(unittest.TestCase):
             'Join-Path $packagedApplication "python\\LICENSE.txt"',
             build_script,
         )
+        self.assertIn('"vendor\\starter-lab"', build_script)
+        self.assertIn('"vendor\\zava-learning"', build_script)
         self.assertTrue((repository / "LICENSE").is_file())
         self.assertTrue((repository / "THIRD-PARTY-NOTICES.txt").is_file())
+        self.assertTrue(
+            (repository / "vendor" / "zava-learning" / "README.vendor.md").is_file()
+        )
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -2911,14 +2974,18 @@ class RegionConfigurationTests(unittest.TestCase):
 
     def test_region_dropdown_matches_backend_validation(self) -> None:
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        select = re.search(
-            r'<select id="azure-location">(.*?)</select>',
-            html,
-            re.DOTALL,
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        grubify = next(
+            lab for lab in LABS if lab.id == "grubify-starter-lab"
         )
-        self.assertIsNotNone(select)
-        options = frozenset(re.findall(r'<option value="([^"]+)"', select.group(1)))
-        self.assertEqual(options, SRE_AGENT_REGIONS)
+
+        self.assertIn('id="region-fields"', html)
+        self.assertIn('select.dataset.regionId = region.id', script)
+        self.assertEqual(len(grubify.regions), 1)
+        self.assertEqual(
+            frozenset(grubify.regions[0].allowed_values),
+            SRE_AGENT_REGIONS,
+        )
 
     def test_bicep_regions_match_backend_validation(self) -> None:
         bicep = (VENDOR_DIR / "infra" / "main.bicep").read_text(encoding="utf-8")
@@ -2930,6 +2997,205 @@ class RegionConfigurationTests(unittest.TestCase):
         self.assertIsNotNone(allowed)
         locations = frozenset(re.findall(r"'([^']+)'", allowed.group(1)))
         self.assertEqual(locations, SRE_AGENT_REGIONS)
+
+
+class ZavaBackendFollowUpTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        main_module.clear_in_memory_secrets("zava-learning", "atomic-test")
+
+    def test_private_bridge_allowlist_is_operational_only(self) -> None:
+        self.assertEqual(
+            main_module.ZAVA_SECRET_NAMES,
+            {"db-password", "db-pool-password", "vm-admin-password"},
+        )
+
+    def test_transient_settings_replace_atomically(self) -> None:
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "old", "servicenow_password": "old"},
+        )
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "new"},
+        )
+        self.assertEqual(
+            main_module.get_in_memory_secrets("zava-learning", "atomic-test"),
+            {"pagerduty_api_token": "new"},
+        )
+
+    def test_failed_integration_setup_retains_one_time_memory(self) -> None:
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "never-log-this"},
+        )
+        job = Job(["deploy"])
+        with patch.object(
+            main_module,
+            "run_secret_capture",
+            return_value=(False, ""),
+        ):
+            configured, _status = main_module.configure_zava_optional_integrations(
+                job,
+                "atomic-test",
+                {},
+                main_module.get_in_memory_secrets("zava-learning", "atomic-test"),
+            )
+        self.assertFalse(configured)
+        self.assertEqual(
+            main_module.get_in_memory_secrets(
+                "zava-learning",
+                "atomic-test",
+            )["pagerduty_api_token"],
+            "never-log-this",
+        )
+        self.assertNotIn(
+            "never-log-this",
+            json.dumps(list(job.events.queue)),
+        )
+
+    def test_successful_deployment_clears_one_time_memory(self) -> None:
+        state = {
+            "lab_id": "zava-learning",
+            "environment": "atomic-test",
+            "location": "eastus2",
+            "db_location": "westus3",
+            "agent_location": "westus2",
+            "subscription_id": "sub",
+            "integration_status": {"pagerduty": "requested"},
+        }
+        values = {
+            "AZURE_LOCATION": "eastus2",
+            "AZURE_DB_LOCATION": "westus3",
+            "AZURE_AGENT_LOCATION": "westus2",
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+        }
+        job = Job()
+        with (
+            patch.object(main_module, "load_state", return_value=state),
+            patch.object(main_module, "azd_values", return_value=values),
+            patch.object(main_module, "set_azd_values", return_value=(True, "")),
+            patch.object(
+                main_module,
+                "zava_process_environment",
+                return_value=({"VM_ADMIN_PASSWORD": "hidden"}, None),
+            ),
+            patch.object(main_module, "run_process", return_value=(True, "")),
+            patch.object(
+                main_module,
+                "hydrate_zava_runtime_outputs",
+                return_value=values,
+            ),
+            patch.object(
+                main_module,
+                "discover_zava_secure_resource_names",
+                return_value=values,
+            ),
+            patch.object(main_module, "configure_zava_agent_core", return_value=True),
+            patch.object(
+                main_module,
+                "configure_zava_optional_integrations",
+                return_value=(True, {"pagerduty": "healthy"}),
+            ),
+            patch.object(main_module, "save_state"),
+            patch.object(main_module, "clear_in_memory_secrets") as clear,
+        ):
+            main_module.reconcile_zava(job)
+        clear.assert_called_once_with("zava-learning", "atomic-test")
+        self.assertTrue(list(job.events.queue)[-1]["success"])
+
+    def test_incomplete_or_unsupported_integrations_fail_step_four(self) -> None:
+        _values, error = main_module.parse_zava_integrations(
+            {"pagerduty_api_token": "secret"}
+        )
+        self.assertIn("requires", error)
+        _values, error = main_module.parse_zava_integrations(
+            {"github_repository": "owner/repo"}
+        )
+        self.assertIn("SRE Agent portal", error)
+
+    def test_servicenow_credentials_are_safe_python_literals(self) -> None:
+        manifest = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+            / "tools"
+            / "CreateServiceNowChangeRequest"
+            / "CreateServiceNowChangeRequest.yaml"
+        )
+        tool = main_module.parse_zava_python_tool_manifest(
+            manifest,
+            "CreateServiceNowChangeRequest",
+            {
+                "SERVICENOW_URL": "https://example.test/a\\b",
+                "SERVICENOW_USER": 'operator"name',
+                "SERVICENOW_PASS": "line1\nline2",
+            },
+        )
+
+        compile(tool["functionCode"], str(manifest), "exec")
+        self.assertNotIn("@@SERVICENOW_", tool["functionCode"])
+
+    def test_summary_links_include_ui_display_value(self) -> None:
+        links = main_module.runtime_summary_links(
+            {
+                "lab_id": "zava-learning",
+                "tenant_id": "tenant",
+                "subscription_id": "sub",
+            },
+            {
+                "AZURE_RESOURCE_GROUP": "rg-zava",
+                "APPGW_PUBLIC_FQDN": "zava.example.test",
+            },
+        )
+        self.assertTrue(links)
+        self.assertTrue(all(link["value"] == link["url"] for link in links))
+
+    def test_discovery_preserves_all_three_zava_regions(self) -> None:
+        environments = build_existing_environment_catalog(
+            [{
+                "name": "rg-zava",
+                "location": "eastus2",
+                "tags": {
+                    main_module.LAB_ID_TAG: "zava-learning",
+                    main_module.LAB_ENVIRONMENT_TAG: "zava",
+                },
+            }],
+            [{
+                "name": "sre-zava",
+                "resourceGroup": "rg-zava",
+                "location": "westus2",
+                "endpoint": "https://agent.example",
+            }],
+            [],
+            set(),
+            "zava-learning",
+            [],
+            [{
+                "name": "pg-zava",
+                "resourceGroup": "rg-zava",
+                "location": "westus3",
+            }],
+        )
+        self.assertEqual(environments[0]["location"], "eastus2")
+        self.assertEqual(environments[0]["db_location"], "westus3")
+        self.assertEqual(environments[0]["agent_location"], "westus2")
+
+    def test_scenario_signal_queries_match_alert_sources(self) -> None:
+        injected = main_module.datetime(2026, 1, 1, tzinfo=main_module.timezone.utc)
+        self.assertIn(
+            'listenerName_s == "quiz-nsg-listener"',
+            main_module.zava_scenario_signal_query("nsg", injected),
+        )
+        self.assertIn(
+            'ContainerAppName_s == "quiz-perf"',
+            main_module.zava_scenario_signal_query("perf", injected),
+        )
+        self.assertIn(
+            'ProcessName == "zava-export"',
+            main_module.zava_scenario_signal_query("disk", injected),
+        )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import logging
 import os
 import queue
 import re
+import secrets
 import shutil
 import ssl
 import subprocess
@@ -32,13 +33,13 @@ FROZEN = bool(getattr(sys, "frozen", False))
 PORTABLE = os.environ.get("AZURE_SRE_AGENT_PORTABLE", "").strip() == "1"
 if FROZEN:
     ROOT = Path(getattr(sys, "_MEIPASS"))
-    BUNDLED_VENDOR_DIR = ROOT / "vendor" / "starter-lab"
+    BUNDLED_VENDOR_ROOT = ROOT / "vendor"
 else:
     ROOT = Path(__file__).resolve().parent
-    BUNDLED_VENDOR_DIR = (
-        ROOT / "vendor" / "starter-lab"
+    BUNDLED_VENDOR_ROOT = (
+        ROOT / "vendor"
         if PORTABLE
-        else ROOT.parent / "vendor" / "starter-lab"
+        else ROOT.parent / "vendor"
     )
 STATIC_DIR = ROOT / "static"
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "AzureSREAgentDemo"
@@ -73,12 +74,32 @@ AZD_DOCS_URL = (
     "https://learn.microsoft.com/azure/developer/"
     "azure-developer-cli/install-azd"
 )
+POWERSHELL_VERSION = "7.6.5"
+POWERSHELL_URL = (
+    "https://github.com/PowerShell/PowerShell/releases/download/"
+    f"v{POWERSHELL_VERSION}/PowerShell-{POWERSHELL_VERSION}-win-x64.zip"
+)
+POWERSHELL_SHA256 = (
+    "32EB8F6CDCE08F86E987D625A2733E54AC3E289AE7E1621B14C0B5BCEC2434EA"
+)
+POWERSHELL_DIR = MANAGED_TOOLS_DIR / "powershell"
+POWERSHELL_DOCS_URL = (
+    "https://learn.microsoft.com/powershell/scripting/install/"
+    "installing-powershell-on-windows"
+)
 if FROZEN or PORTABLE:
-    VENDOR_DIR = STATE_DIR / "starter-lab"
-    VENDOR_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(BUNDLED_VENDOR_DIR, VENDOR_DIR, dirs_exist_ok=True)
+    VENDOR_ROOT = STATE_DIR / "labs"
+    VENDOR_ROOT.mkdir(parents=True, exist_ok=True)
+    for bundled_lab in BUNDLED_VENDOR_ROOT.iterdir():
+        if bundled_lab.is_dir():
+            shutil.copytree(
+                bundled_lab,
+                VENDOR_ROOT / bundled_lab.name,
+                dirs_exist_ok=True,
+            )
 else:
-    VENDOR_DIR = ROOT.parent / "vendor" / "starter-lab"
+    VENDOR_ROOT = ROOT.parent / "vendor"
+VENDOR_DIR = VENDOR_ROOT / "starter-lab"
 HOST = "127.0.0.1"
 PORT = 8765
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -360,6 +381,18 @@ class ScenarioDefinition:
     action_label: str
     confirmation: str
     investigation_delay_seconds: int
+    script_id: str = ""
+    lane_port: Optional[int] = None
+    probe_path: str = "/"
+    web_health: bool = True
+
+
+@dataclass(frozen=True)
+class RegionDefinition:
+    id: str
+    name: str
+    default: str
+    allowed_values: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -371,6 +404,9 @@ class LabDefinition:
     estimated_turnaround: str
     dependency_ids: tuple[str, ...]
     scenarios: tuple[ScenarioDefinition, ...]
+    vendor_directory: str = "starter-lab"
+    default_environment: str = "sre-lab"
+    regions: tuple[RegionDefinition, ...] = ()
 
 
 TOOLS = (
@@ -378,6 +414,8 @@ TOOLS = (
      AZURE_CLI_DOCS_URL, True),
     ("azd", "Azure Developer CLI", ("version",), "1.28.0",
      AZD_DOCS_URL, True),
+    ("pwsh", "PowerShell", ("--version",), "7.6.5",
+     POWERSHELL_DOCS_URL, True),
 )
 LABS = (
     LabDefinition(
@@ -403,6 +441,154 @@ LABS = (
                     "Send cart requests to trigger the Grubify memory leak?"
                 ),
                 investigation_delay_seconds=240,
+                script_id="memory-leak",
+            ),
+        ),
+        regions=(
+            RegionDefinition(
+                id="location",
+                name="Azure region for new resources",
+                default="eastus2",
+                allowed_values=tuple(sorted(SRE_AGENT_REGIONS)),
+            ),
+        ),
+    ),
+    LabDefinition(
+        id="zava-learning",
+        name="Zava Learning Lab",
+        description=(
+            "Deploy a multi-tier online learning platform and observe Azure SRE "
+            "Agent diagnose and remediate network, application, database, secret, "
+            "and virtual-machine incidents."
+        ),
+        resource_count=66,
+        estimated_turnaround="25-45 min",
+        dependency_ids=("az", "azd", "pwsh"),
+        vendor_directory="zava-learning",
+        default_environment="zava-learning",
+        regions=(
+            RegionDefinition(
+                id="location",
+                name="Workload region",
+                default="southcentralus",
+                allowed_values=(
+                    "centralus",
+                    "eastus2",
+                    "southcentralus",
+                    "westus2",
+                    "westus3",
+                ),
+            ),
+            RegionDefinition(
+                id="db_location",
+                name="PostgreSQL region",
+                default="westus3",
+                allowed_values=(
+                    "centralus",
+                    "eastus2",
+                    "southcentralus",
+                    "westus2",
+                    "westus3",
+                ),
+            ),
+            RegionDefinition(
+                id="agent_location",
+                name="SRE Agent region",
+                default="eastus2",
+                allowed_values=tuple(sorted(SRE_AGENT_REGIONS)),
+            ),
+        ),
+        scenarios=(
+            ScenarioDefinition(
+                id="nsg",
+                name="Quiz Connectivity",
+                description=(
+                    "Inject an NSG priority inversion that blocks the quiz lane."
+                ),
+                action_label="Run Quiz Connectivity",
+                confirmation="Inject the Zava quiz connectivity fault?",
+                investigation_delay_seconds=900,
+                script_id="nsg",
+                lane_port=8081,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="appgw",
+                name="Portal 502 Errors",
+                description=(
+                    "Point the Application Gateway health probe at an invalid path."
+                ),
+                action_label="Run Portal 502 Errors",
+                confirmation="Inject the Zava Application Gateway fault?",
+                investigation_delay_seconds=300,
+                script_id="appgw",
+                lane_port=8082,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="app",
+                name="Quiz Service Unavailable",
+                description="Scale the quiz application lane to zero active replicas.",
+                action_label="Run Quiz Service Unavailable",
+                confirmation="Take the Zava quiz application lane offline?",
+                investigation_delay_seconds=600,
+                script_id="app",
+                lane_port=8083,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="perf",
+                name="Slow Quiz Release",
+                description="Deploy a deliberately slow quiz-service release.",
+                action_label="Run Slow Quiz Release",
+                confirmation="Deploy the slow Zava quiz-service release?",
+                investigation_delay_seconds=480,
+                script_id="perf",
+                lane_port=8084,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="query",
+                name="Slow Database Query",
+                description="Remove the question-bank index and force full scans.",
+                action_label="Run Slow Database Query",
+                confirmation="Inject the Zava database query fault?",
+                investigation_delay_seconds=600,
+                script_id="query",
+                lane_port=8085,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="pool",
+                name="Connection Exhaustion",
+                description="Clamp the quiz database role connection limit.",
+                action_label="Run Connection Exhaustion",
+                confirmation="Inject the Zava database connection-pool fault?",
+                investigation_delay_seconds=600,
+                script_id="pool",
+                lane_port=8086,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="secret",
+                name="Invalid Database Secret",
+                description="Rotate the quiz lane database credential to an invalid value.",
+                action_label="Run Invalid Database Secret",
+                confirmation="Inject the Zava database secret fault?",
+                investigation_delay_seconds=720,
+                script_id="secret",
+                lane_port=8087,
+                probe_path="/quiz/BIO-101",
+            ),
+            ScenarioDefinition(
+                id="disk",
+                name="Reporting Disk Pressure",
+                description="Fill the reporting worker data disk until exports fail.",
+                action_label="Run Reporting Disk Pressure",
+                confirmation="Fill the Zava reporting worker data disk?",
+                investigation_delay_seconds=900,
+                script_id="disk",
+                web_health=False,
             ),
         ),
     ),
@@ -410,6 +596,241 @@ LABS = (
 LABS_BY_ID = {lab.id: lab for lab in LABS}
 LAB_ID_TAG = "sre-agent-demo-lab-id"
 LAB_ENVIRONMENT_TAG = "sre-agent-demo-environment"
+ZAVA_SECRET_NAMES = frozenset({
+    "db-password",
+    "db-pool-password",
+    "vm-admin-password",
+})
+ZAVA_REQUIRED_SECRET_NAMES = (
+    "db-password",
+    "db-pool-password",
+    "vm-admin-password",
+)
+ZAVA_CONTAINER_APPS = frozenset({
+    "learner-portal",
+    "course-api",
+    "assessment-api",
+    "gradebook-api",
+    "quiz-nsg",
+    "quiz-appgw",
+    "quiz-app",
+    "quiz-perf",
+    "quiz-query",
+    "quiz-pool",
+    "quiz-secret",
+})
+ZAVA_LANE_PORTS = tuple(range(8081, 8088))
+ZAVA_CORE_AGENTS = (
+    "zava-cost-analyst",
+    "zava-incident-responder",
+    "zava-nsg-auditor",
+    "zava-rbac-auditor",
+)
+ZAVA_CORE_SKILLS = (
+    "connectivity-triage",
+    "cost-analysis",
+    "evidence-before-after",
+    "nsg-audit",
+    "performance-investigation",
+    "rbac-audit",
+    "rca-analysis",
+    "recommendations-next-steps",
+    "redaction-guard",
+    "zava-audit-report",
+    "zava-reporting",
+)
+ZAVA_CORE_CONFIG_VERSION = "1"
+ZAVA_OPTIONAL_SKILLS = {
+    "pagerduty": "pagerduty-incident-update",
+    "servicenow": "servicenow-change-management",
+    "github": "pr-delivery",
+}
+ZAVA_PAGERDUTY_TOOLS = (
+    "pagerduty_get_incident",
+    "pagerduty_list_incidents",
+    "pagerduty_manage_incidents",
+    "pagerduty_add_note_to_incident",
+)
+_INTEGRATION_STORE: dict[tuple[str, str], dict[str, str]] = {}
+_INTEGRATION_STORE_LOCK = threading.RLock()
+
+
+def integration_store_key(lab_id: str, environment: str) -> tuple[str, str]:
+    return lab_id, environment.casefold()
+
+
+def get_in_memory_secrets(lab_id: str, environment: str) -> dict[str, str]:
+    with _INTEGRATION_STORE_LOCK:
+        return dict(_INTEGRATION_STORE.get(
+            integration_store_key(lab_id, environment),
+            {},
+        ))
+
+
+def update_in_memory_secrets(
+    lab_id: str,
+    environment: str,
+    values: dict[str, str],
+) -> None:
+    with _INTEGRATION_STORE_LOCK:
+        key = integration_store_key(lab_id, environment)
+        current = _INTEGRATION_STORE.setdefault(key, {})
+        current.update({name: value for name, value in values.items() if value})
+
+
+def replace_in_memory_secrets(
+    lab_id: str,
+    environment: str,
+    values: dict[str, str],
+) -> None:
+    """Atomically replace transient deployment data, removing omitted values."""
+    replacement = {name: value for name, value in values.items() if value}
+    with _INTEGRATION_STORE_LOCK:
+        key = integration_store_key(lab_id, environment)
+        if replacement:
+            _INTEGRATION_STORE[key] = replacement
+        else:
+            _INTEGRATION_STORE.pop(key, None)
+
+
+def clear_in_memory_secrets(lab_id: str, environment: str) -> None:
+    with _INTEGRATION_STORE_LOCK:
+        _INTEGRATION_STORE.pop(integration_store_key(lab_id, environment), None)
+
+
+def generate_deployment_password(length: int = 36) -> str:
+    alphabet = (
+        "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        "abcdefghijkmnopqrstuvwxyz"
+        "23456789"
+        "!@#%_-+="
+    )
+    while True:
+        value = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(character.isupper() for character in value)
+            and any(character.islower() for character in value)
+            and any(character.isdigit() for character in value)
+            and any(character in "!@#%_-+=" for character in value)
+        ):
+            return value
+
+
+def new_zava_deployment_secrets() -> dict[str, str]:
+    return {
+        "POSTGRES_ADMIN_PASSWORD": generate_deployment_password(),
+        "POSTGRES_POOL_PASSWORD": generate_deployment_password(),
+        "VM_ADMIN_PASSWORD": generate_deployment_password(),
+    }
+
+
+def validate_lab_regions(
+    lab: LabDefinition,
+    payload: dict[str, Any],
+) -> tuple[dict[str, str], Optional[str]]:
+    values: dict[str, str] = {}
+    for region in lab.regions:
+        value = str(payload.get(region.id, "")).strip().lower()
+        if value not in region.allowed_values:
+            return {}, f"Unsupported {region.name.lower()}."
+        values[region.id] = value
+    return values, None
+
+
+def parse_zava_integrations(payload: Any) -> tuple[dict[str, str], Optional[str]]:
+    if payload is None:
+        return {}, None
+    if not isinstance(payload, dict):
+        return {}, "Integrations must be an object."
+    allowed = {
+        "pagerduty_api_token",
+        "pagerduty_webhook_url",
+        "pagerduty_service_id",
+        "pagerduty_obo_email",
+        "servicenow_url",
+        "servicenow_user",
+        "servicenow_password",
+        "github_repo",
+        "github_repository",
+        "github_token",
+    }
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        return {}, f"Unsupported integration fields: {', '.join(unknown)}."
+    result: dict[str, str] = {}
+    for key, raw_value in payload.items():
+        if not isinstance(raw_value, str):
+            return {}, f"Integration field {key} must be text."
+        value = raw_value.strip()
+        if len(value) > 4096:
+            return {}, f"Integration field {key} is too long."
+        if value:
+            result[key] = value
+    for url_key in ("pagerduty_webhook_url", "servicenow_url"):
+        if url_key in result and urlparse(result[url_key]).scheme != "https":
+            return {}, f"Integration field {url_key} must use HTTPS."
+    if "github_repository" in result:
+        result["github_repo"] = result.pop("github_repository")
+    if "github_repo" in result and not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+        result["github_repo"],
+    ):
+        return {}, "github_repo must use owner/repository format."
+    requested_pagerduty = any(
+        result.get(name)
+        for name in (
+            "pagerduty_api_token",
+            "pagerduty_webhook_url",
+            "pagerduty_service_id",
+            "pagerduty_obo_email",
+        )
+    )
+    if requested_pagerduty:
+        missing = [
+            name
+            for name in (
+                "pagerduty_api_token",
+                "pagerduty_webhook_url",
+                "pagerduty_obo_email",
+            )
+            if not result.get(name)
+        ]
+        if missing:
+            return {}, (
+                "PagerDuty setup requires pagerduty_api_token, "
+                "pagerduty_webhook_url, and pagerduty_obo_email."
+            )
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", result["pagerduty_obo_email"]):
+            return {}, "pagerduty_obo_email must be a valid email address."
+    requested_servicenow = any(
+        result.get(name)
+        for name in ("servicenow_url", "servicenow_user", "servicenow_password")
+    )
+    if requested_servicenow and not all(
+        result.get(name)
+        for name in ("servicenow_url", "servicenow_user", "servicenow_password")
+    ):
+        return {}, (
+            "ServiceNow setup requires servicenow_url, servicenow_user, "
+            "and servicenow_password."
+        )
+    if result.get("github_repo") or result.get("github_token"):
+        return {}, (
+            "GitHub integration cannot be configured from the supplied settings. "
+            "Connect GitHub in the SRE Agent portal after deployment."
+        )
+    return result, None
+
+
+def vendor_dir_for_lab(lab: LabDefinition) -> Path:
+    return VENDOR_ROOT / lab.vendor_directory
+
+
+def selected_vendor_dir(
+    state: Optional[dict[str, Any]] = None,
+) -> Path:
+    lab = selected_lab(state)
+    return vendor_dir_for_lab(lab) if lab else VENDOR_DIR
 
 
 class Job:
@@ -476,19 +897,23 @@ JOBS_LOCK = threading.Lock()
 INSTALL_LOCK = threading.Lock()
 AZURE_CONTEXT_LOCK = threading.Lock()
 CLIENT_HEARTBEAT_LOCK = threading.Lock()
+ACTIVE_SCENARIO_LOCK = threading.Lock()
 LAST_CLIENT_HEARTBEAT: Optional[float] = None
 
 INSTALL_COMMANDS = {
     "az": ["app-managed", "azure-cli", AZURE_CLI_VERSION],
     "azd": ["app-managed", "azure-developer-cli", AZD_VERSION],
+    "pwsh": ["app-managed", "powershell", POWERSHELL_VERSION],
 }
 UPDATE_COMMANDS = {
     "az": INSTALL_COMMANDS["az"],
     "azd": INSTALL_COMMANDS["azd"],
+    "pwsh": INSTALL_COMMANDS["pwsh"],
 }
 REPAIR_COMMANDS = {
     "az": INSTALL_COMMANDS["az"],
     "azd": INSTALL_COMMANDS["azd"],
+    "pwsh": INSTALL_COMMANDS["pwsh"],
 }
 INSTALL_ORDER = tuple(INSTALL_COMMANDS)
 MINIMUM_VERSIONS = {
@@ -671,8 +1096,31 @@ def selected_lab(state: Optional[dict[str, Any]] = None) -> Optional[LabDefiniti
 def lab_catalog_payload(state: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     current_state = state if state is not None else load_state()
     active_lab = selected_lab(current_state)
+    labs = []
+    for lab in LABS:
+        payload = asdict(lab)
+        payload["configuration_schema"] = {
+            "regions": [asdict(region) for region in lab.regions],
+            "supports_integrations": lab.id == "zava-learning",
+            "integrations": (
+                [
+                    {"id": "pagerduty_api_token", "secret": True},
+                    {"id": "pagerduty_webhook_url", "secret": True},
+                    {"id": "pagerduty_service_id", "secret": False},
+                    {"id": "pagerduty_obo_email", "secret": False},
+                    {"id": "servicenow_url", "secret": False},
+                    {"id": "servicenow_user", "secret": False},
+                    {"id": "servicenow_password", "secret": True},
+                    {"id": "github_repository", "secret": False},
+                    {"id": "github_token", "secret": True},
+                ]
+                if lab.id == "zava-learning"
+                else []
+            ),
+        }
+        labs.append(payload)
     return {
-        "labs": [asdict(lab) for lab in LABS],
+        "labs": labs,
         "selected_lab_id": active_lab.id if active_lab else "",
         "selected_scenario_id": (
             str(current_state.get("scenario_id", "")) if active_lab else ""
@@ -690,10 +1138,12 @@ def parse_json_records(output: str) -> Optional[list[dict[str, Any]]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
-def local_azd_environment_names() -> set[str]:
+def local_azd_environment_names(lab: Optional[LabDefinition] = None) -> set[str]:
+    active_lab = lab or selected_lab()
+    vendor_dir = vendor_dir_for_lab(active_lab) if active_lab else VENDOR_DIR
     success, output = run_capture(
         ["azd", "env", "list", "--output", "json"],
-        VENDOR_DIR,
+        vendor_dir,
     )
     if not success:
         return set()
@@ -714,6 +1164,8 @@ def build_existing_environment_catalog(
     container_apps: list[dict[str, Any]],
     local_environment_names: set[str],
     lab_id: str,
+    public_ips: Optional[list[dict[str, Any]]] = None,
+    postgres_servers: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     agents_by_group = {
         str(resource.get("resourceGroup") or "").casefold(): resource
@@ -725,6 +1177,16 @@ def build_existing_environment_catalog(
         resource_group = str(resource.get("resourceGroup") or "").casefold()
         if resource_group and resource.get("name"):
             apps_by_group.setdefault(resource_group, []).append(resource)
+    public_ips_by_group: dict[str, list[dict[str, Any]]] = {}
+    for resource in public_ips or []:
+        resource_group = str(resource.get("resourceGroup") or "").casefold()
+        if resource_group:
+            public_ips_by_group.setdefault(resource_group, []).append(resource)
+    postgres_by_group = {
+        str(resource.get("resourceGroup") or "").casefold(): resource
+        for resource in postgres_servers or []
+        if resource.get("resourceGroup")
+    }
 
     environments = []
     for group in groups:
@@ -746,7 +1208,7 @@ def build_existing_environment_catalog(
                 str(app.get("name") or "").casefold()
                 for app in apps_by_group.get(resource_group_key, [])
             }
-            is_grubify_lab = (
+            is_grubify_lab = lab_id == "grubify-starter-lab" and (
                 resource_group_key.startswith("rg-")
                 and resource_group_key in agents_by_group
                 and any(
@@ -756,7 +1218,16 @@ def build_existing_environment_catalog(
                 )
                 and any(name.startswith("ca-grubify-fe-") for name in app_names)
             )
-            if not is_grubify_lab:
+            is_zava_lab = lab_id == "zava-learning" and (
+                tags.get("solution", "").casefold() == "zava-learning"
+                or (
+                    resource_group_key in agents_by_group
+                    and {"learner-portal", "quiz-nsg", "quiz-appgw"}.issubset(
+                        app_names
+                    )
+                )
+            )
+            if not is_grubify_lab and not is_zava_lab:
                 continue
             detection = "legacy"
 
@@ -765,9 +1236,10 @@ def build_existing_environment_catalog(
             or resource_group.removeprefix("rg-")
         )
         location = str(group.get("location") or "").lower()
+        allowed_workload_regions = LABS_BY_ID[lab_id].regions[0].allowed_values
         if (
             not re.fullmatch(r"[a-zA-Z0-9-]{2,30}", environment)
-            or location not in SRE_AGENT_REGIONS
+            or location not in allowed_workload_regions
         ):
             continue
         group_apps = apps_by_group.get(resource_group_key, [])
@@ -793,6 +1265,31 @@ def build_existing_environment_catalog(
             {},
         )
         agent = agents_by_group.get(resource_group_key, {})
+        if lab_id == "zava-learning":
+            frontend_app = next(
+                (
+                    app for app in group_apps
+                    if str(app.get("name") or "").casefold() == "learner-portal"
+                ),
+                {},
+            )
+            api_app = next(
+                (
+                    app for app in group_apps
+                    if str(app.get("name") or "").casefold() == "assessment-api"
+                ),
+                {},
+            )
+        public_ip = next(
+            (
+                item for item in public_ips_by_group.get(resource_group_key, [])
+                if item.get("fqdn") or item.get("ipAddress")
+            ),
+            {},
+        )
+        app_gateway_host = str(
+            public_ip.get("fqdn") or public_ip.get("ipAddress") or ""
+        )
         runtime_values = {
             "AZURE_RESOURCE_GROUP": resource_group,
             "CONTAINER_APP_NAME": str(api_app.get("name") or ""),
@@ -808,10 +1305,39 @@ def build_existing_environment_catalog(
             "SRE_AGENT_NAME": str(agent.get("name") or ""),
             "SRE_AGENT_ENDPOINT": str(agent.get("endpoint") or ""),
         }
+        if lab_id == "zava-learning":
+            postgres = postgres_by_group.get(resource_group_key, {})
+            runtime_values.update({
+                "AZURE_LOCATION": location,
+                "AZURE_DB_LOCATION": str(postgres.get("location") or "").lower(),
+                "AZURE_AGENT_LOCATION": str(agent.get("location") or "").lower(),
+                "APPGW_PUBLIC_FQDN": app_gateway_host,
+                "ZAVA_PORTAL_URL": (
+                    f"http://{app_gateway_host}" if app_gateway_host else ""
+                ),
+            })
+            for port in ZAVA_LANE_PORTS:
+                runtime_values[f"ZAVA_LANE_{port}_URL"] = (
+                    f"http://{app_gateway_host}:{port}"
+                    if app_gateway_host
+                    else ""
+                )
         environments.append({
+            "lab_id": lab_id,
             "environment": environment,
             "resource_group": resource_group,
             "location": location,
+            "db_location": (
+                str(postgres_by_group.get(resource_group_key, {}).get("location") or "")
+                .lower()
+                if lab_id == "zava-learning"
+                else ""
+            ),
+            "agent_location": (
+                str(agent.get("location") or "").lower()
+                if lab_id == "zava-learning"
+                else ""
+            ),
             "detection": detection,
             "local": environment.casefold() in local_environment_names,
             "runtime_values": runtime_values,
@@ -832,15 +1358,24 @@ def load_environment_cache(
         payload = json.loads(ENVIRONMENT_CACHE_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
-    if (
-        payload.get("subscription_id") != subscription_id
-        or payload.get("lab_id") != lab_id
-        or not isinstance(payload.get("environments"), list)
-    ):
+    catalogs = payload.get("catalogs")
+    if isinstance(catalogs, dict):
+        catalog = catalogs.get(f"{subscription_id}:{lab_id}", {})
+        if not isinstance(catalog, dict):
+            return []
+        environments = catalog.get("environments")
+    else:
+        if (
+            payload.get("subscription_id") != subscription_id
+            or payload.get("lab_id") != lab_id
+        ):
+            return []
+        environments = payload.get("environments")
+    if not isinstance(environments, list):
         return []
     return [
         item
-        for item in payload["environments"]
+        for item in environments
         if isinstance(item, dict)
     ]
 
@@ -851,13 +1386,33 @@ def save_environment_cache(
     environments: list[dict[str, Any]],
 ) -> None:
     try:
+        payload: dict[str, Any] = {"catalogs": {}}
+        if ENVIRONMENT_CACHE_FILE.is_file():
+            try:
+                existing = json.loads(
+                    ENVIRONMENT_CACHE_FILE.read_text(encoding="utf-8")
+                )
+                if isinstance(existing.get("catalogs"), dict):
+                    payload["catalogs"] = existing["catalogs"]
+                elif all(
+                    key in existing
+                    for key in ("subscription_id", "lab_id", "environments")
+                ):
+                    legacy_key = (
+                        f"{existing['subscription_id']}:{existing['lab_id']}"
+                    )
+                    payload["catalogs"][legacy_key] = {
+                        "discovered_at": existing.get("discovered_at", ""),
+                        "environments": existing["environments"],
+                    }
+            except (OSError, json.JSONDecodeError, AttributeError):
+                pass
+        payload["catalogs"][f"{subscription_id}:{lab_id}"] = {
+            "discovered_at": datetime.now(timezone.utc).isoformat(),
+            "environments": environments,
+        }
         ENVIRONMENT_CACHE_FILE.write_text(
-            json.dumps({
-                "subscription_id": subscription_id,
-                "lab_id": lab_id,
-                "discovered_at": datetime.now(timezone.utc).isoformat(),
-                "environments": environments,
-            }, indent=2),
+            json.dumps(payload, indent=2),
             encoding="utf-8",
         )
     except OSError:
@@ -1008,8 +1563,9 @@ def discover_existing_environments(
     subscription_id: str,
     lab_id: str,
 ) -> dict[str, Any]:
-    local_names = local_azd_environment_names()
-    commands = (
+    lab = LABS_BY_ID[lab_id]
+    local_names = local_azd_environment_names(lab)
+    commands = [
         [
             "az", "group", "list",
             "--subscription", subscription_id,
@@ -1033,7 +1589,25 @@ def discover_existing_environments(
             "fqdn:properties.configuration.ingress.fqdn}",
             "--output", "json",
         ],
-    )
+    ]
+    if lab_id == "zava-learning":
+        commands.extend([
+            [
+                "az", "network", "public-ip", "list",
+                "--subscription", subscription_id,
+                "--query",
+                "[].{name:name,resourceGroup:resourceGroup,"
+                "fqdn:dnsSettings.fqdn,ipAddress:ipAddress}",
+                "--output", "json",
+            ],
+            [
+                "az", "postgres", "flexible-server", "list",
+                "--subscription", subscription_id,
+                "--query",
+                "[].{name:name,resourceGroup:resourceGroup,location:location}",
+                "--output", "json",
+            ],
+        ])
     records = []
     for command in commands:
         success, output = run_capture(command, timeout=60)
@@ -1062,7 +1636,19 @@ def discover_existing_environments(
         records[2],
         local_names,
         lab_id,
+        records[3] if len(records) > 3 else None,
+        records[4] if len(records) > 4 else None,
     )
+    if lab_id == "zava-learning":
+        for item in environments:
+            if not item.get("local"):
+                continue
+            local_values = azd_values(str(item["environment"]), lab)
+            version = local_values.get("ZAVA_CORE_CONFIG_VERSION", "")
+            if version:
+                item.setdefault("runtime_values", {})[
+                    "ZAVA_CORE_CONFIG_VERSION"
+                ] = version
     save_environment_cache(subscription_id, lab_id, environments)
     return {
         "environments": environments,
@@ -1072,7 +1658,7 @@ def discover_existing_environments(
     }
 
 
-def validate_existing_lab(
+def validate_grubify_existing_lab(
     subscription_id: str,
     environment: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1198,6 +1784,8 @@ def validate_existing_lab(
                 "--query",
                 "{name:name,endpoint:properties.agentEndpoint,"
                 "incidentType:properties.incidentManagementConfiguration.type,"
+                "modelProvider:properties.defaultModel.provider,"
+                "modelName:properties.defaultModel.name,"
                 "provisioningState:properties.provisioningState}",
                 "--output", "json",
             ],
@@ -1337,6 +1925,625 @@ def validate_existing_lab(
     }
 
 
+def _first_resource(
+    resources_by_type: dict[str, list[dict[str, Any]]],
+    resource_type: str,
+) -> dict[str, Any]:
+    resources = resources_by_type.get(resource_type.casefold(), [])
+    return resources[0] if resources else {}
+
+
+def validate_zava_existing_lab(
+    subscription_id: str,
+    environment: dict[str, Any],
+) -> dict[str, Any]:
+    resource_group = str(environment.get("resource_group") or "").strip()
+    commands = (
+        [
+            "az", "resource", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query",
+            "[].{id:id,name:name,type:type,location:location,"
+            "provisioningState:properties.provisioningState,"
+            "enabled:properties.enabled,"
+            "publicNetworkAccess:properties.publicNetworkAccess}",
+            "--output", "json",
+        ],
+        [
+            "az", "containerapp", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query",
+            "[].{id:id,name:name,image:properties.template.containers[0].image,"
+            "fqdn:properties.configuration.ingress.fqdn,"
+            "provisioningState:properties.provisioningState,"
+            "runningStatus:properties.runningStatus,"
+            "latestRevisionName:properties.latestRevisionName,"
+            "latestReadyRevisionName:properties.latestReadyRevisionName}",
+            "--output", "json",
+        ],
+        [
+            "az", "network", "public-ip", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{name:name,fqdn:dnsSettings.fqdn,ipAddress:ipAddress,"
+            "provisioningState:provisioningState}",
+            "--output", "json",
+        ],
+        [
+            "az", "network", "application-gateway", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{name:name,provisioningState:provisioningState,"
+            "operationalState:operationalState,listeners:length(httpListeners)}",
+            "--output", "json",
+        ],
+        [
+            "az", "vm", "list", "--show-details",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{name:name,powerState:powerState,"
+            "provisioningState:provisioningState}",
+            "--output", "json",
+        ],
+        [
+            "az", "postgres", "flexible-server", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{name:name,state:state,"
+            "fqdn:fullyQualifiedDomainName,location:location}",
+            "--output", "json",
+        ],
+        [
+            "az", "role", "assignment", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{principalId:principalId,role:roleDefinitionName}",
+            "--output", "json",
+        ],
+        [
+            "az", "keyvault", "list",
+            "--subscription", subscription_id,
+            "--resource-group", resource_group,
+            "--query", "[].{name:name,"
+            "publicNetworkAccess:properties.publicNetworkAccess,"
+            "enablePurgeProtection:properties.enablePurgeProtection}",
+            "--output", "json",
+        ],
+    )
+    parsed_records: list[list[dict[str, Any]]] = []
+    for command in commands:
+        success, output = run_capture(command, timeout=60)
+        records = parse_json_records(output) if success else None
+        if records is None:
+            return {
+                "ready": False,
+                "issues": ["Azure did not return Zava topology validation data."],
+                "values": {},
+                "availability_checks": [],
+            }
+        parsed_records.append(records)
+    (
+        resources,
+        apps,
+        public_ips,
+        gateways,
+        virtual_machines,
+        postgres_servers,
+        role_assignments,
+        key_vaults,
+    ) = parsed_records
+    resources_by_type: dict[str, list[dict[str, Any]]] = {}
+    for resource in resources:
+        resource_type = str(resource.get("type") or "").casefold()
+        if resource_type:
+            resources_by_type.setdefault(resource_type, []).append(resource)
+
+    required_types = {
+        "microsoft.app/agents": ("Azure SRE Agent", 1),
+        "microsoft.app/managedenvironments": ("Container Apps environments", 2),
+        "microsoft.containerregistry/registries": ("Azure Container Registry", 1),
+        "microsoft.managedidentity/userassignedidentities": (
+            "managed identities",
+            2,
+        ),
+        "microsoft.network/virtualnetworks": ("virtual network", 1),
+        "microsoft.network/networksecuritygroups": ("network security groups", 2),
+        "microsoft.network/applicationgateways": ("Application Gateway", 1),
+        "microsoft.network/publicipaddresses": ("public IP", 1),
+        "microsoft.network/privatednszones": ("private DNS zones", 1),
+        "microsoft.network/privateendpoints": ("Key Vault private endpoint", 1),
+        "microsoft.keyvault/vaults": ("private Key Vault", 1),
+        "microsoft.dbforpostgresql/flexibleservers": (
+            "PostgreSQL Flexible Server",
+            1,
+        ),
+        "microsoft.compute/virtualmachines": ("reporting virtual machine", 1),
+        "microsoft.compute/virtualmachines/extensions": (
+            "reporting VM extension",
+            1,
+        ),
+        "microsoft.operationalinsights/workspaces": (
+            "Log Analytics workspace",
+            1,
+        ),
+        "microsoft.insights/components": ("Application Insights", 1),
+        "microsoft.insights/datacollectionrules": (
+            "VM data collection rule",
+            1,
+        ),
+        "microsoft.insights/datacollectionruleassociations": (
+            "VM data collection association",
+            1,
+        ),
+        "microsoft.insights/scheduledqueryrules": ("Zava symptom alerts", 4),
+    }
+    issues = []
+    if (
+        str((environment.get("runtime_values") or {}).get(
+            "ZAVA_CORE_CONFIG_VERSION",
+            "",
+        ))
+        != ZAVA_CORE_CONFIG_VERSION
+    ):
+        issues.append(
+            "Zava knowledge/configuration provenance cannot be verified; run "
+            "reconciliation before using this lab."
+        )
+    for resource_type, (label, minimum) in required_types.items():
+        count = len(resources_by_type.get(resource_type, []))
+        if count < minimum:
+            issues.append(f"Missing {label} (expected at least {minimum}, found {count}).")
+    for resource in resources:
+        provisioning_state = str(resource.get("provisioningState") or "").strip()
+        if provisioning_state and provisioning_state.casefold() != "succeeded":
+            issues.append(
+                f"{resource.get('name') or 'A resource'} is {provisioning_state}."
+            )
+    if len(role_assignments) < 8:
+        issues.append(
+            "Zava managed-identity RBAC is incomplete "
+            f"(expected at least 8 assignments, found {len(role_assignments)})."
+        )
+
+    apps_by_name = {
+        str(app.get("name") or "").casefold(): app
+        for app in apps
+        if app.get("name")
+    }
+    missing_apps = sorted(ZAVA_CONTAINER_APPS - apps_by_name.keys())
+    if missing_apps:
+        issues.append(
+            "Missing Zava Container Apps: " + ", ".join(missing_apps) + "."
+        )
+    if len(apps) != 11:
+        issues.append(f"Zava requires exactly 11 Container Apps; found {len(apps)}.")
+    availability_checks: list[dict[str, Any]] = []
+    for name in sorted(ZAVA_CONTAINER_APPS):
+        app = apps_by_name.get(name)
+        if app is None:
+            continue
+        provisioned = (
+            str(app.get("provisioningState") or "").casefold() == "succeeded"
+        )
+        started = str(app.get("runningStatus") or "").casefold() in {
+            "running",
+            "ready",
+        }
+        latest_ready = bool(app.get("latestReadyRevisionName")) and (
+            app.get("latestRevisionName") == app.get("latestReadyRevisionName")
+        )
+        available = provisioned and started and latest_ready
+        availability_checks.append({
+            "resource": name,
+            "kind": "container-app",
+            "provisioned": provisioned,
+            "started": started,
+            "available": available,
+            "detail": "ready" if available else "not ready",
+        })
+        if not available:
+            issues.append(f"Zava Container App {name} is not ready.")
+    alert_issues, alert_checks = validate_metric_alert_availability(
+        resources_by_type.get("microsoft.insights/scheduledqueryrules", [])
+    )
+    issues.extend(alert_issues)
+    availability_checks.extend(alert_checks)
+    for name, app in apps_by_name.items():
+        image = str(app.get("image") or "").casefold()
+        expected_image = (
+            name if not name.startswith("quiz-") else "quiz-service"
+        )
+        if expected_image not in image:
+            issues.append(f"{name} is not running the current Zava lab image.")
+
+    if len(gateways) != 1:
+        issues.append(f"Zava requires one Application Gateway; found {len(gateways)}.")
+    elif (
+        str(gateways[0].get("provisioningState") or "").casefold() != "succeeded"
+        or str(gateways[0].get("operationalState") or "").casefold() != "running"
+    ):
+        issues.append("The Zava Application Gateway is not ready and running.")
+    elif int(gateways[0].get("listeners") or 0) < 8:
+        issues.append("The Zava Application Gateway is missing lane listeners.")
+    if len(virtual_machines) != 1:
+        issues.append(
+            f"Zava requires one reporting VM; found {len(virtual_machines)}."
+        )
+    elif str(virtual_machines[0].get("powerState") or "").casefold() != "vm running":
+        issues.append("The Zava reporting VM is not running.")
+    if len(postgres_servers) != 1:
+        issues.append(
+            f"Zava requires one PostgreSQL server; found {len(postgres_servers)}."
+        )
+    elif (
+        str(postgres_servers[0].get("state") or "").casefold() != "ready"
+        or not postgres_servers[0].get("fqdn")
+    ):
+        issues.append("The Zava PostgreSQL server is not ready.")
+    else:
+        success, output = run_capture(
+            [
+                "az", "postgres", "flexible-server", "db", "list",
+                "--subscription", subscription_id,
+                "--resource-group", resource_group,
+                "--server-name", str(postgres_servers[0]["name"]),
+                "--query", "[].name",
+                "--output", "json",
+            ],
+            timeout=60,
+        )
+        try:
+            database_names = set(json.loads(output)) if success else set()
+        except (json.JSONDecodeError, TypeError):
+            database_names = set()
+        if not {"zava", "zava_query"}.issubset(database_names):
+            issues.append("The Zava PostgreSQL databases are incomplete.")
+    if len(key_vaults) != 1:
+        issues.append(f"Zava requires one private Key Vault; found {len(key_vaults)}.")
+    elif (
+        str(key_vaults[0].get("publicNetworkAccess") or "").casefold()
+        != "disabled"
+        or key_vaults[0].get("enablePurgeProtection") is not True
+    ):
+        issues.append(
+            "The Zava Key Vault must disable public access and enable purge protection."
+        )
+
+    public_ip = next(
+        (item for item in public_ips if item.get("fqdn") or item.get("ipAddress")),
+        {},
+    )
+    app_gateway_host = str(
+        public_ip.get("fqdn") or public_ip.get("ipAddress") or ""
+    ).strip()
+    if not app_gateway_host:
+        issues.append("The Zava Application Gateway has no public address.")
+    else:
+        endpoints = [f"http://{app_gateway_host}"] + [
+            f"http://{app_gateway_host}:{port}" for port in ZAVA_LANE_PORTS
+        ]
+        for index, endpoint in enumerate(endpoints):
+            probe_path = "/health" if index == 0 else "/quiz/BIO-101"
+            available, detail = probe_http_endpoint(endpoint, probe_path)
+            availability_checks.append({
+                "resource": "learner-portal" if index == 0 else f"lane-{index}",
+                "kind": "application-gateway",
+                "provisioned": True,
+                "started": True,
+                "available": available,
+                "detail": detail,
+            })
+            if not available:
+                issues.append(
+                    f"Zava endpoint {endpoint}{probe_path} is unavailable: {detail}."
+                )
+
+    agent = _first_resource(resources_by_type, "microsoft.app/agents")
+    agent_details: dict[str, Any] = {}
+    if agent:
+        success, output = run_capture(
+            [
+                "az", "resource", "show",
+                "--ids", str(agent.get("id") or ""),
+                "--api-version", "2025-05-01-preview",
+                "--query",
+                "{name:name,endpoint:properties.agentEndpoint,"
+                "incidentType:properties.incidentManagementConfiguration.type,"
+                "modelProvider:properties.defaultModel.provider,"
+                "modelName:properties.defaultModel.name,"
+                "provisioningState:properties.provisioningState}",
+                "--output", "json",
+            ],
+            timeout=30,
+        )
+        if success:
+            try:
+                candidate = json.loads(output)
+                if isinstance(candidate, dict):
+                    agent_details = candidate
+            except json.JSONDecodeError:
+                pass
+    if not agent_details:
+        issues.append("Unable to read the Zava Azure SRE Agent status.")
+    else:
+        if str(agent_details.get("incidentType") or "").casefold() not in {
+            "azmonitor",
+            "pagerduty",
+        }:
+            issues.append("The Zava Azure SRE Agent incident platform is unsupported.")
+        if (
+            agent_details.get("modelProvider") != "Anthropic"
+            or agent_details.get("modelName") != "Automatic"
+        ):
+            issues.append(
+                "The Zava Azure SRE Agent model must be Anthropic / Automatic."
+            )
+        if not str(agent_details.get("endpoint") or ""):
+            issues.append("The Zava Azure SRE Agent has no data-plane endpoint.")
+
+    endpoint = str(agent_details.get("endpoint") or "").rstrip("/")
+    integration_status: dict[str, str] = {
+        "pagerduty": "not_configured",
+        "servicenow": "not_configured",
+        "github": "not_configured",
+    }
+    if endpoint:
+        success, token = run_secret_capture(
+            [
+                "az", "account", "get-access-token",
+                "--resource", "https://azuresre.dev",
+                "--query", "accessToken",
+                "--output", "tsv",
+            ],
+            timeout=30,
+        )
+        if not success or not token:
+            issues.append("Unable to authenticate to the Azure SRE Agent service.")
+        else:
+            for kind, names in (
+                ("agents", ZAVA_CORE_AGENTS),
+                ("skills", ZAVA_CORE_SKILLS),
+            ):
+                for name in names:
+                    status, _ = http_json(
+                        "GET",
+                        f"{endpoint}/api/v2/extendedAgent/{kind}/{quote(name)}",
+                        token,
+                    )
+                    if status != HTTPStatus.OK:
+                        issues.append(
+                            f"Required Zava {kind[:-1]} {name} is not configured."
+                        )
+            if str(agent_details.get("incidentType") or "").casefold() == "pagerduty":
+                action_groups = resources_by_type.get(
+                    "microsoft.insights/actiongroups",
+                    [],
+                )
+                action_group = next(
+                    (
+                        item for item in action_groups
+                        if str(item.get("name") or "").startswith(
+                            "ag-zava-pagerduty-"
+                        )
+                    ),
+                    {},
+                )
+                receiver_ready = False
+                if action_group.get("name"):
+                    receiver_ok, receiver_output = run_capture(
+                        [
+                            "az", "monitor", "action-group", "show",
+                            "--resource-group", resource_group,
+                            "--name", str(action_group["name"]),
+                            "--query", "length(webhookReceivers)",
+                            "--output", "tsv",
+                        ],
+                        timeout=60,
+                    )
+                    receiver_ready = (
+                        receiver_ok
+                        and receiver_output.strip().isdigit()
+                        and int(receiver_output) > 0
+                    )
+                status, response = http_json(
+                    "POST",
+                    f"{endpoint}/api/v2/extendedAgent/connectors/"
+                    "pagerduty/testconnection",
+                    token,
+                    {},
+                )
+                try:
+                    connection = json.loads(response)
+                except json.JSONDecodeError:
+                    connection = {}
+                if (
+                    status not in (200, 201, 202, 204)
+                    or connection.get("success") is not True
+                    or not receiver_ready
+                ):
+                    integration_status["pagerduty"] = "reconnect_required"
+                    issues.append(
+                        "PagerDuty is configured but unhealthy; reconnect it in "
+                        "the SRE Agent portal."
+                    )
+                else:
+                    integration_status["pagerduty"] = "healthy"
+            servicenow_presence = []
+            for tool_name in (
+                "CreateServiceNowChangeRequest",
+                "UploadServiceNowAttachment",
+            ):
+                status, _ = http_json(
+                    "GET",
+                    f"{endpoint}/api/v2/extendedAgent/tools/{quote(tool_name)}",
+                    token,
+                )
+                servicenow_presence.append(status == HTTPStatus.OK)
+            if all(servicenow_presence):
+                integration_status["servicenow"] = "present"
+            elif any(servicenow_presence):
+                integration_status["servicenow"] = "reconnect_required"
+                issues.append(
+                    "ServiceNow protected tools are incomplete; reconnect it in "
+                    "the SRE Agent portal."
+                )
+            status, response = http_json(
+                "POST",
+                f"{endpoint}/api/v2/extendedAgent/connectors/github/testconnection",
+                token,
+                {},
+            )
+            try:
+                github_connection = json.loads(response)
+            except json.JSONDecodeError:
+                github_connection = {}
+            if (
+                status in (200, 201, 202, 204)
+                and github_connection.get("success") is True
+            ):
+                integration_status["github"] = "healthy"
+            elif status not in (0, HTTPStatus.NOT_FOUND):
+                integration_status["github"] = "reconnect_required"
+                issues.append(
+                    "GitHub is configured but unhealthy; reconnect it in the "
+                    "SRE Agent portal."
+                )
+            status, response = http_json(
+                "GET",
+                f"{endpoint}/api/v1/incidentPlayground/filters/"
+                "zava-learning-response",
+                token,
+            )
+            if status != HTTPStatus.OK:
+                issues.append(
+                    "The zava-learning-response configuration is missing."
+                )
+            else:
+                try:
+                    filter_payload = json.loads(response)
+                except json.JSONDecodeError:
+                    filter_payload = {}
+                if (
+                    filter_payload.get("titleContains") != "Zava"
+                    or filter_payload.get("handlingAgent")
+                    != "zava-incident-responder"
+                    or filter_payload.get("agentMode") != "autonomous"
+                    or filter_payload.get("isEnabled", True) is not True
+                ):
+                    issues.append(
+                        "The zava-learning-response configuration is not autonomous "
+                        "or correctly scoped."
+                    )
+
+    registry = _first_resource(
+        resources_by_type,
+        "microsoft.containerregistry/registries",
+    )
+    environments = resources_by_type.get("microsoft.app/managedenvironments", [])
+    workspace = _first_resource(
+        resources_by_type,
+        "microsoft.operationalinsights/workspaces",
+    )
+    vault = _first_resource(resources_by_type, "microsoft.keyvault/vaults")
+    vm = _first_resource(resources_by_type, "microsoft.compute/virtualmachines")
+    postgres = _first_resource(
+        resources_by_type,
+        "microsoft.dbforpostgresql/flexibleservers",
+    )
+    workspace_customer_id = ""
+    if workspace.get("id"):
+        success, output = run_capture(
+            [
+                "az", "monitor", "log-analytics", "workspace", "show",
+                "--ids", str(workspace["id"]),
+                "--query", "customerId",
+                "--output", "tsv",
+            ],
+            timeout=60,
+        )
+        if success:
+            workspace_customer_id = output.strip()
+        if not workspace_customer_id:
+            issues.append("The Zava Log Analytics workspace ID is unavailable.")
+    location = str(environment.get("location") or "").lower()
+    values = {
+        "AZURE_LOCATION": location,
+        "AZURE_DB_LOCATION": str(
+            postgres_servers[0].get("location") if postgres_servers else ""
+        ).lower(),
+        "AZURE_AGENT_LOCATION": str(agent.get("location") or "").lower(),
+        "AZURE_SUBSCRIPTION_ID": subscription_id,
+        "AZURE_RESOURCE_GROUP": resource_group,
+        "AZURE_CONTAINER_REGISTRY_NAME": str(registry.get("name") or ""),
+        "AZURE_CONTAINER_REGISTRY_ENDPOINT": (
+            f"{registry.get('name')}.azurecr.io" if registry.get("name") else ""
+        ),
+        "AZURE_CONTAINER_ENVIRONMENT_NAME": str(
+            environments[0].get("name") if environments else ""
+        ),
+        "SRE_AGENT_NAME": str(agent_details.get("name") or ""),
+        "SRE_AGENT_ENDPOINT": endpoint,
+        "AGENT_PORTAL_URL": sre_agent_portal_url(
+            subscription_id,
+            resource_group,
+            str(agent_details.get("name") or ""),
+        ),
+        "APPGW_PUBLIC_FQDN": app_gateway_host,
+        "ZAVA_PORTAL_URL": (
+            f"http://{app_gateway_host}" if app_gateway_host else ""
+        ),
+        "KEY_VAULT_NAME": str(vault.get("name") or ""),
+        "REPORTING_VM_NAME": str(vm.get("name") or ""),
+        "POSTGRES_SERVER_NAME": str(postgres.get("name") or ""),
+        "LOG_ANALYTICS_WORKSPACE_ID": workspace_customer_id,
+        "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID": str(workspace.get("id") or ""),
+    }
+    if all(values.get(name) for name in (
+        "KEY_VAULT_NAME",
+        "REPORTING_VM_NAME",
+        "AZURE_RESOURCE_GROUP",
+    )):
+        try:
+            _recovered, missing_secrets = rehydrate_zava_secrets(
+                str(environment.get("environment") or ""),
+                values,
+            )
+        except ValueError:
+            missing_secrets = list(ZAVA_REQUIRED_SECRET_NAMES)
+        if "db-password" in missing_secrets or "db-pool-password" in missing_secrets:
+            issues.append("Required Zava database secrets are unavailable.")
+        if "vm-admin-password" in missing_secrets:
+            issues.append(
+                "The legacy lab has no VM credential secret; reconciliation will "
+                "rotate and store one."
+            )
+    else:
+        issues.append("Zava private Key Vault bridge resources are incomplete.")
+
+    return {
+        "ready": not issues,
+        "issues": issues,
+        "availability_checks": availability_checks,
+        "values": values,
+        "integration_status": integration_status,
+    }
+
+
+def validate_existing_lab(
+    subscription_id: str,
+    environment: dict[str, Any],
+    lab: Optional[LabDefinition] = None,
+) -> dict[str, Any]:
+    active_lab = lab
+    if active_lab is None:
+        active_lab = LABS_BY_ID.get(str(environment.get("lab_id") or ""))
+    if active_lab and active_lab.id == "zava-learning":
+        return validate_zava_existing_lab(subscription_id, environment)
+    return validate_grubify_existing_lab(subscription_id, environment)
+
+
 def refresh_process_path() -> None:
     if os.name != "nt":
         return
@@ -1347,6 +2554,8 @@ def refresh_process_path() -> None:
         managed_paths.append(str(managed_azure_cli_bin))
     if (AZD_DIR / "azd.exe").is_file():
         managed_paths.append(str(AZD_DIR))
+    if (POWERSHELL_DIR / "pwsh.exe").is_file():
+        managed_paths.append(str(POWERSHELL_DIR))
 
     registry_paths = []
     try:
@@ -1615,6 +2824,20 @@ def install_managed_azd(job: Job) -> bool:
     )
 
 
+def install_managed_powershell(job: Job) -> bool:
+    return install_managed_zip_tool(
+        job,
+        display_name="PowerShell",
+        slug="powershell",
+        version=POWERSHELL_VERSION,
+        url=POWERSHELL_URL,
+        expected_sha256=POWERSHELL_SHA256,
+        install_dir=POWERSHELL_DIR,
+        archive_executable=Path("pwsh.exe"),
+        installed_executable=Path("pwsh.exe"),
+    )
+
+
 def run_tool_install(job: Job, tool_id: str) -> bool:
     current = next(item for item in prerequisite_statuses() if item.id == tool_id)
     if current.ready:
@@ -1645,6 +2868,8 @@ def run_tool_install(job: Job, tool_id: str) -> bool:
         success = install_managed_azure_cli(job)
     elif tool_id == "azd":
         success = install_managed_azd(job)
+    elif tool_id == "pwsh":
+        success = install_managed_powershell(job)
     else:
         success, _ = run_process(job, command)
     if not success:
@@ -1740,6 +2965,8 @@ def run_process(
     cwd: Optional[Path] = None,
     line_interceptor: Optional[Callable[[str], bool]] = None,
     emit_command: bool = True,
+    environment_overrides: Optional[dict[str, str]] = None,
+    no_log_output: bool = False,
 ) -> tuple[bool, str]:
     if emit_command:
         job.emit("command", command=command)
@@ -1748,11 +2975,15 @@ def run_process(
         LOGGER.error("job=%s command not found: %s", job.id, command[0])
         job.emit("error", message=f"Command not found: {command[0]}")
         return False, ""
-    environment = None
+    needs_environment = bool(environment_overrides) or command[:2] == ["az", "login"]
+    environment = os.environ.copy() if needs_environment else None
     if command[:2] == ["az", "login"]:
         # Disable WAM so explicit device-code login can use any organizational account.
-        environment = os.environ.copy()
+        assert environment is not None
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
+    if environment_overrides:
+        assert environment is not None
+        environment.update(environment_overrides)
     started = time.monotonic()
     LOGGER.info(
         "job=%s starting command=%s resolved=%s cwd=%s",
@@ -1786,13 +3017,14 @@ def run_process(
         assert process.stdout is not None
         for raw_line in process.stdout:
             line = raw_line.rstrip()
-            captured.append(line)
-            LOGGER.debug(
-                "job=%s pid=%s output=%s",
-                job.id,
-                process.pid,
-                redact_text(line),
-            )
+            if not no_log_output:
+                captured.append(line)
+                LOGGER.debug(
+                    "job=%s pid=%s output=%s",
+                    job.id,
+                    process.pid,
+                    redact_text(line),
+                )
             if line_interceptor and line_interceptor(line):
                 LOGGER.info(
                     "job=%s pid=%s output interceptor requested termination",
@@ -1801,6 +3033,8 @@ def run_process(
                 )
                 job.terminate_process()
                 break
+            if no_log_output:
+                continue
             job.emit("output", line=line)
             device = parse_device_code(line)
             if device:
@@ -2449,21 +3683,76 @@ def demo_external_urls(
     values = values if values is not None else (
         azd_values(environment) if environment else {}
     )
-    resource_group = values.get("AZURE_RESOURCE_GROUP", "")
     return {
-        url
-        for url in (
-            resolved_sre_agent_portal_url(state, values),
-            values.get("CONTAINER_APP_URL", ""),
-            values.get("FRONTEND_APP_URL", ""),
-            azure_resource_group_portal_url(
+        str(link["url"])
+        for link in runtime_summary_links(state, values)
+        if link.get("url")
+    }
+
+
+def runtime_summary_links(
+    state: dict[str, Any],
+    values: dict[str, str],
+) -> list[dict[str, str]]:
+    def display(links: list[dict[str, str]]) -> list[dict[str, str]]:
+        return [
+            {**link, "value": link["url"]}
+            for link in links
+            if link.get("url")
+        ]
+
+    resource_group = values.get("AZURE_RESOURCE_GROUP", "")
+    lab = selected_lab(state)
+    common = [
+        {
+            "id": "resource-group",
+            "label": "Azure resource group",
+            "url": azure_resource_group_portal_url(
                 str(state.get("tenant_id") or ""),
                 str(state.get("subscription_id") or ""),
                 resource_group,
             ),
-        )
-        if url
-    }
+        },
+        {
+            "id": "sre-agent",
+            "label": "SRE Agent portal",
+            "url": resolved_sre_agent_portal_url(state, values),
+        },
+    ]
+    if lab and lab.id == "zava-learning":
+        host = values.get("APPGW_PUBLIC_FQDN", "").strip()
+        if not re.fullmatch(
+            r"(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|"
+            r"(?:\d{1,3}\.){3}\d{1,3})",
+            host,
+        ):
+            host = ""
+        portal = f"http://{host}" if host else ""
+        links = [
+            {"id": "portal", "label": "Zava learning portal", "url": portal},
+        ]
+        for port in ZAVA_LANE_PORTS:
+            links.append({
+                "id": f"lane-{port}",
+                "label": f"Scenario lane {port}",
+                "url": (
+                    f"http://{host}:{port}" if host else ""
+                ),
+            })
+        return display([*links, *common])
+    return display([
+            {
+                "id": "api",
+                "label": "Grubify API",
+                "url": values.get("CONTAINER_APP_URL", ""),
+            },
+            {
+                "id": "frontend",
+                "label": "Grubify application",
+                "url": values.get("FRONTEND_APP_URL", ""),
+            },
+            *common,
+        ])
 
 
 def is_allowed_demo_external_url(
@@ -2471,9 +3760,31 @@ def is_allowed_demo_external_url(
     state: Optional[dict[str, Any]] = None,
     values: Optional[dict[str, str]] = None,
 ) -> bool:
-    return (
-        urlparse(url).scheme == "https"
-        and url in demo_external_urls(state, values)
+    current_state = state if state is not None else load_state()
+    resolved_values = values
+    if resolved_values is None:
+        environment = str(current_state.get("environment") or "")
+        resolved_values = (
+            azd_values(environment, selected_lab(current_state))
+            if environment
+            else {}
+        )
+    if url not in demo_external_urls(current_state, resolved_values):
+        return False
+    scheme = urlparse(url).scheme
+    lab = selected_lab(current_state)
+    return scheme == "https" or (
+        scheme == "http"
+        and lab is not None
+        and lab.id == "zava-learning"
+        and url in {
+            str(link["url"])
+            for link in runtime_summary_links(
+                current_state,
+                resolved_values,
+            )
+            if str(link.get("id", "")).startswith(("portal", "lane-"))
+        }
     )
 
 
@@ -2631,22 +3942,44 @@ def load_state() -> dict[str, Any]:
 
 
 def save_state(state: dict[str, Any]) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    forbidden = re.compile(
+        r"(?:password|secret|token|api[_-]?key|webhook[_-]?url|"
+        r"authorization|credential|connection[_-]?string|private[_-]?key)$",
+        re.IGNORECASE,
+    )
+
+    def sanitize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): sanitize(item)
+                for key, item in value.items()
+                if not forbidden.search(str(key))
+            }
+        if isinstance(value, list):
+            return [sanitize(item) for item in value]
+        return value
+
+    STATE_FILE.write_text(json.dumps(sanitize(state), indent=2), encoding="utf-8")
 
 
 def run_capture(
     command: list[str],
     cwd: Optional[Path] = None,
     timeout: int = 60,
+    environment_overrides: Optional[dict[str, str]] = None,
 ) -> tuple[bool, str]:
     process_command = resolved_process_command(command)
     if process_command is None:
         LOGGER.error("Capture command not found: %s", command[0])
         return False, f"Command not found: {command[0]}"
-    environment = None
+    needs_environment = bool(environment_overrides) or command[0].lower() == "az"
+    environment = os.environ.copy() if needs_environment else None
     if command[0].lower() == "az":
-        environment = os.environ.copy()
+        assert environment is not None
         environment["AZURE_CORE_ENABLE_BROKER_ON_WINDOWS"] = "false"
+    if environment_overrides:
+        assert environment is not None
+        environment.update(environment_overrides)
     started = time.monotonic()
     LOGGER.debug(
         "Starting capture command=%s resolved=%s cwd=%s timeout=%ss",
@@ -2682,6 +4015,167 @@ def run_capture(
     return result.returncode == 0, output
 
 
+def run_secret_capture(
+    command: list[str],
+    cwd: Optional[Path] = None,
+    timeout: int = 120,
+    environment_overrides: Optional[dict[str, str]] = None,
+) -> tuple[bool, str]:
+    """Capture a secret-bearing operation without logging its command or output."""
+    process_command = resolved_process_command(command)
+    if process_command is None:
+        return False, ""
+    environment = os.environ.copy()
+    if environment_overrides:
+        environment.update(environment_overrides)
+    try:
+        result = subprocess.run(
+            process_command,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=CREATE_NO_WINDOW,
+            check=False,
+            env=environment,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, ""
+    return result.returncode == 0, (result.stdout or "").strip()
+
+
+def _zava_safe_resource_name(value: str, label: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,90}", value):
+        raise ValueError(f"Invalid {label}.")
+    return value
+
+
+def zava_vm_secret_bridge(
+    resource_group: str,
+    vm_name: str,
+    vault_name: str,
+    secret_name: str,
+    value: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Read or write one allowlisted private-vault secret without diagnostics."""
+    if secret_name not in ZAVA_SECRET_NAMES:
+        raise ValueError("Secret name is not allowlisted.")
+    resource_group = _zava_safe_resource_name(resource_group, "resource group")
+    vm_name = _zava_safe_resource_name(vm_name, "virtual machine name")
+    vault_name = _zava_safe_resource_name(vault_name, "Key Vault name")
+    vault_uri = f"https://{vault_name}.vault.azure.net/"
+    metadata = (
+        "http://169.254.169.254/metadata/identity/oauth2/token"
+        "?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net"
+    )
+    authorization_header = "Author" + "ization: " + "Bear" + "er $token"
+    if value is None:
+        script = (
+            "set -eu; "
+            f"token=$(curl -fsS -H Metadata:true '{metadata}' | "
+            "python3 -c 'import json,sys;print(json.load(sys.stdin)"
+            "[\"access_token\"])'); "
+            f"curl -fsS -H \"{authorization_header}\" "
+            f"'{vault_uri}secrets/{secret_name}?api-version=7.4' | "
+            "python3 -c 'import base64,json,sys;"
+            "print(base64.b64encode(json.load(sys.stdin)[\"value\"].encode())"
+            ".decode())'"
+        )
+    else:
+        encoded = __import__("base64").b64encode(value.encode("utf-8")).decode("ascii")
+        script = (
+            "set -eu; "
+            f"token=$(curl -fsS -H Metadata:true '{metadata}' | "
+            "python3 -c 'import json,sys;print(json.load(sys.stdin)"
+            "[\"access_token\"])'); "
+            f"payload=$(ZAVA_SECRET_B64='{encoded}' python3 -c "
+            "'import base64,json,os;print(json.dumps({\"value\":"
+            "base64.b64decode(os.environ[\"ZAVA_SECRET_B64\"]).decode()}))'); "
+            f"curl -fsS -X PUT -H \"{authorization_header}\" "
+            "-H 'Content-Type: application/json' --data \"$payload\" "
+            f"'{vault_uri}secrets/{secret_name}?api-version=7.4' >/dev/null; "
+            "echo ZAVA_SECRET_STORED"
+        )
+    success, output = run_secret_capture(
+        [
+            "az", "vm", "run-command", "invoke",
+            "--resource-group", resource_group,
+            "--name", vm_name,
+            "--command-id", "RunShellScript",
+            "--scripts", script,
+            "--query", "value[0].message",
+            "--output", "tsv",
+            "--only-show-errors",
+        ],
+        timeout=300,
+    )
+    if not success:
+        return False, ""
+    if value is not None:
+        return "ZAVA_SECRET_STORED" in output, ""
+    candidates = [
+        line.strip()
+        for line in output.splitlines()
+        if re.fullmatch(r"[A-Za-z0-9+/=]{8,}", line.strip())
+    ]
+    if not candidates:
+        return False, ""
+    try:
+        decoded = __import__("base64").b64decode(
+            candidates[-1],
+            validate=True,
+        ).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False, ""
+    return bool(decoded), decoded
+
+
+def zava_secret_resource_names(
+    values: dict[str, str],
+) -> tuple[str, str, str]:
+    resource_group = values.get("AZURE_RESOURCE_GROUP", "")
+    vm_name = values.get("REPORTING_VM_NAME", "")
+    vault_name = values.get("KEY_VAULT_NAME", "")
+    if not all((resource_group, vm_name, vault_name)):
+        raise ValueError(
+            "Zava private-secret bridge metadata is incomplete; reconcile the lab."
+        )
+    return resource_group, vm_name, vault_name
+
+
+def rehydrate_zava_secrets(
+    environment: str,
+    values: dict[str, str],
+    names: tuple[str, ...] = ZAVA_REQUIRED_SECRET_NAMES,
+) -> tuple[dict[str, str], list[str]]:
+    resource_group, vm_name, vault_name = zava_secret_resource_names(values)
+    key_map = {
+        "db-password": "POSTGRES_ADMIN_PASSWORD",
+        "db-pool-password": "POSTGRES_POOL_PASSWORD",
+        "vm-admin-password": "VM_ADMIN_PASSWORD",
+    }
+    recovered: dict[str, str] = {}
+    missing = []
+    for name in names:
+        if name not in ZAVA_SECRET_NAMES:
+            raise ValueError("Secret name is not allowlisted.")
+        success, value = zava_vm_secret_bridge(
+            resource_group,
+            vm_name,
+            vault_name,
+            name,
+        )
+        if success:
+            recovered[key_map[name]] = value
+        else:
+            missing.append(name)
+    if recovered:
+        update_in_memory_secrets("zava-learning", environment, recovered)
+    return recovered, missing
+
+
 def authentication_statuses() -> dict[str, bool]:
     azure_cli = azure_cli_management_authenticated()
     azd_command_succeeded, azd_output = run_capture([
@@ -2709,10 +4203,15 @@ def authentication_statuses() -> dict[str, bool]:
     return statuses
 
 
-def azd_values(environment: str) -> dict[str, str]:
+def azd_values(
+    environment: str,
+    lab: Optional[LabDefinition] = None,
+) -> dict[str, str]:
+    active_lab = lab or selected_lab()
+    vendor_dir = vendor_dir_for_lab(active_lab) if active_lab else VENDOR_DIR
     success, output = run_capture(
         ["azd", "env", "get-values", "-e", environment],
-        VENDOR_DIR,
+        vendor_dir,
     )
     if not success:
         return {}
@@ -2728,11 +4227,14 @@ def azd_values(environment: str) -> dict[str, str]:
 def set_azd_values(
     environment: str,
     values: dict[str, str],
+    lab: Optional[LabDefinition] = None,
 ) -> tuple[bool, str]:
+    active_lab = lab or selected_lab()
+    vendor_dir = vendor_dir_for_lab(active_lab) if active_lab else VENDOR_DIR
     for key, value in values.items():
         success, output = run_capture(
             ["azd", "env", "set", "-e", environment, key, value],
-            VENDOR_DIR,
+            vendor_dir,
         )
         if not success:
             return False, output or f"Unable to save {key}."
@@ -2766,7 +4268,29 @@ def http_json(
         return 0, str(error)
 
 
-def upload_knowledge_base(endpoint: str, token: str) -> tuple[int, str]:
+def secret_http_request(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    payload: Optional[dict[str, Any]] = None,
+) -> tuple[int, str]:
+    """Perform a credential-bearing request without logging request or response data."""
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = Request(url, data=body, method=method, headers=headers)
+    try:
+        with urlopen(request, timeout=90) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except HTTPError as error:
+        return error.code, error.read().decode("utf-8", errors="replace")
+    except (OSError, URLError):
+        return 0, ""
+
+
+def upload_knowledge_base(
+    endpoint: str,
+    token: str,
+    knowledge_directory: Optional[Path] = None,
+) -> tuple[int, str]:
     boundary = f"----sreagent{uuid.uuid4().hex}"
     chunks: list[bytes] = []
 
@@ -2779,7 +4303,8 @@ def upload_knowledge_base(endpoint: str, token: str) -> tuple[int, str]:
         ])
 
     field("triggerIndexing", "true")
-    for path in sorted((VENDOR_DIR / "knowledge-base").glob("*.md")):
+    source_directory = knowledge_directory or (VENDOR_DIR / "knowledge-base")
+    for path in sorted(source_directory.glob("*.md")):
         chunks.extend([
             f"--{boundary}\r\n".encode(),
             (
@@ -2808,6 +4333,738 @@ def upload_knowledge_base(endpoint: str, token: str) -> tuple[int, str]:
         return error.code, error.read().decode("utf-8", errors="replace")
     except URLError as error:
         return 0, str(error)
+
+
+def parse_zava_skill_manifest(path: Path, expected_name: str) -> dict[str, Any]:
+    raw = path.read_text(encoding="utf-8")
+    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", raw, re.DOTALL)
+    if not match:
+        raise ValueError(f"Skill {expected_name} has no YAML frontmatter.")
+    lines = match.group(1).splitlines()
+
+    def scalar(key: str) -> str:
+        line = next((item for item in lines if item.startswith(f"{key}:")), "")
+        return line.split(":", 1)[1].strip().strip("'\"") if line else ""
+
+    name = scalar("name")
+    description = scalar("description")
+    if name != expected_name or not description:
+        raise ValueError(f"Skill manifest identity is invalid: {expected_name}.")
+    tools = []
+    in_tools = False
+    for line in lines:
+        if line == "tools:":
+            in_tools = True
+            continue
+        if in_tools:
+            item = re.fullmatch(r"\s{2}-\s+([A-Za-z0-9_.-]+)", line)
+            if item:
+                tool = item.group(1)
+                if not tool.startswith("microsoft-learn_"):
+                    tools.append(tool)
+            elif line.strip():
+                break
+    return {
+        "name": name,
+        "description": description,
+        "tools": tools,
+        "skillContent": raw,
+        "additionalFiles": [],
+    }
+
+
+def _zava_yaml_scalar(value: str) -> Any:
+    text = value.strip()
+    if text in {"true", "false"}:
+        return text == "true"
+    if text in {"null", "~"}:
+        return None
+    if text == "[]":
+        return []
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+        return float(text) if "." in text else int(text)
+    return text.strip("'\"")
+
+
+def parse_zava_python_tool_manifest(
+    path: Path,
+    expected_name: str,
+    substitutions: dict[str, str],
+) -> dict[str, Any]:
+    raw = path.read_text(encoding="utf-8")
+    for placeholder, value in substitutions.items():
+        quoted_placeholder = f'"@@{placeholder}@@"'
+        if quoted_placeholder in raw:
+            raw = raw.replace(quoted_placeholder, json.dumps(value))
+        else:
+            raw = raw.replace(f"@@{placeholder}@@", value)
+    lines = raw.splitlines()
+    name_line = next(
+        (line for line in lines if re.fullmatch(r"\s{2}name:\s*.+", line)),
+        "",
+    )
+    name = name_line.split(":", 1)[1].strip().strip("'\"") if name_line else ""
+    type_line = next(
+        (line for line in lines if re.fullmatch(r"\s{2}type:\s*.+", line)),
+        "",
+    )
+    tool_type = type_line.split(":", 1)[1].strip().strip("'\"") if type_line else ""
+    if name != expected_name or tool_type != "PythonFunctionTool":
+        raise ValueError(f"Tool manifest identity is invalid: {expected_name}.")
+
+    def block(name: str) -> str:
+        marker = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.fullmatch(rf"\s{{2}}{re.escape(name)}:\s*\|[-+]?", line)
+            ),
+            -1,
+        )
+        if marker < 0:
+            raise ValueError(f"Tool {expected_name} has no {name}.")
+        content = []
+        for line in lines[marker + 1:]:
+            if line.strip() and not line.startswith("    "):
+                break
+            content.append(line[4:] if line.startswith("    ") else "")
+        return "\n".join(content)
+
+    timeout_line = next(
+        (line for line in lines if re.fullmatch(r"\s{2}timeoutSeconds:\s*\d+", line)),
+        "",
+    )
+    if not timeout_line:
+        raise ValueError(f"Tool {expected_name} has no valid timeout.")
+    parameters: list[dict[str, Any]] = []
+    current: Optional[dict[str, Any]] = None
+    in_parameters = False
+    for line in lines:
+        if line == "  parameters:":
+            in_parameters = True
+            continue
+        if not in_parameters:
+            continue
+        start = re.fullmatch(r"\s{2}- name:\s*(.+)", line)
+        if start:
+            if current:
+                parameters.append(current)
+            current = {"name": _zava_yaml_scalar(start.group(1))}
+            continue
+        field = re.fullmatch(
+            r"\s{4}(type|description|required):\s*(.*)",
+            line,
+        )
+        if field and current is not None:
+            current[field.group(1)] = _zava_yaml_scalar(field.group(2))
+    if current:
+        parameters.append(current)
+    properties = {
+        "type": "PythonFunctionTool",
+        "description": block("description"),
+        "functionCode": block("functionCode"),
+        "timeoutSeconds": int(timeout_line.split(":", 1)[1].strip()),
+        "parameters": parameters,
+        "authEnabled": False,
+        "authScopes": [],
+    }
+    if "@@SERVICENOW_" in json.dumps(properties):
+        raise ValueError(f"Tool {expected_name} contains unresolved settings.")
+    return properties
+
+
+def parse_zava_agent_manifest(
+    path: Path,
+    expected_name: str,
+    substitutions: dict[str, str],
+    enabled_optional_skills: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    raw = path.read_text(encoding="utf-8")
+    for placeholder, value in substitutions.items():
+        raw = raw.replace(f"@@{placeholder}@@", value)
+    name_match = re.search(r"^metadata:\s*\n\s{2}name:\s*(\S+)\s*$", raw, re.MULTILINE)
+    kind_match = re.search(r"^kind:\s*(\S+)\s*$", raw, re.MULTILINE)
+    if (
+        not name_match
+        or name_match.group(1).strip("'\"") != expected_name
+        or not kind_match
+        or kind_match.group(1) != "ExtendedAgent"
+    ):
+        raise ValueError(f"Agent manifest identity is invalid: {expected_name}.")
+    lines = raw.splitlines()
+    try:
+        spec_index = lines.index("spec:")
+    except ValueError as error:
+        raise ValueError(f"Agent {expected_name} has no spec.") from error
+    properties: dict[str, Any] = {}
+    index = spec_index + 1
+    while index < len(lines):
+        field = re.fullmatch(r"\s{2}([A-Za-z][A-Za-z0-9]*):\s*(.*)", lines[index])
+        if not field:
+            index += 1
+            continue
+        key, raw_value = field.groups()
+        if raw_value in {"|-", "|", "|+"}:
+            block = []
+            index += 1
+            while index < len(lines):
+                line = lines[index]
+                if line.strip() and not line.startswith("    "):
+                    break
+                block.append(line[4:] if line.startswith("    ") else "")
+                index += 1
+            properties[key] = "\n".join(block)
+            continue
+        if raw_value:
+            properties[key] = _zava_yaml_scalar(raw_value)
+            index += 1
+            continue
+        items = []
+        index += 1
+        while index < len(lines):
+            item = re.fullmatch(r"\s{2}-\s+(.+)", lines[index])
+            if not item:
+                break
+            items.append(_zava_yaml_scalar(item.group(1)))
+            index += 1
+        properties[key] = items
+    if not isinstance(properties.get("instructions"), str):
+        raise ValueError(f"Agent {expected_name} has no instructions.")
+    if expected_name == "zava-incident-responder":
+        optional_text = (
+            " Enabled optional workflows: "
+            + ", ".join(enabled_optional_skills)
+            + "."
+            if enabled_optional_skills
+            else ""
+        )
+        properties["instructions"] = (
+            "You are the autonomous Zava Learning Azure Monitor incident responder "
+            f"for resource group {substitutions['RG']}. Diagnose from Azure Monitor, "
+            "Application Insights, Log Analytics, and live Azure configuration. "
+            "Apply the smallest safe recovery, verify the affected public lane is "
+            "healthy, produce evidence-backed root cause and recommendations, and "
+            "never read, display, or log secrets."
+            + optional_text
+        )
+        properties["mcpTools"] = (
+            list(ZAVA_PAGERDUTY_TOOLS)
+            if "pagerduty-incident-update" in enabled_optional_skills
+            else []
+        )
+        if isinstance(properties.get("allowedSkills"), list):
+            properties["allowedSkills"] = [
+                skill
+                for skill in properties["allowedSkills"]
+                if skill in (*ZAVA_CORE_SKILLS, *enabled_optional_skills)
+            ]
+    if "@@" in json.dumps(properties):
+        raise ValueError(f"Agent {expected_name} contains unresolved placeholders.")
+    return properties
+
+
+def configure_zava_agent_core(
+    job: Job,
+    environment: str,
+    values: dict[str, str],
+    preserve_incident_configuration: bool = False,
+    enabled_optional_skills: tuple[str, ...] = (),
+) -> bool:
+    required = (
+        "SRE_AGENT_ENDPOINT",
+        "SRE_AGENT_NAME",
+        "AZURE_RESOURCE_GROUP",
+        "AZURE_SUBSCRIPTION_ID",
+        "LOG_ANALYTICS_WORKSPACE_NAME",
+        "LOG_ANALYTICS_WORKSPACE_ID",
+        "APPLICATIONINSIGHTS_NAME",
+        "APPLICATIONINSIGHTS_APP_ID",
+        "AZURE_CONTAINER_REGISTRY_NAME",
+        "AZURE_CONTAINER_ENVIRONMENT_NAME",
+    )
+    missing = [name for name in required if not values.get(name)]
+    if missing:
+        job.emit("error", message=f"Missing Zava agent outputs: {', '.join(missing)}.")
+        return False
+    success, token = run_secret_capture(
+        [
+            "az", "account", "get-access-token",
+            "--resource", "https://azuresre.dev",
+            "--query", "accessToken",
+            "--output", "tsv",
+        ],
+        timeout=30,
+    )
+    if not success or not token:
+        job.emit("error", message="Unable to authenticate to the SRE Agent data plane.")
+        return False
+    endpoint = values["SRE_AGENT_ENDPOINT"].rstrip("/")
+    vendor_dir = vendor_dir_for_lab(LABS_BY_ID["zava-learning"])
+    config_root = vendor_dir / "sre-config"
+    substitutions = {
+        "RG": values["AZURE_RESOURCE_GROUP"],
+        "REPO": "",
+        "LAW_NAME": values.get("LOG_ANALYTICS_WORKSPACE_NAME", ""),
+        "LAW_GUID": values.get("LOG_ANALYTICS_WORKSPACE_ID", ""),
+        "APPINSIGHTS_NAME": values.get("APPLICATIONINSIGHTS_NAME", ""),
+        "APPINSIGHTS_APPID": values.get("APPLICATIONINSIGHTS_APP_ID", ""),
+        "ACR_NAME": values.get("AZURE_CONTAINER_REGISTRY_NAME", ""),
+        "CAE_NAME": values.get("AZURE_CONTAINER_ENVIRONMENT_NAME", ""),
+    }
+    try:
+        skills = [
+            (
+                name,
+                parse_zava_skill_manifest(
+                    config_root / "agent-config" / "skills" / name / "SKILL.md",
+                    name,
+                ),
+            )
+            for name in (*ZAVA_CORE_SKILLS, *enabled_optional_skills)
+        ]
+        agents = [
+            (
+                name,
+                parse_zava_agent_manifest(
+                    config_root / "agent-config" / "agents" / name / f"{name}.yaml",
+                    name,
+                    substitutions,
+                    enabled_optional_skills,
+                ),
+            )
+            for name in ZAVA_CORE_AGENTS
+        ]
+    except (OSError, ValueError) as error:
+        job.emit("error", message=f"Invalid controlled Zava manifest: {error}")
+        return False
+    for kind, entities, entity_type in (
+        ("skills", skills, "Skill"),
+        ("agents", agents, "ExtendedAgent"),
+    ):
+        for name, properties in entities:
+            job.emit("step", name=f"Applying Zava {kind[:-1]} {name}")
+            status, response = http_json(
+                "PUT",
+                f"{endpoint}/api/v2/extendedAgent/{kind}/{quote(name)}",
+                token,
+                {
+                    "name": name,
+                    "type": entity_type,
+                    "tags": [],
+                    "properties": properties,
+                },
+            )
+            if status not in (200, 201, 202, 204):
+                job.emit(
+                    "error",
+                    message=f"Unable to apply required Zava {kind[:-1]} {name} "
+                    f"(HTTP {status}).",
+                )
+                return False
+
+    knowledge_batches = (
+        (
+            config_root / "knowledge-base",
+            ("zava-learning-architecture.md",),
+        ),
+        (
+            config_root / "templates",
+            (
+                "zava-audit-report.md",
+                "zava-brand.md",
+                "zava-redaction.md",
+                "zava-report-template.md",
+            ),
+        ),
+    )
+    for directory, expected_files in knowledge_batches:
+        missing_files = [
+            name for name in expected_files if not (directory / name).is_file()
+        ]
+        if missing_files:
+            job.emit(
+                "error",
+                message="Required Zava knowledge is missing: "
+                + ", ".join(missing_files)
+                + ".",
+            )
+            return False
+        job.emit("step", name=f"Uploading Zava knowledge from {directory.name}")
+        status, _ = upload_knowledge_base(endpoint, token, directory)
+        if status not in (200, 201, 202, 204):
+            job.emit(
+                "error",
+                message=f"Unable to upload required Zava knowledge (HTTP {status}).",
+            )
+            return False
+
+    response_plan = {
+        "incidentPlatform": "AzMonitor",
+        "titleContains": "Zava",
+        "handlingAgent": "zava-incident-responder",
+        "agentMode": "autonomous",
+        "maxAutomatedInvestigationAttempts": 3,
+        "isEnabled": True,
+    }
+    success, management_token = run_secret_capture(
+        [
+            "az", "account", "get-access-token",
+            "--resource", "https://management.azure.com/",
+            "--query", "accessToken",
+            "--output", "tsv",
+        ],
+        timeout=30,
+    )
+    if not success or not management_token:
+        job.emit("error", message="Unable to authenticate for Zava agent configuration.")
+        return False
+    agent_url = (
+        "https://management.azure.com/subscriptions/"
+        f"{quote(values['AZURE_SUBSCRIPTION_ID'])}/resourceGroups/"
+        f"{quote(values['AZURE_RESOURCE_GROUP'])}/providers/Microsoft.App/agents/"
+        f"{quote(values['SRE_AGENT_NAME'])}"
+    )
+    if not preserve_incident_configuration:
+        status, _ = http_json(
+            "PATCH",
+            f"{agent_url}?api-version=2025-05-01-preview",
+            management_token,
+            {
+                "properties": {
+                    "incidentManagementConfiguration": {
+                        "type": "AzMonitor",
+                        "connectionName": "azmonitor",
+                    }
+                }
+            },
+        )
+        if status not in (200, 201, 202, 204):
+            job.emit(
+                "error",
+                message=f"Unable to enforce Azure Monitor core mode (HTTP {status}).",
+            )
+            return False
+        encoded_filter = __import__("base64").b64encode(
+            json.dumps(response_plan, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        job.emit("step", name="Applying zava-learning-response")
+        status, _ = http_json(
+            "PUT",
+            f"{agent_url}/incidentFilters/zava-learning-response"
+            "?api-version=2025-05-01-preview",
+            management_token,
+            {"properties": {"value": encoded_filter}},
+        )
+        if status not in (200, 201, 202, 204):
+            job.emit(
+                "error",
+                message=f"Unable to apply zava-learning-response (HTTP {status}).",
+            )
+            return False
+    saved, error = set_azd_values(
+        environment,
+        {"ZAVA_CORE_CONFIG_VERSION": ZAVA_CORE_CONFIG_VERSION},
+        LABS_BY_ID["zava-learning"],
+    )
+    if not saved:
+        job.emit("error", message=error or "Unable to record Zava core configuration.")
+        return False
+    return True
+
+
+def configure_zava_optional_integrations(
+    job: Job,
+    environment: str,
+    values: dict[str, str],
+    settings: dict[str, str],
+) -> tuple[bool, dict[str, str]]:
+    requested = {
+        "pagerduty": bool(settings.get("pagerduty_api_token")),
+        "servicenow": bool(settings.get("servicenow_url")),
+    }
+    if not any(requested.values()):
+        return True, {}
+    success, data_token = run_secret_capture(
+        [
+            "az", "account", "get-access-token",
+            "--resource", "https://azuresre.dev",
+            "--query", "accessToken",
+            "--output", "tsv",
+        ],
+        timeout=30,
+    )
+    if not success or not data_token:
+        job.emit("error", message="Unable to authenticate for optional SRE Agent setup.")
+        return False, {}
+    success, management_token = run_secret_capture(
+        [
+            "az", "account", "get-access-token",
+            "--resource", "https://management.azure.com/",
+            "--query", "accessToken",
+            "--output", "tsv",
+        ],
+        timeout=30,
+    )
+    if not success or not management_token:
+        job.emit("error", message="Unable to authenticate for optional agent configuration.")
+        return False, {}
+
+    endpoint = values["SRE_AGENT_ENDPOINT"].rstrip("/")
+    agent_url = (
+        "https://management.azure.com/subscriptions/"
+        f"{quote(values['AZURE_SUBSCRIPTION_ID'])}/resourceGroups/"
+        f"{quote(values['AZURE_RESOURCE_GROUP'])}/providers/Microsoft.App/agents/"
+        f"{quote(values['SRE_AGENT_NAME'])}"
+    )
+    vendor_dir = vendor_dir_for_lab(LABS_BY_ID["zava-learning"])
+    config_root = vendor_dir / "sre-config"
+    enabled_skills: list[str] = []
+    status_by_integration: dict[str, str] = {}
+
+    if requested["pagerduty"]:
+        connector_properties = {
+            "dataConnectorType": "Mcp",
+            "dataSource": "https://mcp.pagerduty.com",
+            "identity": "",
+            "endpoint": "https://mcp.pagerduty.com/mcp",
+            "source": "Agent",
+            "extendedProperties": {
+                "type": "http",
+                "endpoint": "https://mcp.pagerduty.com/mcp",
+                "authType": "CustomHeaders",
+                "Authorization": (
+                    "Token token=" + settings["pagerduty_api_token"]
+                ),
+                "selectedTools": list(ZAVA_PAGERDUTY_TOOLS),
+                "toolsVisibleToMetaAgent": list(ZAVA_PAGERDUTY_TOOLS),
+            },
+        }
+        connector_body = {
+            "name": "pagerduty",
+            "type": "AgentConnector",
+            "tags": [],
+            "properties": connector_properties,
+        }
+        job.emit("step", name="Configuring and testing PagerDuty")
+        code, _ = http_json(
+            "PUT",
+            f"{endpoint}/api/v2/extendedAgent/connectors/pagerduty",
+            data_token,
+            connector_body,
+        )
+        if code not in (200, 201, 202, 204):
+            job.emit("error", message=f"PagerDuty connector setup failed (HTTP {code}).")
+            return False, status_by_integration
+        code, response = http_json(
+            "POST",
+            f"{endpoint}/api/v2/extendedAgent/connectors/pagerduty/testconnection",
+            data_token,
+            connector_body,
+        )
+        try:
+            connector_test = json.loads(response)
+        except json.JSONDecodeError:
+            connector_test = {}
+        if code not in (200, 201, 202, 204) or connector_test.get("success") is not True:
+            job.emit("error", message=f"PagerDuty connection test failed (HTTP {code}).")
+            return False, status_by_integration
+        action_group_name = values.get("ZAVA_PAGERDUTY_ACTION_GROUP_NAME", "")
+        if not action_group_name:
+            job.emit(
+                "error",
+                message="PagerDuty Azure Monitor delivery metadata is unavailable.",
+            )
+            return False, status_by_integration
+        code_ok, receiver_count = run_capture(
+            [
+                "az", "monitor", "action-group", "show",
+                "--resource-group", values["AZURE_RESOURCE_GROUP"],
+                "--name", action_group_name,
+                "--query", "length(webhookReceivers)",
+                "--output", "tsv",
+            ],
+            timeout=60,
+        )
+        if not code_ok or not receiver_count.strip().isdigit() or int(receiver_count) < 1:
+            job.emit(
+                "error",
+                message="PagerDuty Azure Monitor delivery is not configured.",
+            )
+            return False, status_by_integration
+        code, _ = http_json(
+            "PATCH",
+            f"{agent_url}?api-version=2025-05-01-preview",
+            management_token,
+            {
+                "properties": {
+                    "incidentManagementConfiguration": {
+                        "type": "PagerDuty",
+                        "connectionName": "pagerduty",
+                        "connectionKey": settings["pagerduty_api_token"],
+                        "oboUser": settings["pagerduty_obo_email"],
+                    }
+                }
+            },
+        )
+        if code not in (200, 201, 202, 204):
+            job.emit("error", message=f"PagerDuty platform setup failed (HTTP {code}).")
+            return False, status_by_integration
+        platform_ready = False
+        for attempt in range(30):
+            code, response = http_json(
+                "GET",
+                f"{endpoint}/api/v1/incidentplayground/incidentPlatformType",
+                data_token,
+            )
+            try:
+                platform = json.loads(response)
+            except json.JSONDecodeError:
+                platform = {}
+            if code == HTTPStatus.OK and platform.get("incidentPlatformType") == "PagerDuty":
+                platform_ready = True
+                break
+            if attempt < 29:
+                time.sleep(10)
+        if not platform_ready:
+            job.emit("error", message="PagerDuty platform did not become ready.")
+            return False, status_by_integration
+        enabled_skills.append(ZAVA_OPTIONAL_SKILLS["pagerduty"])
+        status_by_integration["pagerduty"] = "healthy"
+
+    if requested["servicenow"]:
+        auth = __import__("base64").b64encode(
+            (
+                settings["servicenow_user"]
+                + ":"
+                + settings["servicenow_password"]
+            ).encode("utf-8")
+        ).decode("ascii")
+        test_url = (
+            settings["servicenow_url"].rstrip("/")
+            + "/api/now/table/sys_user?sysparm_limit=1&sysparm_fields=sys_id"
+        )
+        job.emit("step", name="Testing and configuring ServiceNow tools")
+        code, _ = secret_http_request(
+            "GET",
+            test_url,
+            {
+                "Authorization": "Basic " + auth,
+                "Accept": "application/json",
+            },
+        )
+        if code != HTTPStatus.OK:
+            job.emit("error", message=f"ServiceNow authentication failed (HTTP {code}).")
+            return False, status_by_integration
+        substitutions = {
+            "SERVICENOW_URL": settings["servicenow_url"].rstrip("/"),
+            "SERVICENOW_USER": settings["servicenow_user"],
+            "SERVICENOW_PASS": settings["servicenow_password"],
+        }
+        for name in ("CreateServiceNowChangeRequest", "UploadServiceNowAttachment"):
+            try:
+                properties = parse_zava_python_tool_manifest(
+                    config_root / "tools" / name / f"{name}.yaml",
+                    name,
+                    substitutions,
+                )
+            except (OSError, ValueError) as error:
+                job.emit("error", message=f"Invalid controlled ServiceNow tool: {error}")
+                return False, status_by_integration
+            code, _ = http_json(
+                "PUT",
+                f"{endpoint}/api/v2/extendedAgent/tools/{quote(name)}",
+                data_token,
+                {
+                    "name": name,
+                    "type": "ExtendedAgentTool",
+                    "tags": [],
+                    "properties": properties,
+                },
+            )
+            if code not in (200, 201, 202, 204):
+                job.emit("error", message=f"ServiceNow tool setup failed (HTTP {code}).")
+                return False, status_by_integration
+        enabled_skills.append(ZAVA_OPTIONAL_SKILLS["servicenow"])
+        status_by_integration["servicenow"] = "healthy"
+
+    for name in enabled_skills:
+        try:
+            properties = parse_zava_skill_manifest(
+                config_root / "agent-config" / "skills" / name / "SKILL.md",
+                name,
+            )
+        except (OSError, ValueError) as error:
+            job.emit("error", message=f"Invalid optional Zava skill: {error}")
+            return False, status_by_integration
+        code, _ = http_json(
+            "PUT",
+            f"{endpoint}/api/v2/extendedAgent/skills/{quote(name)}",
+            data_token,
+            {"name": name, "type": "Skill", "tags": [], "properties": properties},
+        )
+        if code not in (200, 201, 202, 204):
+            job.emit("error", message=f"Optional Zava skill setup failed (HTTP {code}).")
+            return False, status_by_integration
+
+    substitutions = {
+        "RG": values["AZURE_RESOURCE_GROUP"],
+        "REPO": "",
+        "LAW_NAME": values.get("LOG_ANALYTICS_WORKSPACE_NAME", ""),
+        "LAW_GUID": values.get("LOG_ANALYTICS_WORKSPACE_ID", ""),
+        "APPINSIGHTS_NAME": values.get("APPLICATIONINSIGHTS_NAME", ""),
+        "APPINSIGHTS_APPID": values.get("APPLICATIONINSIGHTS_APP_ID", ""),
+        "ACR_NAME": values.get("AZURE_CONTAINER_REGISTRY_NAME", ""),
+        "CAE_NAME": values.get("AZURE_CONTAINER_ENVIRONMENT_NAME", ""),
+    }
+    try:
+        responder = parse_zava_agent_manifest(
+            config_root / "agent-config" / "agents" / "zava-incident-responder"
+            / "zava-incident-responder.yaml",
+            "zava-incident-responder",
+            substitutions,
+            tuple(enabled_skills),
+        )
+    except (OSError, ValueError) as error:
+        job.emit("error", message=f"Invalid Zava responder manifest: {error}")
+        return False, status_by_integration
+    code, _ = http_json(
+        "PUT",
+        f"{endpoint}/api/v2/extendedAgent/agents/zava-incident-responder",
+        data_token,
+        {
+            "name": "zava-incident-responder",
+            "type": "ExtendedAgent",
+            "tags": [],
+            "properties": responder,
+        },
+    )
+    if code not in (200, 201, 202, 204):
+        job.emit("error", message=f"Zava responder update failed (HTTP {code}).")
+        return False, status_by_integration
+
+    if requested["pagerduty"]:
+        response_plan = {
+            "incidentPlatform": "PagerDuty",
+            "titleContains": "Zava",
+            "handlingAgent": "zava-incident-responder",
+            "agentMode": "autonomous",
+            "maxAutomatedInvestigationAttempts": 3,
+            "isEnabled": True,
+        }
+        encoded = __import__("base64").b64encode(
+            json.dumps(response_plan, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        code, _ = http_json(
+            "PUT",
+            f"{agent_url}/incidentFilters/zava-learning-response"
+            "?api-version=2025-05-01-preview",
+            management_token,
+            {"properties": {"value": encoded}},
+        )
+        if code not in (200, 201, 202, 204):
+            job.emit("error", message=f"PagerDuty response plan failed (HTTP {code}).")
+            return False, status_by_integration
+    return True, status_by_integration
 
 
 def refresh_app_url(job: Job, app_name: str, resource_group: str) -> str:
@@ -3134,8 +5391,429 @@ def restore_container_baseline(job: Job, environment: str) -> bool:
     return True
 
 
+def discover_zava_secure_resource_names(
+    resource_group: str,
+    current_values: dict[str, str],
+) -> dict[str, str]:
+    values = dict(current_values)
+    queries = (
+        (
+            "KEY_VAULT_NAME",
+            [
+                "az", "keyvault", "list", "--resource-group", resource_group,
+                "--query", "[0].name", "--output", "tsv",
+            ],
+        ),
+        (
+            "REPORTING_VM_NAME",
+            [
+                "az", "vm", "list", "--resource-group", resource_group,
+                "--query", "[?starts_with(name,'vm-zava-reporting-')].name | [0]",
+                "--output", "tsv",
+            ],
+        ),
+    )
+    for key, command in queries:
+        if values.get(key):
+            continue
+        success, output = run_capture(command, timeout=60)
+        if success and output.strip():
+            values[key] = output.strip()
+    values["AZURE_RESOURCE_GROUP"] = resource_group
+    return values
+
+
+def zava_process_environment(
+    state: dict[str, Any],
+    environment: str,
+    values: dict[str, str],
+) -> tuple[Optional[dict[str, str]], Optional[str]]:
+    stored = get_in_memory_secrets("zava-learning", environment)
+    existing = bool(
+        state.get("existing_environment") or state.get("deployment_active")
+    )
+    if existing:
+        resource_group = (
+            values.get("AZURE_RESOURCE_GROUP")
+            or str(state.get("resource_group") or "")
+        )
+        bridge_values = discover_zava_secure_resource_names(resource_group, values)
+        missing_keys = [
+            key
+            for key in (
+                "POSTGRES_ADMIN_PASSWORD",
+                "POSTGRES_POOL_PASSWORD",
+                "VM_ADMIN_PASSWORD",
+            )
+            if not stored.get(key)
+        ]
+        names_for_keys = {
+            "POSTGRES_ADMIN_PASSWORD": "db-password",
+            "POSTGRES_POOL_PASSWORD": "db-pool-password",
+            "VM_ADMIN_PASSWORD": "vm-admin-password",
+        }
+        if missing_keys:
+            try:
+                recovered, missing_names = rehydrate_zava_secrets(
+                    environment,
+                    bridge_values,
+                    tuple(names_for_keys[key] for key in missing_keys),
+                )
+            except ValueError:
+                return None, (
+                    "The private Key Vault bridge is unavailable. Existing Zava "
+                    "operational deployment credentials cannot be rehydrated safely."
+                )
+            stored.update(recovered)
+            if "db-password" in missing_names or "db-pool-password" in missing_names:
+                return None, (
+                    "Required database credentials are unavailable through the "
+                    "reporting VM managed identity."
+                )
+            if "vm-admin-password" in missing_names:
+                stored["VM_ADMIN_PASSWORD"] = generate_deployment_password()
+                update_in_memory_secrets(
+                    "zava-learning",
+                    environment,
+                    {"VM_ADMIN_PASSWORD": stored["VM_ADMIN_PASSWORD"]},
+                )
+                state["vm_credential_migration_pending"] = True
+                save_state(state)
+    else:
+        required = (
+            "POSTGRES_ADMIN_PASSWORD",
+            "POSTGRES_POOL_PASSWORD",
+            "VM_ADMIN_PASSWORD",
+        )
+        if any(not stored.get(key) for key in required):
+            generated = new_zava_deployment_secrets()
+            update_in_memory_secrets("zava-learning", environment, generated)
+            stored.update(generated)
+    required = (
+        "POSTGRES_ADMIN_PASSWORD",
+        "POSTGRES_POOL_PASSWORD",
+        "VM_ADMIN_PASSWORD",
+    )
+    if any(not stored.get(key) for key in required):
+        return None, "Secure Zava deployment parameters are unavailable."
+    process_environment = {key: stored[key] for key in required}
+    process_environment["PAGERDUTY_WEBHOOK_URL"] = stored.get(
+        "pagerduty_webhook_url",
+        "",
+    )
+    integration_status = state.get("integration_status")
+    pagerduty_configured = (
+        isinstance(integration_status, dict)
+        and integration_status.get("pagerduty") in (True, "healthy", "configured")
+    )
+    process_environment["ZAVA_PAGERDUTY_CONFIGURED"] = (
+        "true" if pagerduty_configured else "false"
+    )
+    return process_environment, None
+
+
+def hydrate_zava_runtime_outputs(
+    job: Job,
+    environment: str,
+    state: dict[str, Any],
+) -> Optional[dict[str, str]]:
+    lab = LABS_BY_ID["zava-learning"]
+    values = azd_values(environment, lab)
+    resource_group = (
+        values.get("AZURE_RESOURCE_GROUP")
+        or str(state.get("resource_group") or "")
+        or f"rg-zava-learning-{environment}"
+    )
+    success, output = run_capture(
+        [
+            "az", "resource", "list",
+            "--resource-group", resource_group,
+            "--resource-type", "Microsoft.App/agents",
+            "--query",
+            "[0].{name:name,endpoint:properties.agentEndpoint,location:location}",
+            "--output", "json",
+        ],
+        timeout=60,
+    )
+    try:
+        agent = json.loads(output) if success else {}
+    except json.JSONDecodeError:
+        agent = {}
+    if not isinstance(agent, dict) or not agent.get("name") or not agent.get("endpoint"):
+        job.emit("error", message="Unable to resolve the deployed Zava SRE Agent.")
+        return None
+    values.update({
+        "AZURE_RESOURCE_GROUP": resource_group,
+        "AZURE_SUBSCRIPTION_ID": str(state.get("subscription_id") or ""),
+        "SRE_AGENT_NAME": str(agent["name"]),
+        "SRE_AGENT_ENDPOINT": str(agent["endpoint"]),
+        "AZURE_AGENT_LOCATION": str(
+            agent.get("location") or values.get("AZURE_AGENT_LOCATION") or ""
+        ).lower(),
+        "AGENT_PORTAL_URL": sre_agent_portal_url(
+            str(state.get("subscription_id") or ""),
+            resource_group,
+            str(agent["name"]),
+        ),
+    })
+    workspace_resource_id = values.get("LOG_ANALYTICS_WORKSPACE_ID", "")
+    if workspace_resource_id:
+        success, output = run_capture(
+            [
+                "az", "monitor", "log-analytics", "workspace", "show",
+                "--ids", workspace_resource_id,
+                "--query", "{name:name,customerId:customerId}",
+                "--output", "json",
+            ],
+            timeout=60,
+        )
+        try:
+            workspace = json.loads(output) if success else {}
+        except json.JSONDecodeError:
+            workspace = {}
+        if isinstance(workspace, dict) and workspace.get("customerId"):
+            values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"] = workspace_resource_id
+            values["LOG_ANALYTICS_WORKSPACE_ID"] = str(workspace["customerId"])
+            values["LOG_ANALYTICS_WORKSPACE_NAME"] = str(
+                workspace.get("name") or ""
+            )
+    app_insights_name = values.get("APPLICATIONINSIGHTS_NAME", "")
+    if app_insights_name:
+        success, output = run_capture(
+            [
+                "az", "monitor", "app-insights", "component", "show",
+                "--app", app_insights_name,
+                "--resource-group", resource_group,
+                "--query", "appId",
+                "--output", "tsv",
+            ],
+            timeout=60,
+        )
+        if success and output.strip():
+            values["APPLICATIONINSIGHTS_APP_ID"] = output.strip()
+    host = values.get("APPGW_PUBLIC_FQDN", "")
+    values["ZAVA_PORTAL_URL"] = f"http://{host}" if host else ""
+    for port in ZAVA_LANE_PORTS:
+        values[f"ZAVA_LANE_{port}_URL"] = (
+            f"http://{host}:{port}" if host else ""
+        )
+    saved, error = set_azd_values(environment, values, lab)
+    if not saved:
+        job.emit("error", message=error or "Unable to save Zava runtime outputs.")
+        return None
+    return values
+
+
+def reconcile_zava(job: Job, restoring: bool = False) -> None:
+    state = load_state()
+    environment = str(state.get("environment") or "")
+    if not environment:
+        job.emit("error", message="Configure an environment before deploying.")
+        job.finish(False, None)
+        return
+    lab = LABS_BY_ID["zava-learning"]
+    vendor_dir = vendor_dir_for_lab(lab)
+    values = azd_values(environment, lab)
+    region_values = {
+        "location": str(values.get("AZURE_LOCATION") or state.get("location") or "").lower(),
+        "db_location": str(
+            values.get("AZURE_DB_LOCATION") or state.get("db_location") or ""
+        ).lower(),
+        "agent_location": str(
+            values.get("AZURE_AGENT_LOCATION") or state.get("agent_location") or ""
+        ).lower(),
+    }
+    invalid_regions = [
+        definition.name
+        for definition in lab.regions
+        if region_values.get(definition.id) not in definition.allowed_values
+    ]
+    if invalid_regions:
+        job.emit(
+            "error",
+            message=(
+                "Zava reconciliation is blocked because immutable Azure regions "
+                "could not be discovered for: " + ", ".join(invalid_regions) + "."
+            ),
+        )
+        job.finish(False, 1)
+        return
+    saved, region_error = set_azd_values(
+        environment,
+        {
+            "AZURE_LOCATION": region_values["location"],
+            "AZURE_DB_LOCATION": region_values["db_location"],
+            "AZURE_AGENT_LOCATION": region_values["agent_location"],
+        },
+        lab,
+    )
+    if not saved:
+        job.emit("error", message=region_error or "Unable to preserve Zava regions.")
+        job.finish(False, 1)
+        return
+    process_environment, error = zava_process_environment(
+        state,
+        environment,
+        values,
+    )
+    if process_environment is None:
+        job.emit("error", message=error or "Secure Zava configuration failed.")
+        job.finish(False, 1)
+        return
+    resource_group = (
+        values.get("AZURE_RESOURCE_GROUP")
+        or str(state.get("resource_group") or "")
+        or f"rg-zava-learning-{environment}"
+    )
+    agent_location = region_values["agent_location"]
+    agent_name = f"sre-zava-{environment}"
+    preserve_agent_configuration = bool(
+        values.get("SRE_AGENT_NAME") and values.get("SRE_AGENT_ENDPOINT")
+    )
+    job.emit("started", command=["azd", "provision", "-e", environment])
+    if restoring:
+        reset_script = vendor_dir / "chaos" / "reset.ps1"
+        job.emit("step", name="Resetting all eight Zava scenario lanes")
+        reset_ok, _ = run_process(
+            job,
+            [
+                "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-File", str(reset_script),
+                "-Scenario", "all",
+                "-ResourceGroup", resource_group,
+            ],
+            vendor_dir,
+        )
+        if not reset_ok:
+            job.emit("error", message="Zava lane reset failed; reconciliation stopped.")
+            job.finish(False, 1)
+            return
+    job.emit("step", name="Previewing Zava infrastructure reconciliation")
+    success, _ = run_process(
+        job,
+        ["azd", "provision", "--preview", "-e", environment, "--no-prompt"],
+        vendor_dir,
+        environment_overrides=process_environment,
+        no_log_output=True,
+    )
+    if not success:
+        job.emit("error", message="Zava infrastructure preview failed.")
+        job.finish(False, 1)
+        return
+    job.emit("step", name="Provisioning Zava infrastructure without local Docker")
+    success, _ = run_process(
+        job,
+        ["azd", "provision", "-e", environment, "--no-prompt"],
+        vendor_dir,
+        environment_overrides=process_environment,
+        no_log_output=True,
+    )
+    if not success:
+        job.emit("error", message="Zava infrastructure provisioning failed.")
+        job.finish(False, 1)
+        return
+    job.emit("step", name="Building and deploying Zava services through ACR")
+    success, _ = run_process(
+        job,
+        [
+            "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-File", str(vendor_dir / "scripts" / "post-provision.ps1"),
+            "-ResourceGroup", resource_group,
+        ],
+        vendor_dir,
+        environment_overrides=process_environment,
+        no_log_output=True,
+    )
+    if not success:
+        job.emit("error", message="Zava ACR build or post-provisioning failed.")
+        job.finish(False, 1)
+        return
+    if preserve_agent_configuration:
+        job.emit(
+            "step",
+            name="Preserving the existing Zava SRE Agent connector configuration",
+        )
+    else:
+        job.emit("step", name="Deploying the Zava SRE Agent in its selected region")
+        success, _ = run_process(
+            job,
+            [
+                "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive",
+                "-File", str(vendor_dir / "scripts" / "deploy-sre-agent.ps1"),
+                "-ResourceGroup", resource_group,
+                "-Location", agent_location,
+                "-AgentName", agent_name,
+                "-EnvironmentName", environment,
+                "-IncidentPlatform", "AzMonitor",
+                "-ModelProvider", "Anthropic",
+                "-ModelName", "Automatic",
+            ],
+            vendor_dir,
+        )
+        if not success:
+            job.emit("error", message="Zava SRE Agent deployment failed.")
+            job.finish(False, 1)
+            return
+    values = hydrate_zava_runtime_outputs(job, environment, state)
+    if values is None:
+        job.finish(False, 1)
+        return
+    values = discover_zava_secure_resource_names(resource_group, values)
+    integration_status = state.get("integration_status")
+    enabled_optional_skills = tuple(
+        skill
+        for name, skill in ZAVA_OPTIONAL_SKILLS.items()
+        if isinstance(integration_status, dict)
+        and integration_status.get(name) in ("healthy", "present", "configured")
+    )
+    if not configure_zava_agent_core(
+        job,
+        environment,
+        values,
+        preserve_incident_configuration=preserve_agent_configuration,
+        enabled_optional_skills=enabled_optional_skills,
+    ):
+        job.finish(False, 1)
+        return
+    transient_settings = get_in_memory_secrets("zava-learning", environment)
+    configured, configured_status = configure_zava_optional_integrations(
+        job,
+        environment,
+        values,
+        transient_settings,
+    )
+    if not configured:
+        job.emit(
+            "error",
+            message=(
+                "Requested integration setup failed. One-time settings remain "
+                "in memory for a safe retry and were not persisted by the app."
+            ),
+        )
+        job.finish(False, 1)
+        return
+    if configured_status:
+        state["integration_status"] = {
+            "pagerduty": configured_status.get("pagerduty", "not_configured"),
+            "servicenow": configured_status.get("servicenow", "not_configured"),
+            "github": "not_configured",
+        }
+    state["deployment_active"] = True
+    state["resource_group"] = resource_group
+    state.update(region_values)
+    state["validation_status"] = "reconciled"
+    state.pop("vm_credential_migration_pending", None)
+    save_state(state)
+    clear_in_memory_secrets("zava-learning", environment)
+    job.finish(True, 0)
+
+
 def reconcile_demo(job: Job, restoring: bool = False) -> None:
     state = load_state()
+    lab = selected_lab(state)
+    if lab and lab.id == "zava-learning":
+        reconcile_zava(job, restoring)
+        return
     environment = state.get("environment")
     if not environment:
         job.emit("error", message="Configure an environment before deploying.")
@@ -3216,19 +5894,60 @@ def teardown_worker(job: Job) -> None:
         )
         job.emit("done", success=False, exit_code=None)
         return
+    lab = selected_lab(state)
+    if lab and lab.id == "zava-learning":
+        values = azd_values(str(environment), lab)
+        resource_group = (
+            values.get("AZURE_RESOURCE_GROUP")
+            or str(state.get("resource_group") or "")
+        )
+        success, output = run_capture(
+            [
+                "az", "group", "show",
+                "--name", resource_group,
+                "--query", "tags",
+                "--output", "json",
+            ],
+            timeout=30,
+        )
+        try:
+            tags = json.loads(output) if success else {}
+        except json.JSONDecodeError:
+            tags = {}
+        normalized_tags = {
+            str(key).casefold(): str(value)
+            for key, value in tags.items()
+        } if isinstance(tags, dict) else {}
+        if (
+            normalized_tags.get(LAB_ID_TAG.casefold()) != lab.id
+            or normalized_tags.get(LAB_ENVIRONMENT_TAG.casefold())
+            != str(environment)
+        ):
+            job.emit(
+                "error",
+                message=(
+                    "Zava teardown is blocked because stable application ownership "
+                    "tags could not be verified."
+                ),
+            )
+            job.finish(False, None)
+            return
     job.emit("started", command=["azd", "down"])
+    vendor_dir = vendor_dir_for_lab(lab) if lab else VENDOR_DIR
     success, _ = run_process(
         job,
         [
             "azd", "down", "-e", environment,
             "--purge", "--force", "--no-prompt",
         ],
-        VENDOR_DIR,
+        vendor_dir,
     )
     if success:
         state["deployment_active"] = False
         state.pop("scenario_id", None)
         save_state(state)
+        if lab:
+            clear_in_memory_secrets(lab.id, str(environment))
     job.emit("done", success=success, exit_code=0 if success else 1)
 
 
@@ -3456,8 +6175,268 @@ def break_cart_worker(job: Job) -> None:
     )
 
 
+def zava_scenario_worker(job: Job) -> None:
+    if not ACTIVE_SCENARIO_LOCK.acquire(blocking=False):
+        job.emit("error", message="Another scenario is already running.")
+        job.finish(False, None)
+        return
+    try:
+        _run_zava_scenario(job)
+    finally:
+        ACTIVE_SCENARIO_LOCK.release()
+
+
+def generate_zava_scenario_traffic(
+    scenario: ScenarioDefinition,
+    scenario_url: str,
+) -> tuple[bool, str]:
+    endpoint = f"{scenario_url.rstrip('/')}/{scenario.probe_path.lstrip('/')}"
+    attempts = 30 if scenario.id == "pool" else 12
+    results: list[tuple[bool, float, str]] = []
+    result_lock = threading.Lock()
+
+    def request_once() -> None:
+        started = time.monotonic()
+        available, detail = probe_http_endpoint(scenario_url, scenario.probe_path)
+        with result_lock:
+            results.append((available, time.monotonic() - started, detail))
+
+    if scenario.id == "pool":
+        threads = [threading.Thread(target=request_once) for _ in range(attempts)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    else:
+        for _ in range(attempts):
+            request_once()
+            time.sleep(0.25)
+    failures = sum(not available for available, _elapsed, _detail in results)
+    slow = sum(elapsed >= 0.5 for _available, elapsed, _detail in results)
+    if scenario.id in {"perf", "query"}:
+        return slow >= 3, f"{slow}/{len(results)} requests exceeded 500 ms"
+    required_failures = 3 if scenario.id != "pool" else 2
+    return (
+        failures >= required_failures,
+        f"{failures}/{len(results)} requests returned a failure",
+    )
+
+
+def zava_scenario_signal_query(
+    scenario_id: str,
+    injected_at: datetime,
+) -> str:
+    timestamp = injected_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if scenario_id == "disk":
+        source = (
+            "Syslog "
+            f"| where TimeGenerated >= datetime({timestamp}) "
+            '| where ProcessName == "zava-export" and SyslogMessage has "FAILED"'
+        )
+    elif scenario_id in {"perf", "query"}:
+        source = (
+            "ContainerAppConsoleLogs_CL "
+            f"| where TimeGenerated >= datetime({timestamp}) "
+            f'| where ContainerAppName_s == "quiz-{scenario_id}" '
+            '| extend ms=toint(extract(@"ms=(\\d+)", 1, Log_s)) '
+            "| where ms > 500"
+        )
+    else:
+        source = (
+            "AzureDiagnostics "
+            f"| where TimeGenerated >= datetime({timestamp}) "
+            '| where ResourceType == "APPLICATIONGATEWAYS" '
+            'and Category == "ApplicationGatewayAccessLog" '
+            f'| where listenerName_s == "quiz-{scenario_id}-listener" '
+            "| where toint(httpStatus_d) >= 500"
+        )
+    return source + " | summarize Count=count()"
+
+
+def wait_for_zava_monitor_signal(
+    workspace: str,
+    scenario_id: str,
+    injected_at: datetime,
+    timeout_seconds: int = 600,
+) -> tuple[bool, int]:
+    query = zava_scenario_signal_query(scenario_id, injected_at)
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        success, output = run_capture(
+            [
+                "az", "monitor", "log-analytics", "query",
+                "--workspace", workspace,
+                "--analytics-query", query,
+                "--timespan", "PT15M",
+                "--output", "json",
+            ],
+            timeout=90,
+        )
+        count = 0
+        if success:
+            try:
+                rows = json.loads(output)
+                if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                    count = int(rows[0].get("Count") or 0)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                count = 0
+        if count > 0:
+            return True, count
+        if time.monotonic() >= deadline:
+            return False, 0
+        time.sleep(20)
+
+
+def _run_zava_scenario(job: Job) -> None:
+    state = load_state()
+    lab = selected_lab(state)
+    scenario_id = str(state.get("scenario_id") or "")
+    scenario = next(
+        (
+            item for item in (lab.scenarios if lab else ())
+            if item.id == scenario_id
+        ),
+        None,
+    )
+    runtime_values = azd_values(str(state.get("environment") or ""), lab)
+    resource_group = str(
+        runtime_values.get(
+            "AZURE_RESOURCE_GROUP",
+            "",
+        )
+        or state.get("resource_group")
+        or ""
+    )
+    if lab is None or lab.id != "zava-learning" or scenario is None:
+        job.emit("error", message="The selected Zava scenario is unavailable.")
+        job.finish(False, None)
+        return
+    if not resource_group:
+        job.emit("error", message="The Zava resource group is unavailable.")
+        job.finish(False, None)
+        return
+
+    script = vendor_dir_for_lab(lab) / "chaos" / f"break-{scenario.script_id}.ps1"
+    if not script.is_file():
+        job.emit("error", message=f"Scenario script is missing: {script.name}")
+        job.finish(False, None)
+        return
+
+    command = [
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        str(script),
+        "-ResourceGroup",
+        resource_group,
+    ]
+    job.emit("started", command=command)
+    job.emit("phase", name="preflight", scenario_id=scenario.id)
+    if scenario.web_health:
+        host = runtime_values.get("APPGW_PUBLIC_FQDN", "")
+        scenario_url = (
+            f"http://{host}:{scenario.lane_port}"
+            if host and scenario.lane_port
+            else ""
+        )
+        if not scenario_url:
+            job.emit("error", message="The selected Zava lane endpoint is unavailable.")
+            job.finish(False, 1)
+            return
+        available, detail = probe_http_endpoint(scenario_url, scenario.probe_path)
+        if not available:
+            job.emit(
+                "error",
+                message=(
+                    "The selected Zava lane is not healthy before injection: "
+                    f"{detail}. Restore the baseline first."
+                ),
+            )
+            job.finish(False, 1)
+            return
+    injected_at = datetime.now(timezone.utc)
+    job.emit("phase", name="injecting", scenario_id=scenario.id)
+    job.emit("step", name=f"Injecting {scenario.name}")
+    success, _ = run_process(job, command, vendor_dir_for_lab(lab))
+    if not success:
+        job.emit(
+            "error",
+            message=(
+                f"{scenario.name} was not confirmed live. "
+                "Review the scenario output and restore the baseline before retrying."
+            ),
+        )
+        job.finish(False, 1)
+        return
+    job.emit("phase", name="generating_telemetry", scenario_id=scenario.id)
+    if scenario.web_health:
+        impact, impact_detail = generate_zava_scenario_traffic(
+            scenario,
+            scenario_url,
+        )
+        job.emit("output", line=f"Post-injection impact: {impact_detail}.")
+        if not impact:
+            job.emit(
+                "error",
+                message=(
+                    "The fault script completed, but its expected customer impact "
+                    "was not observed."
+                ),
+            )
+            job.finish(False, 1)
+            return
+    workspace = str(runtime_values.get("LOG_ANALYTICS_WORKSPACE_ID") or "")
+    if not workspace:
+        job.emit(
+            "error",
+            message="The Log Analytics workspace is unavailable for signal validation.",
+        )
+        job.finish(False, 1)
+        return
+    signal_found, signal_count = wait_for_zava_monitor_signal(
+        workspace,
+        scenario.id,
+        injected_at,
+    )
+    if not signal_found:
+        job.emit(
+            "error",
+            message=(
+                "The expected post-injection Azure Monitor signal was not ingested. "
+                "The scenario remains failed rather than reporting a false success."
+            ),
+        )
+        job.finish(False, 1)
+        return
+    job.emit("phase", name="impact_confirmed", scenario_id=scenario.id)
+    job.emit(
+        "step",
+        name=f"Fault impact and Azure Monitor signal confirmed ({signal_count})",
+    )
+    job.emit(
+        "investigation_countdown",
+        scenario_id=scenario.id,
+        seconds=scenario.investigation_delay_seconds,
+        started_at=time.time(),
+    )
+    job.emit(
+        "output",
+        line=(
+            "The fault is live and matching Azure Monitor telemetry was validated. "
+            "Watch Azure Monitor and the SRE Agent portal for autonomous response."
+        ),
+    )
+    job.finish(True, 0)
+
+
 SCENARIO_WORKERS: dict[tuple[str, str], Callable[[Job], None]] = {
     ("grubify-starter-lab", "memory-leak"): break_cart_worker,
+    **{
+        ("zava-learning", scenario.id): zava_scenario_worker
+        for scenario in LABS_BY_ID["zava-learning"].scenarios
+    },
 }
 
 
@@ -3600,12 +6579,13 @@ class AppHandler(SimpleHTTPRequestHandler):
             if not state.get("deployment_active"):
                 self.send_json({"error": "Demo is not deployed"}, HTTPStatus.CONFLICT)
                 return
-            values = azd_values(environment)
             lab = selected_lab(state)
+            values = azd_values(environment, lab)
             resource_group = (
                 values.get("AZURE_RESOURCE_GROUP", "")
                 or str(state.get("resource_group") or "")
             )
+            links = runtime_summary_links(state, values)
             self.send_json({
                 "lab_id": lab.id if lab else "",
                 "lab_name": lab.name if lab else "",
@@ -3629,6 +6609,7 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "agent_endpoint": values.get("SRE_AGENT_ENDPOINT", ""),
                 "api_url": values.get("CONTAINER_APP_URL", ""),
                 "frontend_url": values.get("FRONTEND_APP_URL", ""),
+                "links": links,
             })
             return
         if path.startswith("/api/jobs/") and path.endswith("/events"):
@@ -3957,7 +6938,6 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
 
         environment = str(payload.get("environment", "")).strip()
-        location = str(payload.get("location", "")).strip().lower()
         existing_environment = payload.get("existing_environment") is True
         if not re.fullmatch(r"[a-zA-Z0-9-]{2,30}", environment):
             self.send_json(
@@ -3965,9 +6945,40 @@ class AppHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST,
             )
             return
-        if location not in SRE_AGENT_REGIONS:
-            self.send_json({"error": "Unsupported Azure region."}, HTTPStatus.BAD_REQUEST)
+        if lab.id == "zava-learning" and existing_environment:
+            region_values: dict[str, str] = {}
+            location = ""
+        else:
+            region_values, region_error = validate_lab_regions(lab, payload)
+            if region_error:
+                self.send_json({"error": region_error}, HTTPStatus.BAD_REQUEST)
+                return
+            location = region_values["location"]
+        if payload.get("integrations") and lab.id != "zava-learning":
+            self.send_json(
+                {"error": "Integrations are supported only by new Zava labs."},
+                HTTPStatus.BAD_REQUEST,
+            )
             return
+        if payload.get("integrations") and existing_environment:
+            self.send_json(
+                {
+                    "error": (
+                        "Integration credentials cannot be accepted while selecting "
+                        "an existing lab. Reconnect integrations in the SRE Agent portal."
+                    )
+                },
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+        integration_values: dict[str, str] = {}
+        if lab.id == "zava-learning":
+            integration_values, integration_error = parse_zava_integrations(
+                payload.get("integrations")
+            )
+            if integration_error:
+                self.send_json({"error": integration_error}, HTTPStatus.BAD_REQUEST)
+                return
 
         context = cached_azure_context()
         if context is None or not azure_cli_management_authenticated():
@@ -3982,17 +6993,65 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
         subscription_id = context["subscription"]
+        selected_resource_group = f"rg-zava-learning-{environment}"
+        if lab.id == "zava-learning" and existing_environment:
+            candidate = next(
+                (
+                    item
+                    for item in load_environment_cache(subscription_id, lab.id)
+                    if item.get("environment") == environment
+                ),
+                None,
+            )
+            if candidate is None:
+                self.send_json(
+                    {
+                        "error": (
+                            "The selected existing Zava lab is not in the latest "
+                            "subscription scan."
+                        )
+                    },
+                    HTTPStatus.CONFLICT,
+                )
+                return
+            selected_resource_group = str(candidate.get("resource_group") or "")
+            discovered_regions = {
+                "location": str(candidate.get("location") or "").lower(),
+                "db_location": str(candidate.get("db_location") or "").lower(),
+                "agent_location": str(candidate.get("agent_location") or "").lower(),
+            }
+            invalid_regions = [
+                definition.name
+                for definition in lab.regions
+                if discovered_regions.get(definition.id) not in definition.allowed_values
+            ]
+            if invalid_regions:
+                self.send_json(
+                    {
+                        "error": (
+                            "Cannot safely reconcile this Zava lab because Azure "
+                            "did not return supported immutable regions for: "
+                            + ", ".join(invalid_regions)
+                            + "."
+                        )
+                    },
+                    HTTPStatus.CONFLICT,
+                )
+                return
+            region_values = discovered_regions
+            location = discovered_regions["location"]
 
+        vendor_dir = vendor_dir_for_lab(lab)
         new_command = [
             "azd", "env", "new", environment,
             "--location", location,
             "--subscription", subscription_id,
             "--no-prompt",
         ]
-        created, output = run_capture(new_command, VENDOR_DIR)
+        created, output = run_capture(new_command, vendor_dir)
         if not created:
             selected, select_output = run_capture(
-                ["azd", "env", "select", environment], VENDOR_DIR
+                ["azd", "env", "select", environment], vendor_dir
             )
             if not selected:
                 self.send_json(
@@ -4001,14 +7060,20 @@ class AppHandler(SimpleHTTPRequestHandler):
                 )
                 return
 
-        settings = (
-            ("AZURE_LOCATION", location),
-            ("AZURE_SUBSCRIPTION_ID", subscription_id),
-        )
-        for key, value in settings:
+        settings = {
+            "AZURE_LOCATION": location,
+            "AZURE_SUBSCRIPTION_ID": subscription_id,
+        }
+        if lab.id == "zava-learning":
+            settings.update({
+                "AZURE_DB_LOCATION": region_values["db_location"],
+                "AZURE_AGENT_LOCATION": region_values["agent_location"],
+                "AZURE_RESOURCE_GROUP": selected_resource_group,
+            })
+        for key, value in settings.items():
             saved, save_output = run_capture(
                 ["azd", "env", "set", "-e", environment, key, value],
-                VENDOR_DIR,
+                vendor_dir,
             )
             if not saved:
                 self.send_json(
@@ -4016,6 +7081,11 @@ class AppHandler(SimpleHTTPRequestHandler):
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
                 return
+
+        if lab.id == "zava-learning" and not existing_environment:
+            transient_values = new_zava_deployment_secrets()
+            transient_values.update(integration_values)
+            replace_in_memory_secrets(lab.id, environment, transient_values)
 
         state.update({
             "lab_id": lab.id,
@@ -4026,6 +7096,30 @@ class AppHandler(SimpleHTTPRequestHandler):
             "deployment_active": False,
             "existing_environment": existing_environment,
         })
+        if lab.id == "zava-learning":
+            state["resource_group"] = selected_resource_group
+        for region_id, value in region_values.items():
+            state[region_id] = value
+        if lab.id == "zava-learning":
+            if existing_environment:
+                state["integration_status"] = {
+                    "pagerduty": "unknown",
+                    "servicenow": "unknown",
+                    "github": "unknown",
+                }
+            else:
+                state["integration_status"] = {
+                    "pagerduty": "requested" if (
+                        integration_values.get("pagerduty_api_token")
+                        or integration_values.get("pagerduty_webhook_url")
+                    ) else "not_configured",
+                    "servicenow": "requested" if (
+                        integration_values.get("servicenow_url")
+                        and integration_values.get("servicenow_user")
+                        and integration_values.get("servicenow_password")
+                    ) else "not_configured",
+                    "github": "not_configured",
+                }
         state.pop("scenario_id", None)
         state.pop("validated_at", None)
         state.pop("validation_skipped_at", None)
@@ -4102,7 +7196,11 @@ class AppHandler(SimpleHTTPRequestHandler):
         state, _lab, context, candidate = selection
         environment_name = str(candidate["environment"])
 
-        result = validate_existing_lab(context["subscription"], candidate)
+        result = (
+            validate_existing_lab(context["subscription"], candidate, _lab)
+            if _lab.id == "zava-learning"
+            else validate_existing_lab(context["subscription"], candidate)
+        )
         availability_checks = result.get("availability_checks", [])
         LOGGER.info(
             "Existing lab validation environment=%s ready=%s "
@@ -4119,6 +7217,26 @@ class AppHandler(SimpleHTTPRequestHandler):
         state["validation_status"] = "failed"
         state.pop("validated_at", None)
         state.pop("validation_skipped_at", None)
+        if _lab.id == "zava-learning":
+            discovered_values = result.get("values", {})
+            for state_key, value_key in (
+                ("location", "AZURE_LOCATION"),
+                ("db_location", "AZURE_DB_LOCATION"),
+                ("agent_location", "AZURE_AGENT_LOCATION"),
+            ):
+                if discovered_values.get(value_key):
+                    state[state_key] = discovered_values[value_key]
+            state["integration_status"] = result.get("integration_status", {})
+            if discovered_values:
+                saved, error = set_azd_values(
+                    environment_name,
+                    discovered_values,
+                    _lab,
+                )
+                if not saved:
+                    save_state(state)
+                    self.send_json({"error": error}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
         if not result["ready"]:
             save_state(state)
             self.send_json({
@@ -4126,10 +7244,16 @@ class AppHandler(SimpleHTTPRequestHandler):
                 "environment": environment_name,
                 "issues": result["issues"],
                 "availability_checks": availability_checks,
+                "values": result.get("values", {}),
+                "integration_status": result.get("integration_status", {}),
             })
             return
 
-        saved, error = set_azd_values(environment_name, result["values"])
+        saved, error = (
+            set_azd_values(environment_name, result["values"], _lab)
+            if _lab.id == "zava-learning"
+            else set_azd_values(environment_name, result["values"])
+        )
         if not saved:
             save_state(state)
             self.send_json(
@@ -4138,6 +7262,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
         state["deployment_active"] = True
+        state["resource_group"] = candidate.get("resource_group", "")
         state["validation_issues"] = []
         state["validation_status"] = "validated"
         state["validated_at"] = datetime.now(timezone.utc).isoformat()

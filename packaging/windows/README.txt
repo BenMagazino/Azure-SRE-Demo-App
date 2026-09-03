@@ -9,10 +9,12 @@ Azure SRE Agent Demo
 - An Azure subscription where you can create resources and role assignments
 - Azure CLI 2.88.0 or newer
 - Azure Developer CLI (azd) 1.28.0 or newer
+- PowerShell 7.6.5 or newer for the Zava Learning lab
 
-Python is included in this package. Git is not required. The prerequisite step
-checks the required tools and can install private copies of Azure CLI and azd
-when needed.
+Python is included in this package. Git, Docker, Node.js, and azmcp are not
+required for the core labs. The prerequisite step checks the tools required by
+the selected lab and can install private copies of Azure CLI, azd, and
+PowerShell when needed.
 
 2. Install
 ----------
@@ -83,10 +85,10 @@ with help from its Azure owner.
 
 1. Shut down the application.
 2. Delete the extracted Azure SRE Agent Demo folder.
-3. Delete "%LOCALAPPDATA%\AzureSREAgentDemo" to remove the private Azure CLI
-   and azd installations, cached application state, and logs.
+3. Delete "%LOCALAPPDATA%\AzureSREAgentDemo" to remove private tool
+   installations, writable lab copies, cached application state, and logs.
 
-7. Legal and support notices
+8. Legal and support notices
 ----------------------------
 
 This is an independent personal project. It is not an official Microsoft

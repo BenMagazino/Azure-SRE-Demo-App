@@ -559,6 +559,54 @@ header p,
   justify-self: start;
 }
 
+.region-fields {
+  display: contents;
+}
+
+.integrations-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  background: var(--cp-bg-elevated);
+}
+
+.integrations-heading h4,
+.integrations-heading p {
+  margin: 0;
+}
+
+.integrations-heading p {
+  margin-top: 0.35rem;
+  color: var(--cp-text-muted);
+  line-height: 1.45;
+}
+
+.integration-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.integration-groups fieldset {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+}
+
+.integration-groups legend {
+  padding: 0 0.35rem;
+  color: var(--cp-accent);
+  font-weight: 700;
+}
+
 .new-environment-card #configure-status {
   margin-bottom: 0;
 }
@@ -606,6 +654,26 @@ header p,
   color: var(--cp-accent);
   font-size: 0.85rem;
   font-weight: 700;
+}
+
+#scenario-picker {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+#scenario-picker .picker-card {
+  min-height: 112px;
+  gap: 0.35rem;
+  padding: 0.85rem;
+}
+
+#scenario-picker .picker-title {
+  font-size: 1rem;
+}
+
+#scenario-picker .picker-description {
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 .tool-list {
@@ -1057,6 +1125,10 @@ select {
     width: 100%;
   }
 
+  #scenario-picker {
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  }
+
   .summary-overview {
     grid-template-columns: 1fr;
   }
@@ -1117,6 +1189,12 @@ select {
 
   .install {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 440px) {
+  #scenario-picker {
+    grid-template-columns: 1fr;
   }
 }
 

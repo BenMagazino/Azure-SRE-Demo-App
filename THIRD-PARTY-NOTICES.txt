@@ -76,6 +76,22 @@ https://docs.python.org/release/3.14.7/license.html
 
 No modifications are made to the embedded Python runtime.
 
+3. Microsoft SRE Agent Zava Learning lab assets
+-----------------------------------------------
+
+Project: microsoft/sre-agent
+Source: https://github.com/microsoft/sre-agent/tree/dc19cf0e773238909c61713880ec23c44571ea0b/labs/zava-learning
+License: MIT
+
+The files under vendor/zava-learning are a curated and modified runtime snapshot
+of the Zava Learning lab at commit
+dc19cf0e773238909c61713880ec23c44571ea0b. Generated state, logs, troubleshooting
+workbooks, architecture-deck tooling, local secrets, and Git metadata are not
+redistributed. The portable package redistributes the curated files under
+app/vendor/zava-learning.
+
+The upstream MIT License text is reproduced in section 1 above.
+
 TOOLS DOWNLOADED AT RUNTIME (NOT REDISTRIBUTED)
 ===============================================
 
@@ -97,6 +113,13 @@ Azure Developer CLI (azd) 1.32.0
 Project: https://github.com/Azure/azure-dev
 License: MIT
 License source: https://github.com/Azure/azure-dev/blob/main/LICENSE
+
+PowerShell 7.6.5
+Project: https://github.com/PowerShell/PowerShell
+License: MIT
+License source: https://github.com/PowerShell/PowerShell/blob/v7.6.5/LICENSE.txt
+Distribution:
+https://github.com/PowerShell/PowerShell/releases/tag/v7.6.5
 Distribution documentation:
 https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd
 

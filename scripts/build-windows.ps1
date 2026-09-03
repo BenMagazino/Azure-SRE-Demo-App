@@ -151,6 +151,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "app\main.py") -Destination (Join-Pa
 Copy-Item -LiteralPath (Join-Path $repoRoot "app\static") -Destination $stagingApplication -Recurse
 New-Item -ItemType Directory -Path $stagingVendor | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\starter-lab") -Destination $stagingVendor -Recurse
+Copy-Item -LiteralPath (Join-Path $repoRoot "vendor\zava-learning") -Destination $stagingVendor -Recurse
 Copy-Item -LiteralPath $launcherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $stopLauncherSource -Destination $stagingApplication
 Copy-Item -LiteralPath $splashSource -Destination $stagingApplication
@@ -228,6 +229,9 @@ if (-not (Test-Path (Join-Path $packagedApplication "python\LICENSE.txt"))) {
 }
 if (-not (Test-Path (Join-Path $packagedApplication "vendor\starter-lab"))) {
   throw "The vendored lab could not be copied to the application folder."
+}
+if (-not (Test-Path (Join-Path $packagedApplication "vendor\zava-learning"))) {
+  throw "The vendored Zava Learning lab could not be copied to the application folder."
 }
 if (-not (Test-Path (Join-Path $packageDirectory "LICENSE"))) {
   throw "The project license could not be copied to the portable package root."
