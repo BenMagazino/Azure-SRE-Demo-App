@@ -3568,14 +3568,55 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn(
             'listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", '
-            '"quiz-pool-listener", "quiz-secret-listener")',
+            '"quiz-secret-listener")',
             alerts,
         )
         self.assertIn(
             'listenerName_s == "quiz-appgw-listener"',
             alerts,
         )
-        self.assertEqual(alerts.count("autoMitigate: true"), 4)
+        self.assertIn(
+            'listenerName_s == "quiz-pool-listener"',
+            alerts,
+        )
+        self.assertIn(
+            'ContainerAppName_s in ("quiz-perf", "quiz-query")',
+            alerts,
+        )
+        self.assertNotIn('ContainerAppName_s startswith "quiz-"', alerts)
+        expected_alerts = {
+            "Zava-grade-exports-failing",
+            "Zava-portal-5xx-elevated",
+            "Zava-quiz-api-latency-elevated",
+            "Zava-quiz-errors-elevated",
+            "Zava-quiz-launch-failing",
+        }
+        for alert_name in expected_alerts:
+            with self.subTest(alert_name=alert_name):
+                self.assertIn(f"name: '{alert_name}'", alerts)
+        self.assertIn("var alertEvaluationFrequency = 'PT5M'", alerts)
+        self.assertIn("var delayedTelemetryWindow = 'PT30M'", alerts)
+        self.assertEqual(
+            alerts.count("evaluationFrequency: alertEvaluationFrequency"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("windowSize: delayedTelemetryWindow"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("| where TimeGenerated >= ago(30m)"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("| where ingestion_time() >= ago(10m)"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("scopes: [ logAnalyticsWorkspaceId ]"),
+            len(expected_alerts),
+        )
+        self.assertEqual(alerts.count("autoMitigate: true"), len(expected_alerts))
 
     @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
     @patch("app.main.generate_zava_scenario_traffic", return_value=(True, "impact"))

@@ -17,6 +17,11 @@ param pagerDutyConfigured bool = false
 
 var hasPagerDuty = !empty(pagerDutyWebhookUrl)
 var routePagerDuty = hasPagerDuty || pagerDutyConfigured
+// Resource logs can arrive 3-20 minutes after TimeGenerated. Keep that event-time
+// eligibility, but only evaluate rows ingested in the last 10 minutes so a burst
+// is caught by at least one PT5M evaluation and then ages out for auto-mitigation.
+var alertEvaluationFrequency = 'PT5M'
+var delayedTelemetryWindow = 'PT30M'
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (hasPagerDuty) {
   name: 'ag-zava-pagerduty-${resourceToken}'
@@ -43,13 +48,13 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     description: 'Students are unable to launch quizzes from the portal.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
-    windowSize: 'PT5M'
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
     scopes: [ logAnalyticsWorkspaceId ]
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-pool-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -72,17 +77,46 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     description: 'Elevated rate of failed responses from the student portal.'
     severity: 2
     enabled: true
-    evaluationFrequency: 'PT5M'
-    windowSize: 'PT5M'
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
     scopes: [ logAnalyticsWorkspaceId ]
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
           threshold: 5
+          failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
+        }
+      ]
+    }
+    skipQueryValidation: true
+    autoMitigate: true
+    actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
+  }
+}
+
+resource quizErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
+  name: 'Zava-quiz-errors-elevated'
+  location: location
+  tags: tags
+  properties: {
+    description: 'Quiz launches are intermittently failing for students.'
+    severity: 2
+    enabled: true
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
+    scopes: [ logAnalyticsWorkspaceId ]
+    criteria: {
+      allOf: [
+        {
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-pool-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          metricMeasureColumn: 'AggregatedValue'
+          timeAggregation: 'Total'
+          operator: 'GreaterThan'
+          threshold: 1
           failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
         }
       ]
@@ -101,13 +135,13 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
     description: 'Quiz responses are slower than usual for students.'
     severity: 2
     enabled: true
-    evaluationFrequency: 'PT5M'
-    windowSize: 'PT15M'
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
     scopes: [ logAnalyticsWorkspaceId ]
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where ContainerAppName_s startswith "quiz-"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize AggregatedValue = percentile(ms, 95) by bin(TimeGenerated, 5m)'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s in ("quiz-perf", "quiz-query")\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize AggregatedValue = percentile(ms, 95) by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Average'
           operator: 'GreaterThan'
@@ -130,13 +164,13 @@ resource gradeExportsFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
     description: 'Zava reporting: nightly grade exports are failing to produce export files.'
     severity: 2
     enabled: true
-    evaluationFrequency: 'PT1M'
-    windowSize: 'PT5M'
+    evaluationFrequency: alertEvaluationFrequency
+    windowSize: delayedTelemetryWindow
     scopes: [ logAnalyticsWorkspaceId ]
     criteria: {
       allOf: [
         {
-          query: 'Syslog\n| where ProcessName == "zava-export"\n| where SyslogMessage has "FAILED"\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'Syslog\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ProcessName == "zava-export"\n| where SyslogMessage has "FAILED"\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
