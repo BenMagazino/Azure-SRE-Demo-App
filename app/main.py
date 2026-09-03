@@ -3349,6 +3349,52 @@ def run_process(
     return exit_code == 0, "\n".join(captured)
 
 
+def is_zava_key_vault_rbac_propagation_failure(output: str) -> bool:
+    normalized = output.casefold()
+    return (
+        "unable to get value using managed identity" in normalized
+        and "authentication with azure key vault failed using managed identity" in normalized
+    )
+
+
+def run_zava_infrastructure_provision(
+    job: Job,
+    environment: str,
+    vendor_dir: Path,
+    process_environment: dict[str, str],
+    retry_delays: tuple[float, ...] = (45, 90, 180),
+) -> bool:
+    command = ["azd", "provision", "-e", environment, "--no-prompt"]
+    success, output = run_process(
+        job,
+        command,
+        vendor_dir,
+        environment_overrides=process_environment,
+    )
+    if success or not is_zava_key_vault_rbac_propagation_failure(output):
+        return success
+    for attempt, delay_seconds in enumerate(retry_delays, start=1):
+        job.emit(
+            "step",
+            name=(
+                "Waiting for managed-identity Key Vault access before retrying "
+                f"Zava provisioning ({attempt}/{len(retry_delays)})"
+            ),
+        )
+        time.sleep(delay_seconds)
+        success, output = run_process(
+            job,
+            command,
+            vendor_dir,
+            environment_overrides=process_environment,
+        )
+        if success:
+            return True
+        if not is_zava_key_vault_rbac_propagation_failure(output):
+            return False
+    return False
+
+
 def resolved_process_command(command: list[str]) -> Optional[list[str]]:
     resolved = shutil.which(command[0])
     if resolved is None:
@@ -6504,11 +6550,11 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         job.finish(False, 1)
         return
     job.emit("step", name="Provisioning Zava infrastructure without local Docker")
-    success, _ = run_process(
+    success = run_zava_infrastructure_provision(
         job,
-        ["azd", "provision", "-e", environment, "--no-prompt"],
+        environment,
         vendor_dir,
-        environment_overrides=process_environment,
+        process_environment,
     )
     if not success:
         job.emit("error", message="Zava infrastructure provisioning failed.")

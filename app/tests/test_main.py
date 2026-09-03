@@ -3146,6 +3146,53 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
     def tearDown(self) -> None:
         main_module.clear_in_memory_secrets("zava-learning", "atomic-test")
 
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_process")
+    def test_zava_provision_retries_key_vault_rbac_propagation(
+        self,
+        run_process,
+        sleep,
+    ) -> None:
+        transient = (
+            "Unable to get value using Managed identity /identity for secret pg-password. "
+            "Error: authentication with Azure Key Vault failed using managed identity."
+        )
+        run_process.side_effect = [(False, transient), (True, "")]
+        job = Job()
+
+        success = main_module.run_zava_infrastructure_provision(
+            job,
+            "auto-5",
+            Path("vendor/zava-learning"),
+            {"POSTGRES_ADMIN_PASSWORD": "secret-value"},
+            retry_delays=(0.1,),
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(run_process.call_count, 2)
+        sleep.assert_called_once_with(0.1)
+        self.assertNotIn("secret-value", json.dumps(list(job.events.queue)))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_process")
+    def test_zava_provision_does_not_retry_unrelated_failure(
+        self,
+        run_process,
+        sleep,
+    ) -> None:
+        run_process.return_value = (False, "PostgreSQL quota exceeded")
+
+        success = main_module.run_zava_infrastructure_provision(
+            Job(),
+            "auto-5",
+            Path("vendor/zava-learning"),
+            {},
+        )
+
+        self.assertFalse(success)
+        run_process.assert_called_once()
+        sleep.assert_not_called()
+
     def test_private_bridge_allowlist_is_operational_only(self) -> None:
         self.assertEqual(
             main_module.ZAVA_SECRET_NAMES,
