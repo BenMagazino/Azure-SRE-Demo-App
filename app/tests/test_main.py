@@ -2258,6 +2258,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".prereq-actions button", styles)
         self.assertIn('id="validate-environment"', page)
         self.assertNotIn('id="skip-environment-validation"', page)
+
         self.assertIn('id="test-mode-banner"', page)
         self.assertIn('id="azure-context-loading"', page)
         self.assertIn('class="context-spinner"', page)
@@ -2335,6 +2336,22 @@ class ProcessTests(unittest.TestCase):
             'classList.toggle("workflow-compact", id !== "labs")',
             script,
         )
+
+    def test_optional_integrations_link_to_official_setup_guides(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        for url in (
+            "https://signup.pagerduty.com/",
+            "https://www.pagerduty.com/docs/guides/azure-integration-guide/",
+            "https://support.pagerduty.com/docs/api-access-keys",
+            "https://learn.microsoft.com/azure/sre-agent/set-up-pagerduty-indexing",
+            "https://developer.servicenow.com/",
+            "https://learn.microsoft.com/azure/sre-agent/setup-github-connector",
+            "https://learn.microsoft.com/azure/sre-agent/connect-source-code",
+        ):
+            self.assertIn(url, page)
+        self.assertGreaterEqual(page.count('class="help-tip"'), 7)
+        self.assertIn("FindConnectedGitHubRepo", page)
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

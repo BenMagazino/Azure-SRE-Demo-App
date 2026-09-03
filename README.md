@@ -136,6 +136,19 @@ deployment. Optional credentials are held only while their connector or protecte
 they are never stored in local app state or diagnostics, and the SRE Agent retains the resulting
 connection.
 
+#### Optional integration setup
+
+| Integration | What to prepare | Official setup resources |
+| --- | --- | --- |
+| PagerDuty | A service with a Microsoft Azure integration URL, a **User API key**, the P-prefixed service ID, and the API-key owner's email | [Create an account](https://signup.pagerduty.com/), [Azure integration](https://www.pagerduty.com/docs/guides/azure-integration-guide/), [API keys](https://support.pagerduty.com/docs/api-access-keys), [SRE Agent PagerDuty setup](https://learn.microsoft.com/azure/sre-agent/set-up-pagerduty-indexing) |
+| ServiceNow | An instance URL and API-capable user. For a disposable lab, request a free Personal Developer Instance and use its generated admin credentials. | [Developer portal](https://developer.servicenow.com/), [Request a PDI](https://developer.servicenow.com/print_page.do?category=developer-program&identifier=obtaining-a-pdi&module=guide), [SRE Agent Python tools](https://learn.microsoft.com/azure/sre-agent/python-code-execution#python-tools-vs-mcp-connectors) |
+| GitHub | Repository access through an SRE Agent GitHub OAuth or PAT connector | [GitHub connector setup](https://learn.microsoft.com/azure/sre-agent/setup-github-connector), [Connect source code](https://learn.microsoft.com/azure/sre-agent/connect-source-code) |
+
+The original Zava `configure-agent.mjs` script does not establish GitHub OAuth. It reads
+`GITHUB_REPO`, substitutes that repository into the `pr-delivery` skill, and enables tools such as
+`FindConnectedGitHubRepo` and `GetIaCForGitHub`. A GitHub connector must still be created separately
+under **Builder > Connectors** in the SRE Agent portal before that workflow can access a repository.
+
 ## What the lab deploys
 
 The vendored Scenario 1 infrastructure includes:

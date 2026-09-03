@@ -607,6 +607,55 @@ header p,
   font-weight: 700;
 }
 
+.integration-groups label {
+  gap: 0.35rem;
+}
+
+.field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.help-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1px solid var(--cp-border-strong);
+  border-radius: 50%;
+  color: var(--cp-text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: help;
+}
+
+.help-tip:focus-visible {
+  outline: 3px solid var(--cp-highlight);
+  outline-offset: 2px;
+}
+
+.field-help {
+  color: var(--cp-text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.integration-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.integration-groups fieldset > p {
+  margin: 0;
+}
+
 .new-environment-card #configure-status {
   margin-bottom: 0;
 }

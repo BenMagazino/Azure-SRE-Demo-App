@@ -17,7 +17,7 @@
     <link rel="icon" href="/favicon.svg?v=20260901.2" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/favicon-192.png?v=20260901.2">
     <link rel="manifest" href="/manifest.webmanifest?v=20260901.2">
-    <link rel="stylesheet" href="/styles.css?v=20260902.18">
+    <link rel="stylesheet" href="/styles.css?v=20260902.19">
   </head>
   <body>
     <main class="shell">
@@ -191,48 +191,219 @@
               aria-labelledby="integrations-heading">
               <div class="integrations-heading">
                 <h4 id="integrations-heading">Optional integrations</h4>
-                <p>Connect the new Zava environment to your incident and source-control systems.</p>
+                <p>
+                  Connect the new Zava environment to incident and change-management systems.
+                  Each credential is used once to configure the SRE Agent and is not saved locally.
+                </p>
               </div>
               <div class="integration-groups">
                 <fieldset>
                   <legend>PagerDuty</legend>
+                  <p class="integration-docs">
+                    <a
+                      href="https://signup.pagerduty.com/"
+                      target="_blank"
+                      rel="noreferrer">Create an account</a>
+                    <span aria-hidden="true">·</span>
+                    <a
+                      href="https://learn.microsoft.com/azure/sre-agent/set-up-pagerduty-indexing"
+                      target="_blank"
+                      rel="noreferrer">SRE Agent setup guide</a>
+                  </p>
                   <label>
-                    Webhook URL
-                    <input id="pagerduty-webhook-url" type="url" autocomplete="off">
+                    <span class="field-label">
+                      Webhook URL
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="The Microsoft Azure Integration URL from the PagerDuty service, not the service page URL."
+                        title="The Microsoft Azure Integration URL from the PagerDuty service, not the service page URL.">?</span>
+                    </span>
+                    <input
+                      id="pagerduty-webhook-url"
+                      type="url"
+                      autocomplete="off"
+                      aria-describedby="pagerduty-webhook-help">
+                    <small id="pagerduty-webhook-help" class="field-help">
+                      Add a <strong>Microsoft Azure</strong> integration to the target service and
+                      copy its Integration URL.
+                      <a
+                        href="https://www.pagerduty.com/docs/guides/azure-integration-guide/"
+                        target="_blank"
+                        rel="noreferrer">Azure integration guide</a>
+                    </small>
                   </label>
                   <label>
-                    API token
-                    <input id="pagerduty-api-token" type="password" autocomplete="new-password">
+                    <span class="field-label">
+                      User API key
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="Use a PagerDuty User API key. General API keys cannot acknowledge incidents on behalf of a user."
+                        title="Use a PagerDuty User API key. General API keys cannot acknowledge incidents on behalf of a user.">?</span>
+                    </span>
+                    <input
+                      id="pagerduty-api-token"
+                      type="password"
+                      autocomplete="new-password"
+                      aria-describedby="pagerduty-token-help">
+                    <small id="pagerduty-token-help" class="field-help">
+                      In PagerDuty, open <strong>User Settings &gt; API Access</strong>, create a
+                      User API key, and copy it before closing the dialog.
+                      <a
+                        href="https://support.pagerduty.com/docs/api-access-keys"
+                        target="_blank"
+                        rel="noreferrer">API key guide</a>
+                    </small>
                   </label>
                   <label>
-                    Service ID
-                    <input id="pagerduty-service-id" autocomplete="off">
+                    <span class="field-label">
+                      Service ID
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="The P-prefixed identifier for the PagerDuty service that receives Zava incidents."
+                        title="The P-prefixed identifier for the PagerDuty service that receives Zava incidents.">?</span>
+                    </span>
+                    <input
+                      id="pagerduty-service-id"
+                      autocomplete="off"
+                      placeholder="PXXXXXX"
+                      aria-describedby="pagerduty-service-help">
+                    <small id="pagerduty-service-help" class="field-help">
+                      Open <strong>Services &gt; Service Directory</strong>. The ID follows
+                      <code>/services/</code> in the selected service URL.
+                      <a
+                        href="https://support.pagerduty.com/docs/services-and-integrations"
+                        target="_blank"
+                        rel="noreferrer">Service guide</a>
+                    </small>
                   </label>
                   <label>
-                    OBO email
-                    <input id="pagerduty-obo-email" type="email" autocomplete="off">
+                    <span class="field-label">
+                      On-behalf-of email
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="The PagerDuty user email associated with the User API key. PagerDuty requires it for acknowledge, note, and resolve actions."
+                        title="The PagerDuty user email associated with the User API key. PagerDuty requires it for acknowledge, note, and resolve actions.">?</span>
+                    </span>
+                    <input
+                      id="pagerduty-obo-email"
+                      type="email"
+                      autocomplete="off"
+                      aria-describedby="pagerduty-obo-help">
+                    <small id="pagerduty-obo-help" class="field-help">
+                      Enter the email for the PagerDuty user who created the User API key.
+                    </small>
                   </label>
                 </fieldset>
                 <fieldset>
                   <legend>ServiceNow</legend>
+                  <p class="integration-docs">
+                    <a
+                      href="https://developer.servicenow.com/"
+                      target="_blank"
+                      rel="noreferrer">ServiceNow Developer portal</a>
+                    <span aria-hidden="true">·</span>
+                    <a
+                      href="https://developer.servicenow.com/print_page.do?category=developer-program&amp;identifier=obtaining-a-pdi&amp;module=guide"
+                      target="_blank"
+                      rel="noreferrer">Request a free PDI</a>
+                  </p>
                   <label>
-                    Instance URL
-                    <input id="servicenow-url" type="url" autocomplete="url">
+                    <span class="field-label">
+                      Instance URL
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="The HTTPS URL assigned to your ServiceNow instance or Personal Developer Instance."
+                        title="The HTTPS URL assigned to your ServiceNow instance or Personal Developer Instance.">?</span>
+                    </span>
+                    <input
+                      id="servicenow-url"
+                      type="url"
+                      autocomplete="url"
+                      placeholder="https://dev12345.service-now.com"
+                      aria-describedby="servicenow-url-help">
+                    <small id="servicenow-url-help" class="field-help">
+                      Sign in to the Developer portal, request a Personal Developer Instance, then
+                      copy the assigned instance URL.
+                    </small>
                   </label>
                   <label>
-                    User
-                    <input id="servicenow-user" autocomplete="username">
+                    <span class="field-label">
+                      API user
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="Use the PDI admin account for a disposable developer lab, or a dedicated API user for other instances."
+                        title="Use the PDI admin account for a disposable developer lab, or a dedicated API user for other instances.">?</span>
+                    </span>
+                    <input
+                      id="servicenow-user"
+                      autocomplete="username"
+                      aria-describedby="servicenow-user-help">
+                    <small id="servicenow-user-help" class="field-help">
+                      A new PDI displays its admin username and password after provisioning.
+                      Restricted instances may require the
+                      <code>snc_basic_auth_api_access</code> role.
+                    </small>
                   </label>
                   <label>
-                    Password
-                    <input id="servicenow-password" type="password" autocomplete="new-password">
+                    <span class="field-label">
+                      Password
+                      <span
+                        class="help-tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="The password for the ServiceNow API user. It is used once to configure protected SRE Agent tools and is not stored by this app."
+                        title="The password for the ServiceNow API user. It is used once to configure protected SRE Agent tools and is not stored by this app.">?</span>
+                    </span>
+                    <input
+                      id="servicenow-password"
+                      type="password"
+                      autocomplete="new-password"
+                      aria-describedby="servicenow-password-help">
+                    <small id="servicenow-password-help" class="field-help">
+                      Reset a PDI admin password from the Developer portal if needed.
+                      <a
+                        href="https://learn.microsoft.com/azure/sre-agent/python-code-execution#python-tools-vs-mcp-connectors"
+                        target="_blank"
+                        rel="noreferrer">SRE Agent Python tool guidance</a>
+                    </small>
                   </label>
                 </fieldset>
                 <fieldset>
                   <legend>GitHub</legend>
                   <p>
-                    Connect GitHub with OAuth in the SRE Agent portal after deployment.
-                    The agent securely retains and refreshes that connection.
+                    The upstream Zava script installs the PR-delivery skill and repository
+                    placeholder, but it does <strong>not</strong> create the GitHub connector.
+                    After deployment, open the SRE Agent portal and select
+                    <strong>Builder &gt; Connectors &gt; Add connector &gt; GitHub OAuth
+                    connector</strong>.
+                  </p>
+                  <p class="integration-docs">
+                    <a
+                      href="https://learn.microsoft.com/azure/sre-agent/setup-github-connector"
+                      target="_blank"
+                      rel="noreferrer">GitHub OAuth/PAT setup</a>
+                    <span aria-hidden="true">·</span>
+                    <a
+                      href="https://learn.microsoft.com/azure/sre-agent/connect-source-code"
+                      target="_blank"
+                      rel="noreferrer">Connect source code</a>
+                  </p>
+                  <p class="field-help">
+                    OAuth tokens refresh automatically. The connection is required before
+                    <code>FindConnectedGitHubRepo</code> and the Zava PR-delivery workflow can
+                    access a repository.
                   </p>
                 </fieldset>
               </div>
@@ -300,6 +471,6 @@
         </a>
       </footer>
     </main>
-    <script src="/app.js?v=20260902.26"></script>
+    <script src="/app.js?v=20260902.27"></script>
   </body>
 </html>
