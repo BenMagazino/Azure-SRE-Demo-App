@@ -742,6 +742,10 @@ def zava_agent_name(environment: str) -> str:
     return f"sre-zava-learning-{zava_environment_suffix(environment)}"
 
 
+def normalize_azure_location(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+
+
 def validate_lab_regions(
     lab: LabDefinition,
     payload: dict[str, Any],
@@ -1259,7 +1263,7 @@ def build_existing_environment_catalog(
             tags.get(LAB_ENVIRONMENT_TAG.casefold(), "")
             or resource_group.removeprefix("rg-")
         )
-        location = str(group.get("location") or "").lower()
+        location = normalize_azure_location(group.get("location"))
         allowed_workload_regions = LABS_BY_ID[lab_id].regions[0].allowed_values
         if (
             not re.fullmatch(r"[a-zA-Z0-9-]{2,30}", environment)
@@ -1333,8 +1337,12 @@ def build_existing_environment_catalog(
             postgres = postgres_by_group.get(resource_group_key, {})
             runtime_values.update({
                 "AZURE_LOCATION": location,
-                "AZURE_DB_LOCATION": str(postgres.get("location") or "").lower(),
-                "AZURE_AGENT_LOCATION": str(agent.get("location") or "").lower(),
+                "AZURE_DB_LOCATION": normalize_azure_location(
+                    postgres.get("location")
+                ),
+                "AZURE_AGENT_LOCATION": normalize_azure_location(
+                    agent.get("location")
+                ),
                 "APPGW_PUBLIC_FQDN": app_gateway_host,
                 "ZAVA_PORTAL_URL": (
                     f"http://{app_gateway_host}" if app_gateway_host else ""
@@ -1352,13 +1360,14 @@ def build_existing_environment_catalog(
             "resource_group": resource_group,
             "location": location,
             "db_location": (
-                str(postgres_by_group.get(resource_group_key, {}).get("location") or "")
-                .lower()
+                normalize_azure_location(
+                    postgres_by_group.get(resource_group_key, {}).get("location")
+                )
                 if lab_id == "zava-learning"
                 else ""
             ),
             "agent_location": (
-                str(agent.get("location") or "").lower()
+                normalize_azure_location(agent.get("location"))
                 if lab_id == "zava-learning"
                 else ""
             ),
@@ -1910,7 +1919,7 @@ def validate_grubify_existing_lab(
         "microsoft.operationalinsights/workspaces"
     ][0]
     registry_name = str(registry.get("name") or "")
-    location = str(environment.get("location") or "").lower()
+    location = normalize_azure_location(environment.get("location"))
     return {
         "ready": True,
         "issues": [],
@@ -2494,10 +2503,10 @@ def validate_zava_existing_lab(
     location = str(environment.get("location") or "").lower()
     values = {
         "AZURE_LOCATION": location,
-        "AZURE_DB_LOCATION": str(
+        "AZURE_DB_LOCATION": normalize_azure_location(
             postgres_servers[0].get("location") if postgres_servers else ""
-        ).lower(),
-        "AZURE_AGENT_LOCATION": str(agent.get("location") or "").lower(),
+        ),
+        "AZURE_AGENT_LOCATION": normalize_azure_location(agent.get("location")),
         "AZURE_SUBSCRIPTION_ID": subscription_id,
         "AZURE_RESOURCE_GROUP": resource_group,
         "AZURE_CONTAINER_REGISTRY_NAME": str(registry.get("name") or ""),
@@ -5719,13 +5728,15 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
     vendor_dir = vendor_dir_for_lab(lab)
     values = azd_values(environment, lab)
     region_values = {
-        "location": str(values.get("AZURE_LOCATION") or state.get("location") or "").lower(),
-        "db_location": str(
+        "location": normalize_azure_location(
+            values.get("AZURE_LOCATION") or state.get("location")
+        ),
+        "db_location": normalize_azure_location(
             values.get("AZURE_DB_LOCATION") or state.get("db_location") or ""
-        ).lower(),
-        "agent_location": str(
+        ),
+        "agent_location": normalize_azure_location(
             values.get("AZURE_AGENT_LOCATION") or state.get("agent_location") or ""
-        ).lower(),
+        ),
     }
     invalid_regions = [
         definition.name
@@ -7150,9 +7161,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                 return
             selected_resource_group = str(candidate.get("resource_group") or "")
             discovered_regions = {
-                "location": str(candidate.get("location") or "").lower(),
-                "db_location": str(candidate.get("db_location") or "").lower(),
-                "agent_location": str(candidate.get("agent_location") or "").lower(),
+                "location": normalize_azure_location(candidate.get("location")),
+                "db_location": normalize_azure_location(
+                    candidate.get("db_location")
+                ),
+                "agent_location": normalize_azure_location(
+                    candidate.get("agent_location")
+                ),
             }
             invalid_regions = [
                 definition.name

@@ -3307,6 +3307,14 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.zava_resource_group_name("demo"),
             "rg-zava-learning-demo",
         )
+        self.assertEqual(
+            main_module.normalize_azure_location("West US 3"),
+            "westus3",
+        )
+        self.assertEqual(
+            main_module.normalize_azure_location("South Central US"),
+            "southcentralus",
+        )
 
     @patch("app.main.run_capture")
     def test_discovers_single_existing_zava_agent_name(self, run_capture) -> None:
