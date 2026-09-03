@@ -226,13 +226,26 @@ function Invoke-VmPrivateCommand {
     [Parameter(Mandatory)][string]$Operation
   )
   $vm = Get-ReportingVmName -ResourceGroup $ResourceGroup
+  Ensure-ReportingVmRunning -ResourceGroup $ResourceGroup -VmName $vm | Out-Null
   $scriptFile = New-TemporaryFile
   try {
     Set-Content -Path $scriptFile -Value $Script -Encoding utf8NoBOM -NoNewline
     $scriptArgument = "@$($scriptFile.FullName)"
-    $message = az vm run-command invoke -g $ResourceGroup -n $vm --command-id RunShellScript `
-      --scripts $scriptArgument --query "value[0].message" -o tsv --only-show-errors 2>&1
-    $code = $LASTEXITCODE
+    $message = ""
+    $code = 1
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+      $message = az vm run-command invoke -g $ResourceGroup -n $vm --command-id RunShellScript `
+        --scripts $scriptArgument --query "value[0].message" -o tsv --only-show-errors 2>&1
+      $code = $LASTEXITCODE
+      $text = ($message | Out-String)
+      if ($code -eq 0 -and $text -match 'ZAVA_COMMAND_SUCCEEDED') {
+        break
+      }
+      if ($attempt -lt 6) {
+        Write-Host "  Reporting VM command is not ready yet; retrying ($attempt/6)..." -ForegroundColor DarkYellow
+        Start-Sleep -Seconds (10 * $attempt)
+      }
+    }
   } finally {
     Remove-Item -LiteralPath $scriptFile -Force -ErrorAction SilentlyContinue
   }
@@ -314,6 +327,32 @@ function Get-ReportingVmName {
   $vm = az vm list -g $ResourceGroup --query "[?starts_with(name,'vm-zava-reporting-')].name | [0]" -o tsv
   if (-not $vm) { throw "Could not locate the reporting-worker VM (vm-zava-reporting-*) in $ResourceGroup." }
   return $vm
+}
+
+function Ensure-ReportingVmRunning {
+  param(
+    [Parameter(Mandatory)][string]$ResourceGroup,
+    [string]$VmName
+  )
+  if (-not $VmName) {
+    $VmName = Get-ReportingVmName -ResourceGroup $ResourceGroup
+  }
+  $power = az vm show -d -g $ResourceGroup -n $VmName --query powerState -o tsv 2>$null
+  if ($power -ne "VM running") {
+    Write-Host "  Starting reporting VM $VmName for private lab operations..." -ForegroundColor Yellow
+    az vm start -g $ResourceGroup -n $VmName -o none --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+      throw "Could not start reporting VM $VmName."
+    }
+  }
+  for ($attempt = 1; $attempt -le 40; $attempt++) {
+    $power = az vm show -d -g $ResourceGroup -n $VmName --query powerState -o tsv 2>$null
+    if ($power -eq "VM running") {
+      return $VmName
+    }
+    Start-Sleep -Seconds 15
+  }
+  throw "Reporting VM $VmName did not reach VM running state."
 }
 
 function Invoke-PgSql {

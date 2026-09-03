@@ -3512,6 +3512,17 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("Zava PostgreSQL Start Operator", main_bicep)
         self.assertIn("postgresStartAgent", agent_bicep)
         self.assertIn("postgresServerId=$postgresId", deploy_script)
+        common_script = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "chaos"
+            / "_common.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("function Ensure-ReportingVmRunning", common_script)
+        self.assertIn(
+            "Ensure-ReportingVmRunning -ResourceGroup $ResourceGroup -VmName $vm",
+            common_script,
+        )
+        self.assertIn("for ($attempt = 1; $attempt -le 6; $attempt++)", common_script)
 
     def test_zava_names_do_not_repeat_the_lab_prefix(self) -> None:
         self.assertEqual(
