@@ -5658,21 +5658,29 @@ def hydrate_zava_runtime_outputs(
         or str(state.get("resource_group") or "")
         or zava_resource_group_name(environment)
     )
-    agent_query = (
-        f"[?name=='{expected_agent_name}'] | [0]."
-        "{name:name,endpoint:properties.agentEndpoint,location:location}"
-        if expected_agent_name
-        else "[0].{name:name,endpoint:properties.agentEndpoint,location:location}"
-    )
     agent: dict[str, Any] = {}
     for attempt in range(1, attempts + 1):
-        success, output = run_capture([
-            "az", "resource", "list",
-            "--resource-group", resource_group,
-            "--resource-type", "Microsoft.App/agents",
-            "--query", agent_query,
-            "--output", "json",
-        ], timeout=60)
+        if expected_agent_name:
+            command = [
+                "az", "resource", "show",
+                "--resource-group", resource_group,
+                "--name", expected_agent_name,
+                "--resource-type", "Microsoft.App/agents",
+                "--api-version", "2025-05-01-preview",
+                "--query",
+                "{name:name,endpoint:properties.agentEndpoint,location:location}",
+                "--output", "json",
+            ]
+        else:
+            command = [
+                "az", "resource", "list",
+                "--resource-group", resource_group,
+                "--resource-type", "Microsoft.App/agents",
+                "--query",
+                "[0].{name:name,endpoint:properties.agentEndpoint,location:location}",
+                "--output", "json",
+            ]
+        success, output = run_capture(command, timeout=60)
         try:
             candidate = json.loads(output) if success else {}
         except json.JSONDecodeError:

@@ -1291,7 +1291,7 @@ async function startDeploy() {
     await loadSummary();
     showPanel("summary");
   } else {
-    step.textContent = "Deployment failed. Review the log above and retry.";
+    step.textContent = "Deployment failed. Review the log below and retry.";
   }
 }
 

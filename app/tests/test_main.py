@@ -2413,6 +2413,7 @@ class ProcessTests(unittest.TestCase):
             "resource_group: selectedExistingEnvironment?.resource_group",
             script,
         )
+        self.assertIn("Review the log below and retry.", script)
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -3380,6 +3381,9 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
 
         self.assertEqual(values["SRE_AGENT_ENDPOINT"], "https://agent.example.test")
         sleep.assert_called_once_with(0.01)
+        first_command = run_capture.call_args_list[0].args[0]
+        self.assertEqual(first_command[:3], ["az", "resource", "show"])
+        self.assertIn("2025-05-01-preview", first_command)
         self.assertIn(
             "Waiting for the Zava SRE Agent endpoint",
             [event.get("name") for event in job.events.queue],
