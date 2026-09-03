@@ -36,10 +36,13 @@ application_gateway_troubleshoot, load_balancer_troubleshoot, network_topology_m
 on any hop. Filter App Insights/LAW queries by the relevant `cloud_RoleName`.
 
 ## Permitted autonomous actions
-- **Neutralize a blocking NSG rule with a non-destructive update**, not a delete: run
-  `az network nsg rule update ... --access Allow` (or raise the DENY rule's `--priority` above the
-  ALLOW). The write tool restricts `delete`/`remove`, and an `update` achieves the same effect — so
-  never reach for `az network nsg rule delete`.
+- **The `legacy-cross-subnet-deny` fault has one deterministic live mitigation.** After confirming
+  that exact inbound rule is `Deny` on the affected `nsg-nsglane-*` NSG, run this non-destructive
+  access update:
+  `az network nsg rule update --subscription <subscription-id> --resource-group @@RG@@ --nsg-name <nsg-nsglane-name> --name legacy-cross-subnet-deny --access Allow`.
+  Preserve every other field. **NEVER use a priority-only update for this fault** (including changing
+  priority 100 to 4096), and never claim that reprioritizing the deny mitigated it. Do not delete the
+  rule; the durable IaC change removes the injected rule after live recovery.
 - Correct an Application Gateway probe path / HTTP settings back to a healthy configuration.
 - Restart a Container Apps revision.
 
@@ -68,5 +71,25 @@ skill.
 - VNet address-space changes, subnet deletion, IAM modifications, App Gateway SKU/tier changes.
 
 ## Verification
-Re-check the hop you changed, confirm the public endpoint returns 200 on `/` and `/api/quiz/*`, and
-confirm the alert auto-mitigated.
+For `legacy-cross-subnet-deny`, use this bounded sequence:
+1. Immediately read the same rule back and require `access: Allow`. If readback does not show
+   `Allow`, retry the identical `--access Allow` update once. If the second readback still fails,
+   stop all writes and escalate with the rule state and tool error.
+2. Run at most **three recovery rounds**, one Application Gateway probe interval apart (about
+   30 seconds). Each round must check both the `quiz-nsg` backend in
+   `az network application-gateway show-backend-health` and the public quiz endpoint on port 8081
+   (`/quiz/BIO-101`). Recovery requires backend health `Healthy` **and** HTTP 200 from that endpoint.
+3. If both signals are not healthy after round three, do not run `show-backend-health` again, do not
+   alter priority, and do not make speculative writes. Capture the final backend-health detail, the
+   rule readback, and the `quiz-nsg` revision/replica state once, then escalate to the operator with
+   those facts. Keep the incident acknowledged; do not mark it mitigated or proceed to closure.
+
+The incident note, RCA, evidence, and report must record the effective live change exactly as
+observed: `legacy-cross-subnet-deny access: Deny -> Allow`, followed by the backend-health and
+endpoint evidence captured after that update. Never state or imply that a priority-only change
+restored service. If recovery cannot be verified, report the access update as attempted/applied and
+the incident as escalated and still impacted; do not manufacture a recovery claim.
+
+For other connectivity faults, re-check the hop changed, require the affected public endpoint to
+return 200, and confirm the alert auto-mitigated. Repeated health polling without a fixed attempt
+budget is forbidden.

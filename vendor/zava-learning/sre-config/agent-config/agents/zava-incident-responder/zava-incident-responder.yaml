@@ -41,8 +41,16 @@ spec:
                        grade exports).
                        Confirm the OTHER layer is healthy before attributing the cause.
       2. MITIGATE    — Apply the smallest live fix within the permitted-action boundary
-                       (e.g. remove a bad NSG rule, repoint a probe, scale up, roll back a
+                       (e.g. update a bad NSG rule's access, repoint a probe, scale up, roll back a
                        revision), then VERIFY the symptom clears (e.g. the endpoint returns 200).
+                       For a diagnosed `legacy-cross-subnet-deny`, the ONLY accepted live fix is
+                       `az network nsg rule update ... --access Allow`; priority-only mitigation is
+                       forbidden. Require both healthy `quiz-nsg` Application Gateway backend state
+                       and HTTP 200 on port 8081. Check at most three times, one probe interval apart;
+                       if either signal stays unhealthy, capture final rule/backend/replica evidence
+                       and escalate instead of polling or writing again.
+                       Every note, RCA, and report must state the effective change actually read back:
+                       `access: Deny -> Allow`. Never claim a priority-only change restored service.
                        IMMEDIATELY mark the incident MITIGATED on PagerDuty: reload the
                        pagerduty-incident-update skill and post a plain-text "Status: Mitigated" note
                        recording the live fix. The incident stays ACKNOWLEDGED (now mitigated) — do
@@ -98,7 +106,17 @@ spec:
   criticPromptPath: ''
   criticOnHandoff: true
   customReflectionNote: |-
-    Do not conclude the incident unless ALL of the following exist: (1) a root-cause analysis
+    UNRECOVERED ESCALATION OVERRIDE: If the bounded mitigation verification in the active incident
+    skill is exhausted without recovery, stop further health polls and writes. Capture the final
+    rule/configuration, backend-health, endpoint, and replica evidence; post one escalation summary;
+    leave the incident acknowledged and unresolved; and end the autonomous attempt. This is an
+    accepted terminal outcome and MUST NOT be rejected merely because the closure artifacts below
+    do not exist. Never fabricate recovery to satisfy this gate.
+    NSG CAUSALITY SELF-AUDIT: For `legacy-cross-subnet-deny`, recovery is valid only after a real
+    `--access Allow` update is read back and both the `quiz-nsg` backend and port 8081 endpoint recover.
+    Every note, RCA, evidence table, and report must state the observed effective change as
+    `access: Deny -> Allow`. A priority-only change is never accepted or described as causal recovery.
+    For a recovered incident, do not conclude unless ALL of the following exist: (1) a root-cause analysis
     narrative that includes an explicit, rendered 5-Whys ladder (symptom → … → latent cause), not a
     one-line trigger/latent summary. The rendered HTML report's Root Cause section MUST contain a
     "5 Whys" heading followed by five numbered rungs beginning "Why 1:" through "Why 5:" (Why 5 =
@@ -120,7 +138,8 @@ spec:
     Narration claiming the
     incident was acknowledged or resolved does NOT satisfy this gate without the corresponding tool
     result; if the tool did not execute, the incident is incomplete.
-    If any is missing, continue the runbook instead of finishing.
+    If any is missing, continue the runbook instead of finishing, unless the unrecovered escalation
+    override above applies.
     FILE-CREATION SELF-AUDIT (the most common defect — verify the file truly persisted): the HTML
     report counts ONLY if the file was written into THIS thread's `tmp/ThreadFiles/<threadId>/`
     directory and is CONFIRMED ON DISK (non-zero bytes) before its link is shared — create the

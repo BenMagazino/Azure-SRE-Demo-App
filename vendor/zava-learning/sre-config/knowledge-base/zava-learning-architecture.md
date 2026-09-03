@@ -113,14 +113,18 @@ There are several independent surfaces; any one can produce the **same** student
 ## Identities and permitted actions
 
 The agent's managed identities have **Reader + Monitoring Reader + Contributor** on the lab resource
-group — enough to read telemetry/config and to remediate (delete an NSG rule, correct an App Gateway
-probe, restart/scale a Container App). The agent does **not** have `roleAssignments/write`; never
-attempt `az role assignment create`.
+group — enough to read telemetry/config and to remediate (update a blocking NSG rule's access,
+correct an App Gateway probe, restart/scale a Container App). For the controlled
+`legacy-cross-subnet-deny` fault, live recovery means changing that exact rule from `Deny` to
+`Allow`; changing only its priority is not a valid mitigation. The agent does **not** have
+`roleAssignments/write`; never attempt `az role assignment create`.
 
 ## Incident lifecycle in this lab
 
 - Alerts are **symptom-only** (e.g. `Zava-quiz-launch-failing`, `Zava-portal-5xx-elevated`). They never
   name NSG/LB/AppGW/app — that's the diagnosis.
+- Response-plan merging is disabled so each scenario alert creates its own independently verifiable
+  incident thread, even when all eight demos run sequentially within a few hours.
 - Incidents are managed in **PagerDuty**: Azure Monitor raises the PagerDuty incident; the agent
   acknowledges, annotates with the RCA, and resolves it on recovery.
 - For Infrastructure-as-Code or application root causes, the agent opens a **GitHub pull request** with
@@ -128,5 +132,8 @@ attempt `az role assignment create`.
 
 ## Verification after remediation
 
-Re-check the surface you changed, confirm the public endpoint returns 200 on `/` and `/api/quiz/*`,
-and confirm the alert/incident auto-mitigated.
+Re-check the surface changed, confirm the affected Application Gateway backend is `Healthy`, confirm
+the public endpoint returns HTTP 200, and confirm the alert/incident auto-mitigated. For the isolated
+NSG lane, verify both `quiz-nsg` backend health and port 8081 `/quiz/BIO-101` for no more than three
+probe intervals. If either remains unhealthy, capture the final NSG rule, backend-health detail, and
+revision state once and escalate instead of repeating health checks.

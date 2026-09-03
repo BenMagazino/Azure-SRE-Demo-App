@@ -3378,6 +3378,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         http_json,
     ) -> None:
         payload = main_module.zava_response_plan_payload()
+        self.assertIs(payload["mergeEnabled"], False)
         upsert.return_value = (200, json.dumps(payload))
         http_json.return_value = (200, json.dumps(payload))
 
@@ -3404,6 +3405,15 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn("readback returned HTTP 404", error)
 
+        merged_payload = {**payload, "mergeEnabled": True}
+        http_json.return_value = (200, json.dumps(merged_payload))
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+        )
+        self.assertFalse(ready)
+        self.assertIn("did not match", error)
+
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
@@ -3420,6 +3430,74 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             set(connector_payloads),
             set(main_module.ZAVA_CORE_CONNECTORS),
         )
+
+    def test_connectivity_runbook_requires_bounded_nsg_access_recovery(self) -> None:
+        config_root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills" / "connectivity-triage"
+            / "SKILL.md",
+            "connectivity-triage",
+        )
+        content = skill["skillContent"]
+        self.assertIn(
+            "az network nsg rule update --subscription <subscription-id> "
+            "--resource-group @@RG@@ --nsg-name <nsg-nsglane-name> "
+            "--name legacy-cross-subnet-deny --access Allow",
+            content,
+        )
+        self.assertIn("NEVER use a priority-only update for this fault", content)
+        self.assertIn("at most **three recovery rounds**", content)
+        self.assertIn("do not run `show-backend-health` again", content)
+        self.assertIn("public quiz endpoint on port 8081", content)
+        self.assertIn("backend health `Healthy` **and** HTTP 200", content)
+        self.assertIn("Keep the incident acknowledged", content)
+        self.assertIn("access: Deny -> Allow", content)
+        self.assertIn("Never state or imply that a priority-only change", content)
+        self.assertIn("restored service", content)
+
+        responder_manifest = (
+            config_root / "agent-config" / "agents" / "zava-incident-responder"
+            / "zava-incident-responder.yaml"
+        )
+        responder_source = responder_manifest.read_text(encoding="utf-8")
+        self.assertIn(
+            "`az network nsg rule update ... --access Allow`", responder_source
+        )
+        self.assertIn("priority-only mitigation is", responder_source)
+        self.assertIn("Check at most three times", responder_source)
+        self.assertIn("UNRECOVERED ESCALATION OVERRIDE", responder_source)
+        self.assertIn("NSG CAUSALITY SELF-AUDIT", responder_source)
+        self.assertIn("access: Deny -> Allow", responder_source)
+        responder = main_module.parse_zava_agent_manifest(
+            responder_manifest,
+            "zava-incident-responder",
+            {"RG": "rg-zava-learning-auto-4"},
+        )
+        instructions = responder["instructions"]
+        self.assertIn("update that rule with --access Allow", instructions)
+        self.assertIn("priority-only change is forbidden", instructions)
+        self.assertIn("must never be credited with recovery", instructions)
+        self.assertIn("access: Deny -> Allow", instructions)
+        self.assertIn("HTTP 200 on port 8081", instructions)
+        self.assertIn("at most three probe-interval checks", instructions)
+        self.assertIn("escalate instead of polling or writing again", instructions)
+        self.assertIn("accepted terminal outcome", instructions)
+
+        incident_filter = json.loads(
+            (config_root / "agent-config" / "incident-filter.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIs(incident_filter["filter"]["mergeEnabled"], False)
+        configure_agent = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "scripts"
+            / "configure-agent.mjs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("mergeEnabled: false", configure_agent)
 
     def test_parses_all_weekly_scheduled_task_manifests(self) -> None:
         root = (

@@ -575,6 +575,7 @@ const filterSpec = {
   handlingAgent: "zava-incident-responder",
   isEnabled: true,
   maxAutomatedInvestigationAttempts: 3,
+  mergeEnabled: false,
 };
 process.stdout.write("-> incident filter zava-learning-response (ARM) ... ");
 const fRes = await arm("PUT", `${AGENT_URL}/incidentFilters/zava-learning-response`, {

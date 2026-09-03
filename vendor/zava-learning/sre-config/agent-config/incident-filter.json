@@ -18,7 +18,7 @@
     "owningTeamIds": [],
     "maxAutomatedInvestigationAttempts": 3,
     "deepInvestigationEnabled": false,
-    "mergeEnabled": true,
+    "mergeEnabled": false,
     "mergeWindowHours": 3,
     "isEnabled": true,
     "icmFilterSettings": null,

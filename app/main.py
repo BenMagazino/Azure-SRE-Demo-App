@@ -2644,6 +2644,7 @@ def validate_zava_existing_lab(
                     or filter_payload.get("handlingAgent")
                     != "zava-incident-responder"
                     or filter_payload.get("agentMode") != "autonomous"
+                    or filter_payload.get("mergeEnabled") is not False
                     or filter_payload.get("isEnabled", True) is not True
                 ):
                     issues.append(
@@ -4862,7 +4863,15 @@ def parse_zava_agent_manifest(
             "Application Insights, Log Analytics, and live Azure configuration. "
             "Apply the smallest safe recovery, verify the affected public lane is "
             "healthy, produce evidence-backed root cause and recommendations, and "
-            "never read, display, or log secrets."
+            "never read, display, or log secrets. If legacy-cross-subnet-deny is the "
+            "diagnosed cause, update that rule with --access Allow; a priority-only "
+            "change is forbidden and must never be credited with recovery. Record the "
+            "read-back effective change as access: Deny -> Allow. Require both healthy "
+            "quiz-nsg backend state and "
+            "HTTP 200 on port 8081 within at most three probe-interval checks, then "
+            "capture final rule/backend/replica evidence and escalate instead of "
+            "polling or writing again. An unrecovered escalation stays acknowledged "
+            "and unresolved and is an accepted terminal outcome. "
             + optional_text
         )
         properties["mcpTools"] = (
@@ -4894,7 +4903,7 @@ def zava_response_plan_payload() -> dict[str, Any]:
         "handlingAgent": "zava-incident-responder",
         "agentMode": "autonomous",
         "maxAutomatedInvestigationAttempts": 3,
-        "mergeEnabled": True,
+        "mergeEnabled": False,
         "mergeWindowHours": 3,
         "isEnabled": True,
     }
@@ -4907,6 +4916,7 @@ def zava_response_plan_is_valid(payload: Any) -> bool:
         and payload.get("titleContains") == "Zava"
         and payload.get("handlingAgent") == "zava-incident-responder"
         and payload.get("agentMode") == "autonomous"
+        and payload.get("mergeEnabled") is False
         and payload.get("isEnabled", True) is True
     )
 
