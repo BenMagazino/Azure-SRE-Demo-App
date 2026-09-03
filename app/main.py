@@ -2016,7 +2016,7 @@ def validate_zava_existing_lab(
             "az", "vm", "list", "--show-details",
             "--subscription", subscription_id,
             "--resource-group", resource_group,
-            "--query", "[].{name:name,powerState:powerState,"
+            "--query", "[].{id:id,name:name,powerState:powerState,"
             "provisioningState:provisioningState}",
             "--output", "json",
         ],
@@ -2106,10 +2106,6 @@ def validate_zava_existing_lab(
             "VM data collection rule",
             1,
         ),
-        "microsoft.insights/datacollectionruleassociations": (
-            "VM data collection association",
-            1,
-        ),
         "microsoft.insights/scheduledqueryrules": ("Zava symptom alerts", 4),
     }
     issues = []
@@ -2134,10 +2130,24 @@ def validate_zava_existing_lab(
             issues.append(
                 f"{resource.get('name') or 'A resource'} is {provisioning_state}."
             )
-    if len(role_assignments) < 8:
+    required_roles = {
+        "Reader",
+        "Monitoring Reader",
+        "Network Contributor",
+        "Container Apps Contributor",
+        "Virtual Machine Contributor",
+        "Managed Identity Operator",
+    }
+    assigned_roles = {
+        str(assignment.get("role") or "")
+        for assignment in role_assignments
+    }
+    missing_roles = sorted(required_roles - assigned_roles)
+    if missing_roles:
         issues.append(
-            "Zava managed-identity RBAC is incomplete "
-            f"(expected at least 8 assignments, found {len(role_assignments)})."
+            "Zava managed-identity RBAC is missing: "
+            + ", ".join(missing_roles)
+            + "."
         )
 
     apps_by_name = {
@@ -2206,6 +2216,21 @@ def validate_zava_existing_lab(
         )
     elif str(virtual_machines[0].get("powerState") or "").casefold() != "vm running":
         issues.append("The Zava reporting VM is not running.")
+    elif virtual_machines[0].get("id"):
+        success, output = run_capture(
+            [
+                "az", "rest", "--method", "GET",
+                "--url",
+                "https://management.azure.com"
+                f"{virtual_machines[0]['id']}/providers/Microsoft.Insights/"
+                "dataCollectionRuleAssociations?api-version=2022-06-01",
+                "--query", "length(value)",
+                "--output", "tsv",
+            ],
+            timeout=60,
+        )
+        if not success or not output.strip().isdigit() or int(output) < 1:
+            issues.append("The reporting VM data collection association is missing.")
     if len(postgres_servers) != 1:
         issues.append(
             f"Zava requires one PostgreSQL server; found {len(postgres_servers)}."
@@ -2335,10 +2360,12 @@ def validate_zava_existing_lab(
         if not success or not token:
             issues.append("Unable to authenticate to the Azure SRE Agent service.")
         else:
+            missing_configuration: dict[str, list[str]] = {}
             for kind, names in (
                 ("agents", ZAVA_CORE_AGENTS),
                 ("skills", ZAVA_CORE_SKILLS),
             ):
+                missing_names = []
                 for name in names:
                     status, _ = http_json(
                         "GET",
@@ -2346,9 +2373,14 @@ def validate_zava_existing_lab(
                         token,
                     )
                     if status != HTTPStatus.OK:
-                        issues.append(
-                            f"Required Zava {kind[:-1]} {name} is not configured."
-                        )
+                        missing_names.append(name)
+                if missing_names:
+                    missing_configuration[kind] = missing_names
+            for kind, missing_names in missing_configuration.items():
+                issues.append(
+                    f"Zava agent configuration is missing {len(missing_names)} "
+                    f"required {kind}: {', '.join(missing_names)}."
+                )
             if str(agent_details.get("incidentType") or "").casefold() == "pagerduty":
                 action_groups = resources_by_type.get(
                     "microsoft.insights/actiongroups",
@@ -2418,31 +2450,30 @@ def validate_zava_existing_lab(
                 integration_status["servicenow"] = "present"
             elif any(servicenow_presence):
                 integration_status["servicenow"] = "reconnect_required"
-                issues.append(
-                    "ServiceNow protected tools are incomplete; reconnect it in "
-                    "the SRE Agent portal."
-                )
-            status, response = http_json(
-                "POST",
-                f"{endpoint}/api/v2/extendedAgent/connectors/github/testconnection",
+            github_status, _ = http_json(
+                "GET",
+                f"{endpoint}/api/v2/extendedAgent/connectors/github",
                 token,
-                {},
             )
-            try:
-                github_connection = json.loads(response)
-            except json.JSONDecodeError:
-                github_connection = {}
-            if (
-                status in (200, 201, 202, 204)
-                and github_connection.get("success") is True
-            ):
-                integration_status["github"] = "healthy"
-            elif status not in (0, HTTPStatus.NOT_FOUND):
-                integration_status["github"] = "reconnect_required"
-                issues.append(
-                    "GitHub is configured but unhealthy; reconnect it in the "
-                    "SRE Agent portal."
+            if github_status == HTTPStatus.OK:
+                status, response = http_json(
+                    "POST",
+                    f"{endpoint}/api/v2/extendedAgent/connectors/"
+                    "github/testconnection",
+                    token,
+                    {},
                 )
+                try:
+                    github_connection = json.loads(response)
+                except json.JSONDecodeError:
+                    github_connection = {}
+                if (
+                    status in (200, 201, 202, 204)
+                    and github_connection.get("success") is True
+                ):
+                    integration_status["github"] = "healthy"
+                else:
+                    integration_status["github"] = "reconnect_required"
             status, response = http_json(
                 "GET",
                 f"{endpoint}/api/v1/incidentPlayground/filters/"
