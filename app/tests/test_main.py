@@ -3418,6 +3418,23 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                     )
                 )
 
+        alerts = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "modules"
+            / "alerts.bicep"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", '
+            '"quiz-pool-listener", "quiz-secret-listener")',
+            alerts,
+        )
+        self.assertIn(
+            'listenerName_s == "quiz-appgw-listener"',
+            alerts,
+        )
+        self.assertEqual(alerts.count("autoMitigate: true"), 4)
+
     @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
     @patch("app.main.generate_zava_scenario_traffic", return_value=(True, "impact"))
     @patch("app.main.probe_http_endpoint", return_value=(True, ""))

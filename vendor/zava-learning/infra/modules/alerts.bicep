@@ -49,7 +49,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-pool-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -59,7 +59,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
       ]
     }
     skipQueryValidation: true
-    autoMitigate: false
+    autoMitigate: true
     actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
   }
 }
@@ -78,7 +78,7 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
+          query: 'AzureDiagnostics\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count() by bin(TimeGenerated, 5m)'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -88,7 +88,7 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
       ]
     }
     skipQueryValidation: true
-    autoMitigate: false
+    autoMitigate: true
     actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
   }
 }
@@ -117,7 +117,7 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
       ]
     }
     skipQueryValidation: true
-    autoMitigate: false
+    autoMitigate: true
     actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
   }
 }
@@ -146,7 +146,7 @@ resource gradeExportsFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
       ]
     }
     skipQueryValidation: true
-    autoMitigate: false
+    autoMitigate: true
     actions: { actionGroups: routePagerDuty ? [ resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') ] : [] }
   }
 }
