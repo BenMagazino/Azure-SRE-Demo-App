@@ -186,7 +186,8 @@ window.addEventListener("unhandledrejection", (event) => {
 function showPanel(id) {
   if (!workflowPanels.includes(id)) return;
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
-  document.querySelector(`#${id}`).classList.remove("hidden");
+  const panel = document.querySelector(`#${id}`);
+  panel.classList.remove("hidden");
   activePanelId = id;
   shell.classList.toggle("workflow-compact", id !== "labs");
   backButton.disabled = workflowPanels.indexOf(id) === 0;
@@ -198,6 +199,15 @@ function showPanel(id) {
     } else {
       step.removeAttribute("aria-current");
     }
+  });
+  window.requestAnimationFrame(() => {
+    const heading = panel.querySelector("h1, h2");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+    const panelTop = panel.getBoundingClientRect().top + window.scrollY - 16;
+    window.scrollTo({ top: Math.max(0, panelTop), behavior: "auto" });
   });
 }
 

@@ -2336,6 +2336,11 @@ class ProcessTests(unittest.TestCase):
             'classList.toggle("workflow-compact", id !== "labs")',
             script,
         )
+        self.assertIn("heading.focus({ preventScroll: true })", script)
+        self.assertIn(
+            'window.scrollTo({ top: Math.max(0, panelTop), behavior: "auto" })',
+            script,
+        )
 
     def test_optional_integrations_link_to_official_setup_guides(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -2352,6 +2357,7 @@ class ProcessTests(unittest.TestCase):
             self.assertIn(url, page)
         self.assertGreaterEqual(page.count('class="help-tip"'), 7)
         self.assertIn("FindConnectedGitHubRepo", page)
+        self.assertIn("<summary>Optional integrations <span>(advanced)</span></summary>", page)
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
