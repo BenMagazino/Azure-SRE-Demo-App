@@ -2,7 +2,6 @@
 setlocal
 set "AZURE_SRE_AGENT_PORTABLE=1"
 set "AZURE_SRE_DEMO_NO_BROWSER=1"
-set "AZURE_SRE_DEMO_CLIENT_FALLBACK=1"
 set "AZURE_SRE_DEMO_SHORTCUT=%~dp0..\Azure SRE Agent Demo.lnk"
 set "AZURE_SRE_DEMO_SHORTCUT_TEMPLATE=%~dp0Azure SRE Agent Demo.link-template"
 

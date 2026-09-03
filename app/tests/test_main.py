@@ -2131,7 +2131,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(r'"%~dp0main.py" %*', launcher)
         self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
-        self.assertIn("AZURE_SRE_DEMO_CLIENT_FALLBACK=1", launcher)
+        self.assertNotIn("AZURE_SRE_DEMO_CLIENT_FALLBACK", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
         self.assertNotIn("Repair-Shortcut.ps1", launcher)
         self.assertIn("Azure SRE Agent Demo.link-template", launcher)
