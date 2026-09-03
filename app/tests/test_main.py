@@ -2358,6 +2358,7 @@ class ProcessTests(unittest.TestCase):
         self.assertGreaterEqual(page.count('class="help-tip"'), 7)
         self.assertIn("FindConnectedGitHubRepo", page)
         self.assertIn("<summary>Optional integrations <span>(advanced)</span></summary>", page)
+        self.assertEqual(page.count("Optional integrations"), 2)
 
     def test_diagnostic_download_is_in_footer_without_visible_path(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
