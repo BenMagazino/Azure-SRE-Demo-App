@@ -4169,11 +4169,8 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
 
     @patch("app.main.time.sleep")
-    @patch(
-        "app.main.generate_zava_scenario_traffic",
-        return_value=(False, "0/12 requests returned a failure"),
-    )
-    def test_non_convergent_customer_impact_uses_one_batch(
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_secret_customer_impact_polls_until_revision_converges(
         self,
         generate_traffic,
         sleep,
@@ -4181,20 +4178,68 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         scenario = next(
             item
             for item in main_module.LABS_BY_ID["zava-learning"].scenarios
-            if item.id == "nsg"
+            if item.id == "secret"
         )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests returned a failure"),
+            (True, "8/12 requests returned a failure"),
+        ]
 
         impact, detail = main_module.wait_for_zava_customer_impact(
             scenario,
-            "http://zava.example.test:8081",
+            "http://zava.example.test:8087",
         )
 
-        self.assertFalse(impact)
-        self.assertEqual(detail, "0/12 requests returned a failure")
-        generate_traffic.assert_called_once_with(
-            scenario,
-            "http://zava.example.test:8081",
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            detail,
+            "8/12 requests returned a failure after 2 traffic batches",
         )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_unaffected_customer_impact_uses_one_batch(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenarios = {
+            item.id: item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+        }
+        generate_traffic.return_value = (
+            False,
+            "0/12 requests returned a failure",
+        )
+
+        self.assertEqual(
+            main_module.ZAVA_IMPACT_CONVERGENCE_SECONDS,
+            {"appgw": 240, "perf": 240, "secret": 240},
+        )
+        for scenario_id in ("nsg", "app", "query", "pool"):
+            with self.subTest(scenario_id=scenario_id):
+                scenario = scenarios[scenario_id]
+                scenario_url = (
+                    f"http://zava.example.test:{scenario.lane_port}"
+                )
+                generate_traffic.reset_mock()
+
+                impact, detail = main_module.wait_for_zava_customer_impact(
+                    scenario,
+                    scenario_url,
+                )
+
+                self.assertFalse(impact)
+                self.assertEqual(
+                    detail,
+                    "0/12 requests returned a failure",
+                )
+                generate_traffic.assert_called_once_with(
+                    scenario,
+                    scenario_url,
+                )
         sleep.assert_not_called()
 
     @patch("app.main.time.sleep")
