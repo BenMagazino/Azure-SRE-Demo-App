@@ -2099,14 +2099,31 @@ def validate_zava_existing_lab(
             "--output", "json",
         ],
     )
+    command_labels = (
+        "resource inventory",
+        "Container Apps",
+        "public IP addresses",
+        "Application Gateway",
+        "virtual machines",
+        "PostgreSQL Flexible Server",
+        "role assignments",
+        "Key Vault",
+    )
     parsed_records: list[list[dict[str, Any]]] = []
-    for command in commands:
+    for label, command in zip(command_labels, commands):
         success, output = run_capture(command, timeout=60)
         records = parse_json_records(output) if success else None
         if records is None:
+            displayed_command = sanitize_terminal_output(
+                redact_text(subprocess.list2cmdline(redact_command(command)))
+            )
+            detail = sanitize_terminal_output(redact_text(output))
             return {
                 "ready": False,
-                "issues": ["Azure did not return Zava topology validation data."],
+                "issues": [
+                    f"Unable to query Zava {label}. Command: {displayed_command}."
+                    + (f" Azure CLI reported: {detail[:500]}" if detail else "")
+                ],
                 "values": {},
                 "availability_checks": [],
             }
@@ -3269,11 +3286,6 @@ def resolved_process_command(command: list[str]) -> Optional[list[str]]:
     if resolved is None:
         return None
     if command[0].lower() == "az" and Path(resolved).suffix.lower() == ".cmd":
-        managed_azure_cli = AZURE_CLI_DIR / "bin" / "az.cmd"
-        if os.path.normcase(os.path.abspath(resolved)) == os.path.normcase(
-            os.path.abspath(managed_azure_cli)
-        ):
-            return [resolved, *command[1:]]
         azure_python = Path(resolved).parent.parent / "python.exe"
         if azure_python.is_file():
             return [
@@ -4266,6 +4278,43 @@ def _zava_safe_resource_name(value: str, label: str) -> str:
     return value
 
 
+def ensure_zava_vm_running(
+    resource_group: str,
+    vm_name: str,
+    attempts: int = 40,
+    delay_seconds: float = 15,
+) -> bool:
+    command = [
+        "az", "vm", "show", "-d",
+        "--resource-group", resource_group,
+        "--name", vm_name,
+        "--query", "powerState",
+        "--output", "tsv",
+    ]
+    success, output = run_capture(command, timeout=60)
+    if success and output.strip().casefold() == "vm running":
+        return True
+    success, _ = run_capture(
+        [
+            "az", "vm", "start",
+            "--resource-group", resource_group,
+            "--name", vm_name,
+            "--output", "none",
+            "--only-show-errors",
+        ],
+        timeout=300,
+    )
+    if not success:
+        return False
+    for attempt in range(attempts):
+        success, output = run_capture(command, timeout=60)
+        if success and output.strip().casefold() == "vm running":
+            return True
+        if attempt + 1 < attempts:
+            time.sleep(delay_seconds)
+    return False
+
+
 def zava_vm_secret_bridge(
     resource_group: str,
     vm_name: str,
@@ -4279,6 +4328,8 @@ def zava_vm_secret_bridge(
     resource_group = _zava_safe_resource_name(resource_group, "resource group")
     vm_name = _zava_safe_resource_name(vm_name, "virtual machine name")
     vault_name = _zava_safe_resource_name(vault_name, "Key Vault name")
+    if not ensure_zava_vm_running(resource_group, vm_name):
+        return False, ""
     vault_uri = f"https://{vault_name}.vault.azure.net/"
     metadata = (
         "http://169.254.169.254/metadata/identity/oauth2/token"
@@ -4312,19 +4363,24 @@ def zava_vm_secret_bridge(
             f"'{vault_uri}secrets/{secret_name}?api-version=7.4' >/dev/null; "
             "echo ZAVA_SECRET_STORED"
         )
-    success, output = run_secret_capture(
-        [
-            "az", "vm", "run-command", "invoke",
-            "--resource-group", resource_group,
-            "--name", vm_name,
-            "--command-id", "RunShellScript",
-            "--scripts", script,
-            "--query", "value[0].message",
-            "--output", "tsv",
-            "--only-show-errors",
-        ],
-        timeout=300,
-    )
+    command = [
+        "az", "vm", "run-command", "invoke",
+        "--resource-group", resource_group,
+        "--name", vm_name,
+        "--command-id", "RunShellScript",
+        "--scripts", script,
+        "--query", "value[0].message",
+        "--output", "tsv",
+        "--only-show-errors",
+    ]
+    success = False
+    output = ""
+    for attempt in range(3):
+        success, output = run_secret_capture(command, timeout=300)
+        if success:
+            break
+        if attempt < 2:
+            time.sleep(10)
     if not success:
         return False, ""
     if value is not None:

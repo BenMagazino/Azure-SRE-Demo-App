@@ -9,7 +9,7 @@ import zipfile
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from urllib.error import URLError
 
 import app.main as main_module
@@ -2542,10 +2542,12 @@ class ProcessTests(unittest.TestCase):
             ["-I", "-B", "-u", "-m", "azure.cli", "login"],
         )
 
+    @patch("app.main.Path.is_file", return_value=True)
     @patch("app.main.shutil.which")
-    def test_runs_managed_azure_cli_through_its_supported_cmd_entrypoint(
+    def test_runs_managed_azure_cli_through_its_bundled_python(
         self,
         which,
+        _is_file,
     ) -> None:
         cli_dir = Path(r"C:\Users\demo\AppData\Local\AzureSREAgentDemo\tools\azure-cli")
         which.return_value = str(cli_dir / "bin" / "az.cmd")
@@ -2555,7 +2557,16 @@ class ProcessTests(unittest.TestCase):
 
         self.assertEqual(
             command,
-            [str(cli_dir / "bin" / "az.cmd"), "account", "show"],
+            [
+                str(cli_dir / "python.exe"),
+                "-I",
+                "-B",
+                "-u",
+                "-m",
+                "azure.cli",
+                "account",
+                "show",
+            ],
         )
 
     @patch("app.main.subprocess.run")
@@ -3090,6 +3101,61 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.ZAVA_SECRET_NAMES,
             {"db-password", "db-pool-password", "vm-admin-password"},
         )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_capture")
+    def test_python_secret_bridge_starts_deallocated_vm(
+        self,
+        run_capture,
+        sleep,
+    ) -> None:
+        run_capture.side_effect = [
+            (True, "VM deallocated"),
+            (True, ""),
+            (True, "VM starting"),
+            (True, "VM running"),
+        ]
+
+        ready = main_module.ensure_zava_vm_running(
+            "rg-zava",
+            "vm-zava",
+            attempts=2,
+            delay_seconds=0.01,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(
+            run_capture.call_args_list[1].args[0][:4],
+            ["az", "vm", "start", "--resource-group"],
+        )
+        sleep.assert_called_once_with(0.01)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_secret_capture")
+    @patch("app.main.ensure_zava_vm_running", return_value=True)
+    def test_python_secret_bridge_retries_vm_run_command(
+        self,
+        _ensure_running,
+        run_secret_capture,
+        sleep,
+    ) -> None:
+        run_secret_capture.side_effect = [
+            (False, ""),
+            (False, ""),
+            (True, "c2VjcmV0"),
+        ]
+
+        success, value = main_module.zava_vm_secret_bridge(
+            "rg-zava",
+            "vm-zava",
+            "kv-zava",
+            "db-password",
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(value, "secret")
+        self.assertEqual(run_secret_capture.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(10), call(10)])
 
     def test_transient_settings_replace_atomically(self) -> None:
         main_module.replace_in_memory_secrets(
