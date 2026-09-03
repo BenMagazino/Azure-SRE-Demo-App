@@ -4500,6 +4500,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             / "deploy-sre-agent.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn("Zava PostgreSQL Start Operator", main_bicep)
+        self.assertIn("dependsOn: [ aca, appgw, vm ]", main_bicep)
         self.assertIn("postgresStartAgent", agent_bicep)
         self.assertIn("if (createPostgresStartAssignment)", agent_bicep)
         self.assertIn("postgresServerId=$postgresId", deploy_script)

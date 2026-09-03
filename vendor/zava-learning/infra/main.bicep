@@ -271,6 +271,7 @@ module alerts 'modules/alerts.bicep' = {
     pagerDutyWebhookUrl: pagerDutyWebhookUrl
     pagerDutyConfigured: pagerDutyConfigured == 'true'
   }
+  dependsOn: [ aca, appgw, vm ]
 }
 
 // Reporting-worker VM (disk scenario): nightly grade-export worker whose data disk chaos
