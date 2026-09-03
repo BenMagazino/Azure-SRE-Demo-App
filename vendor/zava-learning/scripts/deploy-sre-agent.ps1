@@ -49,6 +49,19 @@ $rgId         = az group show -n $ResourceGroup --query id -o tsv
 if (-not $Location) { $Location = az group show -n $ResourceGroup --query location -o tsv }
 
 if (-not ($identityId -and $aiId -and $postgresId)) { throw "Could not discover the dedicated SRE Agent identity, monitoring, and PostgreSQL resources in $ResourceGroup." }
+$identityPrincipalId = az identity show --ids $identityId --query principalId -o tsv
+if (-not $identityPrincipalId) { throw "Could not resolve the dedicated SRE Agent identity principal." }
+$postgresStartRoleDefinitionId = "/subscriptions/$((az account show --query id -o tsv))/providers/Microsoft.Authorization/roleDefinitions/f8717311-09b5-4153-8abe-edb3c595c35f"
+$existingPostgresStartAssignment = az role assignment list `
+  --assignee-object-id $identityPrincipalId `
+  --scope $postgresId `
+  --fill-principal-name false `
+  --query "[?roleDefinitionId=='$postgresStartRoleDefinitionId'].id | [0]" `
+  -o tsv
+$createPostgresStartAssignment = if ($existingPostgresStartAssignment) { "false" } else { "true" }
+if ($existingPostgresStartAssignment) {
+  Write-Host "Reusing the existing PostgreSQL start-role assignment." -ForegroundColor DarkGray
+}
 
 Write-Host "Deploying SRE Agent '$AgentName' (platform: $IncidentPlatform)..." -ForegroundColor Cyan
 $deploymentOutputs = az deployment group create `
@@ -65,6 +78,7 @@ $deploymentOutputs = az deployment group create `
       appInsightsId=$aiId `
       managedResourceGroupId=$rgId `
       postgresServerId=$postgresId `
+      createPostgresStartAssignment=$createPostgresStartAssignment `
       incidentPlatform=$IncidentPlatform `
       modelProvider=$ModelProvider `
       modelName=$ModelName `

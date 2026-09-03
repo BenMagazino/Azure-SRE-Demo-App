@@ -4427,7 +4427,14 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Zava PostgreSQL Start Operator", main_bicep)
         self.assertIn("postgresStartAgent", agent_bicep)
+        self.assertIn("if (createPostgresStartAssignment)", agent_bicep)
         self.assertIn("postgresServerId=$postgresId", deploy_script)
+        self.assertIn("--assignee-object-id $identityPrincipalId", deploy_script)
+        self.assertIn("--scope $postgresId", deploy_script)
+        self.assertIn(
+            "createPostgresStartAssignment=$createPostgresStartAssignment",
+            deploy_script,
+        )
         common_script = (
             main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
             / "chaos"

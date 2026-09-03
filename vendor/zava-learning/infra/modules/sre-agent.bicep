@@ -40,6 +40,9 @@ param managedResourceGroupId string
 @description('PostgreSQL Flexible Server resource ID used by baseline keepalive.')
 param postgresServerId string
 
+@description('Create the PostgreSQL start-role assignment when an equivalent assignment is not already present.')
+param createPostgresStartAssignment bool = true
+
 @description('Incident platform for this agent.')
 @allowed([ 'PagerDuty', 'AzMonitor' ])
 param incidentPlatform string = 'PagerDuty'
@@ -212,7 +215,7 @@ resource miOperatorAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
-resource postgresStartAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource postgresStartAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createPostgresStartAssignment) {
   name: guid(postgresServer.id, identityId, 'postgres-start-agent')
   scope: postgresServer
   properties: {
