@@ -527,7 +527,7 @@ LABS = (
                 ),
                 action_label="Run Quiz Connectivity",
                 confirmation="Inject the Zava quiz connectivity fault?",
-                investigation_delay_seconds=900,
+                investigation_delay_seconds=300,
                 script_id="nsg",
                 lane_port=8081,
                 probe_path="/quiz/BIO-101",
