@@ -80,11 +80,37 @@ param dbPoolPassword string
 param vmAdminPassword string
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
+var postgresStartRoleDefinitionGuid = 'f8717311-09b5-4153-8abe-edb3c595c35f'
 var tags = {
   'azd-env-name': environmentName
   solution: 'zava-learning'
   'sre-agent-demo-lab-id': 'zava-learning'
   'sre-agent-demo-environment': environmentName
+}
+
+resource postgresStartRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: postgresStartRoleDefinitionGuid
+  properties: {
+    roleName: 'Zava PostgreSQL Start Operator'
+    description: 'Read and start the Zava PostgreSQL Flexible Server for daily baseline keep-alive automation.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: [
+          'Microsoft.DBforPostgreSQL/flexibleServers/read'
+          'Microsoft.DBforPostgreSQL/flexibleServers/start/action'
+          'Microsoft.DBforPostgreSQL/locations/operationResults/read'
+          'Microsoft.DBforPostgreSQL/locations/azureAsyncOperation/read'
+        ]
+        notActions: []
+        dataActions: []
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      subscription().id
+    ]
+  }
 }
 
 resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
@@ -286,3 +312,4 @@ output APPLICATIONINSIGHTS_NAME string = monitoring.outputs.appInsightsName
 output PAGERDUTY_CONFIGURED bool = alerts.outputs.pagerDutyConfigured
 output ZAVA_PAGERDUTY_ACTION_GROUP_NAME string = alerts.outputs.actionGroupName
 output REPORTING_VM_NAME string = vm.outputs.vmName
+output POSTGRES_START_ROLE_DEFINITION_ID string = postgresStartRole.id

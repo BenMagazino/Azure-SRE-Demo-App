@@ -44,10 +44,11 @@ $aiName       = az resource list -g $ResourceGroup --resource-type "Microsoft.In
 $aiId         = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query id -o tsv
 $aiAppId      = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query properties.AppId -o tsv
 $aiConn       = az resource show -g $ResourceGroup -n $aiName --resource-type "Microsoft.Insights/components" --query properties.ConnectionString -o tsv
+$postgresId   = az postgres flexible-server list -g $ResourceGroup --query "[0].id" -o tsv
 $rgId         = az group show -n $ResourceGroup --query id -o tsv
 if (-not $Location) { $Location = az group show -n $ResourceGroup --query location -o tsv }
 
-if (-not ($identityId -and $aiId)) { throw "Could not discover the dedicated SRE Agent identity and monitoring resources in $ResourceGroup." }
+if (-not ($identityId -and $aiId -and $postgresId)) { throw "Could not discover the dedicated SRE Agent identity, monitoring, and PostgreSQL resources in $ResourceGroup." }
 
 Write-Host "Deploying SRE Agent '$AgentName' (platform: $IncidentPlatform)..." -ForegroundColor Cyan
 $deploymentOutputs = az deployment group create `
@@ -63,6 +64,7 @@ $deploymentOutputs = az deployment group create `
       appInsightsConnectionString=$aiConn `
       appInsightsId=$aiId `
       managedResourceGroupId=$rgId `
+      postgresServerId=$postgresId `
       incidentPlatform=$IncidentPlatform `
       modelProvider=$ModelProvider `
       modelName=$ModelName `

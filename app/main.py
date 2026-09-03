@@ -2059,7 +2059,7 @@ def validate_zava_existing_lab(
             "az", "postgres", "flexible-server", "list",
             "--subscription", subscription_id,
             "--resource-group", resource_group,
-            "--query", "[].{name:name,state:state,"
+            "--query", "[].{id:id,name:name,state:state,"
             "fqdn:fullyQualifiedDomainName,location:location}",
             "--output", "json",
         ],
@@ -2293,6 +2293,28 @@ def validate_zava_existing_lab(
             database_names = set()
         if not {"zava", "zava_query"}.issubset(database_names):
             issues.append("The Zava PostgreSQL databases are incomplete.")
+        postgres_id = str(postgres_servers[0].get("id") or "")
+        if postgres_id:
+            role_success, role_output = run_capture(
+                [
+                    "az", "role", "assignment", "list",
+                    "--scope", postgres_id,
+                    "--include-inherited",
+                    "--query",
+                    "[?roleDefinitionName=='Zava PostgreSQL Start Operator'] "
+                    "| length(@)",
+                    "--output", "tsv",
+                ],
+                timeout=60,
+            )
+            if (
+                not role_success
+                or not role_output.strip().isdigit()
+                or int(role_output) < 1
+            ):
+                issues.append(
+                    "The Zava SRE Agent cannot start the PostgreSQL baseline."
+                )
     if len(key_vaults) != 1:
         issues.append(f"Zava requires one private Key Vault; found {len(key_vaults)}.")
     elif (

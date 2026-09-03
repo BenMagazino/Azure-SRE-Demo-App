@@ -3493,6 +3493,25 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertEqual(azure_yaml.count("remoteBuild: true"), 3)
+        main_bicep = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "main.bicep"
+        ).read_text(encoding="utf-8")
+        agent_bicep = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "modules"
+            / "sre-agent.bicep"
+        ).read_text(encoding="utf-8")
+        deploy_script = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "scripts"
+            / "deploy-sre-agent.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Zava PostgreSQL Start Operator", main_bicep)
+        self.assertIn("postgresStartAgent", agent_bicep)
+        self.assertIn("postgresServerId=$postgresId", deploy_script)
 
     def test_zava_names_do_not_repeat_the_lab_prefix(self) -> None:
         self.assertEqual(

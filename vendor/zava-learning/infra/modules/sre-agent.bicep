@@ -37,6 +37,9 @@ param appInsightsId string
 @description('Resource Group ID added to the agent knowledge graph (the lab RG).')
 param managedResourceGroupId string
 
+@description('PostgreSQL Flexible Server resource ID used by baseline keepalive.')
+param postgresServerId string
+
 @description('Incident platform for this agent.')
 @allowed([ 'PagerDuty', 'AzMonitor' ])
 param incidentPlatform string = 'PagerDuty'
@@ -133,6 +136,10 @@ resource agentUami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31'
   name: last(split(identityId, '/'))
 }
 
+resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' existing = {
+  name: last(split(postgresServerId, '/'))
+}
+
 resource readerAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(resourceGroup().id, identityId, 'reader-agent')
   scope: resourceGroup()
@@ -202,6 +209,16 @@ resource miOperatorAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f1a07417-d97a-45cb-824c-7a7467783830')
     principalId: agentUami.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+
+  resource postgresStartAgent 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+    name: guid(postgresServer.id, identityId, 'postgres-start-agent')
+    scope: postgresServer
+    properties: {
+      roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f8717311-09b5-4153-8abe-edb3c595c35f')
+      principalId: agentUami.properties.principalId
+      principalType: 'ServicePrincipal'
+    }
   }
 }
 
