@@ -1216,16 +1216,22 @@ def build_existing_environment_catalog(
             str(key).casefold(): str(value).strip()
             for key, value in (group.get("tags") or {}).items()
         }
+        app_names = {
+            str(app.get("name") or "").casefold()
+            for app in apps_by_group.get(resource_group_key, [])
+        }
         tagged_lab_id = tags.get(LAB_ID_TAG.casefold(), "")
         if tagged_lab_id:
             if tagged_lab_id.casefold() != lab_id.casefold():
                 continue
+            if (
+                lab_id == "zava-learning"
+                and resource_group_key not in agents_by_group
+                and not {"learner-portal", "assessment-api"}.issubset(app_names)
+            ):
+                continue
             detection = "managed"
         else:
-            app_names = {
-                str(app.get("name") or "").casefold()
-                for app in apps_by_group.get(resource_group_key, [])
-            }
             is_grubify_lab = lab_id == "grubify-starter-lab" and (
                 resource_group_key.startswith("rg-")
                 and resource_group_key in agents_by_group

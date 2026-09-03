@@ -498,6 +498,46 @@ class LabWorkflowTests(unittest.TestCase):
             "https://agent.example.test",
         )
 
+    def test_zava_discovery_excludes_tagged_managed_infrastructure_groups(
+        self,
+    ) -> None:
+        tags = {
+            "sre-agent-demo-lab-id": "zava-learning",
+            "sre-agent-demo-environment": "zava-learning-auto-1",
+        }
+        environments = build_existing_environment_catalog(
+            [
+                {
+                    "name": "rg-zava-learning-zava-learning-auto-1",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+                {
+                    "name": "ME_cae-zava-nsglane_token_southcentralus",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+                {
+                    "name": "ME_cae-zava_token_southcentralus",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+            ],
+            [{
+                "name": "sre-zava-zava-learning-auto-1",
+                "resourceGroup": "rg-zava-learning-zava-learning-auto-1",
+            }],
+            [],
+            {"zava-learning-auto-1"},
+            "zava-learning",
+        )
+
+        self.assertEqual(len(environments), 1)
+        self.assertEqual(
+            environments[0]["resource_group"],
+            "rg-zava-learning-zava-learning-auto-1",
+        )
+
     @patch("app.main.save_environment_cache")
     @patch("app.main.local_azd_environment_names", return_value=set())
     @patch("app.main.run_capture")
