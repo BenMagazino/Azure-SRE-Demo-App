@@ -3690,6 +3690,21 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             alerts.count("| where ingestion_time() >= ago(10m)"),
             len(expected_alerts),
         )
+        self.assertNotIn("by bin(TimeGenerated, 5m)", alerts)
+        self.assertEqual(
+            alerts.count("| summarize AggregatedValue = count()"),
+            4,
+        )
+        self.assertEqual(
+            alerts.count("| summarize P95 = percentile(ms, 95)"),
+            1,
+        )
+        self.assertEqual(
+            alerts.count(
+                "| project AggregatedValue = coalesce(todouble(P95), 0.0)"
+            ),
+            1,
+        )
         self.assertEqual(
             alerts.count("scopes: [ logAnalyticsWorkspaceId ]"),
             len(expected_alerts),
