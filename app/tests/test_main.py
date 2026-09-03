@@ -3613,22 +3613,48 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
 
     def test_scenario_signal_queries_match_alert_sources(self) -> None:
         injected = main_module.datetime(2026, 1, 1, tzinfo=main_module.timezone.utc)
+        nsg_query = main_module.zava_scenario_signal_query("nsg", injected)
         self.assertIn(
             'listenerName_s == "quiz-nsg-listener"',
-            main_module.zava_scenario_signal_query("nsg", injected),
+            nsg_query,
         )
         self.assertIn(
             "toint(httpStatus_d) == 499",
-            main_module.zava_scenario_signal_query("nsg", injected),
+            nsg_query,
         )
-        self.assertIn(
-            'ContainerAppName_s == "quiz-perf"',
-            main_module.zava_scenario_signal_query("perf", injected),
-        )
-        self.assertIn(
-            'ProcessName == "zava-export"',
-            main_module.zava_scenario_signal_query("disk", injected),
-        )
+        self.assertNotIn("toint(httpStatus_d) == 404", nsg_query)
+        app_query = main_module.zava_scenario_signal_query("app", injected)
+        self.assertIn('listenerName_s == "quiz-app-listener"', app_query)
+        self.assertIn("toint(httpStatus_d) == 404", app_query)
+        self.assertIn("toint(httpStatus_d) >= 500", app_query)
+        self.assertNotIn("toint(httpStatus_d) == 499", app_query)
+        for scenario_id in ("appgw", "pool", "secret"):
+            with self.subTest(status_contract=scenario_id):
+                query = main_module.zava_scenario_signal_query(
+                    scenario_id,
+                    injected,
+                )
+                self.assertIn(
+                    f'listenerName_s == "quiz-{scenario_id}-listener"',
+                    query,
+                )
+                self.assertIn("toint(httpStatus_d) >= 500", query)
+                self.assertNotIn("toint(httpStatus_d) == 404", query)
+                self.assertNotIn("toint(httpStatus_d) == 499", query)
+        for scenario_id in ("perf", "query"):
+            with self.subTest(latency_contract=scenario_id):
+                query = main_module.zava_scenario_signal_query(
+                    scenario_id,
+                    injected,
+                )
+                self.assertIn(
+                    f'ContainerAppName_s == "quiz-{scenario_id}"',
+                    query,
+                )
+                self.assertIn("| where ms > 500", query)
+        disk_query = main_module.zava_scenario_signal_query("disk", injected)
+        self.assertIn('ProcessName == "zava-export"', disk_query)
+        self.assertIn('SyslogMessage has "FAILED"', disk_query)
         for scenario in main_module.LABS_BY_ID["zava-learning"].scenarios:
             with self.subTest(scenario=scenario.id):
                 self.assertTrue(
@@ -3647,6 +3673,20 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn(
             'listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", '
             '"quiz-secret-listener")',
+            alerts,
+        )
+        self.assertIn(
+            'listenerName_s == "quiz-nsg-listener" and '
+            "(status == 499 or status >= 500)",
+            alerts,
+        )
+        self.assertIn(
+            'listenerName_s == "quiz-app-listener" and '
+            "(status == 404 or status >= 500)",
+            alerts,
+        )
+        self.assertIn(
+            'listenerName_s == "quiz-secret-listener" and status >= 500',
             alerts,
         )
         self.assertIn(
@@ -3710,6 +3750,82 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             len(expected_alerts),
         )
         self.assertEqual(alerts.count("autoMitigate: true"), len(expected_alerts))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 10, 30])
+    @patch("app.main.run_capture")
+    def test_monitor_signal_polling_accepts_late_ingested_event_time_rows(
+        self,
+        run_capture_mock,
+        _monotonic,
+        sleep,
+    ) -> None:
+        run_capture_mock.side_effect = [
+            (True, '[{"Count": 0}]'),
+            (True, '[{"Count": 4}]'),
+        ]
+        injected_at = main_module.datetime(
+            2026,
+            9,
+            3,
+            16,
+            0,
+            tzinfo=main_module.timezone.utc,
+        )
+
+        found, count = main_module.wait_for_zava_monitor_signal(
+            "workspace",
+            "app",
+            injected_at,
+        )
+
+        self.assertTrue(found)
+        self.assertEqual(count, 4)
+        self.assertEqual(
+            main_module.ZAVA_MONITOR_SIGNAL_TIMEOUT_SECONDS,
+            22 * 60,
+        )
+        self.assertEqual(run_capture_mock.call_count, 2)
+        command = run_capture_mock.call_args_list[0].args[0]
+        self.assertEqual(
+            command[command.index("--timespan") + 1],
+            "PT30M",
+        )
+        query = command[command.index("--analytics-query") + 1]
+        self.assertIn(
+            "TimeGenerated >= datetime(2026-09-03T16:00:00Z)",
+            query,
+        )
+        sleep.assert_called_once_with(20)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 119, 120])
+    @patch("app.main.run_capture", return_value=(False, "query timed out"))
+    def test_monitor_signal_polling_fails_closed_at_bounded_deadline(
+        self,
+        run_capture_mock,
+        _monotonic,
+        sleep,
+    ) -> None:
+        found, count = main_module.wait_for_zava_monitor_signal(
+            "workspace",
+            "app",
+            main_module.datetime(
+                2026,
+                9,
+                3,
+                16,
+                0,
+                tzinfo=main_module.timezone.utc,
+            ),
+            timeout_seconds=120,
+        )
+
+        self.assertFalse(found)
+        self.assertEqual(count, 0)
+        run_capture_mock.assert_called_once()
+        self.assertEqual(run_capture_mock.call_args.kwargs["timeout"], 90)
+        sleep.assert_called_once_with(1)
 
     @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
     @patch("app.main.wait_for_zava_customer_impact", return_value=(True, "impact"))

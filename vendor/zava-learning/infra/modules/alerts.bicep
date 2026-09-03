@@ -56,7 +56,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s in ("quiz-nsg-listener", "quiz-app-listener", "quiz-secret-listener")\n| extend status = toint(httpStatus_d)\n| where (listenerName_s == "quiz-nsg-listener" and (status == 499 or status >= 500))\n    or (listenerName_s == "quiz-app-listener" and (status == 404 or status >= 500))\n    or (listenerName_s == "quiz-secret-listener" and status >= 500)\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'

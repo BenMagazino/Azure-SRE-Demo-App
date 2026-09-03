@@ -5,6 +5,7 @@ import configparser
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -644,6 +645,14 @@ ZAVA_IMPACT_CONVERGENCE_SECONDS = {
     "appgw": 240,
 }
 ZAVA_IMPACT_RETRY_SECONDS = 15
+ZAVA_RESOURCE_LOG_INGESTION_SECONDS = 20 * 60
+ZAVA_MONITOR_SIGNAL_MARGIN_SECONDS = 2 * 60
+ZAVA_MONITOR_SIGNAL_TIMEOUT_SECONDS = (
+    ZAVA_RESOURCE_LOG_INGESTION_SECONDS + ZAVA_MONITOR_SIGNAL_MARGIN_SECONDS
+)
+ZAVA_MONITOR_SIGNAL_QUERY_TIMESPAN = "PT30M"
+ZAVA_MONITOR_SIGNAL_QUERY_TIMEOUT_SECONDS = 90
+ZAVA_MONITOR_SIGNAL_POLL_SECONDS = 20
 ZAVA_CORE_AGENTS = (
     "zava-cost-analyst",
     "zava-incident-responder",
@@ -7039,11 +7048,18 @@ def zava_scenario_signal_query(
             "| where ms > 500"
         )
     elif scenario_id in {"nsg", "appgw", "app", "pool", "secret"}:
-        status_filter = (
-            "| where toint(httpStatus_d) == 499 or toint(httpStatus_d) >= 500"
-            if scenario_id == "nsg"
-            else "| where toint(httpStatus_d) >= 500"
-        )
+        if scenario_id == "nsg":
+            status_filter = (
+                "| where toint(httpStatus_d) == 499 "
+                "or toint(httpStatus_d) >= 500"
+            )
+        elif scenario_id == "app":
+            status_filter = (
+                "| where toint(httpStatus_d) == 404 "
+                "or toint(httpStatus_d) >= 500"
+            )
+        else:
+            status_filter = "| where toint(httpStatus_d) >= 500"
         source = (
             "AzureDiagnostics "
             f"| where TimeGenerated >= datetime({timestamp}) "
@@ -7061,20 +7077,26 @@ def wait_for_zava_monitor_signal(
     workspace: str,
     scenario_id: str,
     injected_at: datetime,
-    timeout_seconds: int = 600,
+    timeout_seconds: float = ZAVA_MONITOR_SIGNAL_TIMEOUT_SECONDS,
 ) -> tuple[bool, int]:
     query = zava_scenario_signal_query(scenario_id, injected_at)
-    deadline = time.monotonic() + timeout_seconds
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, 0
         success, output = run_capture(
             [
                 "az", "monitor", "log-analytics", "query",
                 "--workspace", workspace,
                 "--analytics-query", query,
-                "--timespan", "PT15M",
+                "--timespan", ZAVA_MONITOR_SIGNAL_QUERY_TIMESPAN,
                 "--output", "json",
             ],
-            timeout=90,
+            timeout=min(
+                ZAVA_MONITOR_SIGNAL_QUERY_TIMEOUT_SECONDS,
+                max(1, math.ceil(remaining)),
+            ),
         )
         count = 0
         if success:
@@ -7086,9 +7108,10 @@ def wait_for_zava_monitor_signal(
                 count = 0
         if count > 0:
             return True, count
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return False, 0
-        time.sleep(20)
+        time.sleep(min(ZAVA_MONITOR_SIGNAL_POLL_SECONDS, remaining))
 
 
 def _run_zava_scenario(job: Job) -> None:
