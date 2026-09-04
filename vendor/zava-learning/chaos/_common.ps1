@@ -343,14 +343,12 @@ function Get-ContainerAppSecretReference {
     [Parameter(Mandatory)][ValidatePattern('^[0-9A-Za-z-]+$')][string]$SecretName
   )
   $json = az containerapp secret list -g $ResourceGroup -n $AppName `
-    --query "[?name=='$SecretName'] | [0].{keyVaultUrl:keyVaultUrl,identity:identity}" `
     -o json --only-show-errors
   if ($LASTEXITCODE -ne 0) {
     throw "Could not read secret-reference metadata for '$SecretName' on $AppName."
   }
-  $text = ($json | Out-String).Trim()
-  if (-not $text -or $text -eq "null") { return $null }
-  return ($text | ConvertFrom-Json)
+  $references = @(($json | Out-String) | ConvertFrom-Json)
+  return @($references | Where-Object { $_.name -eq $SecretName })[0]
 }
 
 function Test-SecretLaneReference {
@@ -378,11 +376,13 @@ function Assert-SecretLaneReference {
     [string]$AppName = "quiz-secret"
   )
   $expected = Get-SecretLaneExpectedReference -ResourceGroup $ResourceGroup
-  $assignedIds = @(az containerapp show -g $ResourceGroup -n $AppName `
-    --query "keys(identity.userAssignedIdentities)" -o tsv --only-show-errors)
+  $appJson = az containerapp show -g $ResourceGroup -n $AppName `
+    -o json --only-show-errors
   if ($LASTEXITCODE -ne 0) {
     throw "Could not read managed identities assigned to $AppName."
   }
+  $app = (($appJson | Out-String) | ConvertFrom-Json)
+  $assignedIds = @($app.identity.userAssignedIdentities.PSObject.Properties.Name)
   $hasExpectedIdentity = @($assignedIds | Where-Object {
     [string]::Equals(
       ([string]$_).Trim(),
@@ -407,11 +407,13 @@ function Ensure-SecretLaneReference {
     [string]$AppName = "quiz-secret"
   )
   $expected = Get-SecretLaneExpectedReference -ResourceGroup $ResourceGroup
-  $assignedIds = @(az containerapp show -g $ResourceGroup -n $AppName `
-    --query "keys(identity.userAssignedIdentities)" -o tsv --only-show-errors)
+  $appJson = az containerapp show -g $ResourceGroup -n $AppName `
+    -o json --only-show-errors
   if ($LASTEXITCODE -ne 0) {
     throw "Could not read managed identities assigned to $AppName."
   }
+  $app = (($appJson | Out-String) | ConvertFrom-Json)
+  $assignedIds = @($app.identity.userAssignedIdentities.PSObject.Properties.Name)
   $hasExpectedIdentity = @($assignedIds | Where-Object {
     [string]::Equals(
       ([string]$_).Trim(),

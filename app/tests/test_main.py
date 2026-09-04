@@ -3681,9 +3681,9 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             common,
         )
         self.assertIn('$identityName = "id-zava-$token"', common)
+        self.assertIn("az containerapp secret list", common)
         self.assertIn(
-            "--query \"[?name=='$SecretName'] | "
-            "[0].{keyVaultUrl:keyVaultUrl,identity:identity}\"",
+            "$references | Where-Object { $_.name -eq $SecretName }",
             common,
         )
         self.assertIn("az containerapp identity assign", common)
@@ -3702,6 +3702,11 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("$statusCode -eq 200", common)
         self.assertIn("Assert-SecretLaneReference", common)
         self.assertNotIn("--show-values", common)
+        self.assertNotIn("keys(identity.userAssignedIdentities)", common)
+        self.assertIn(
+            "$app.identity.userAssignedIdentities.PSObject.Properties.Name",
+            common,
+        )
 
         break_ensure = break_secret.index("Ensure-SecretLaneReference")
         break_rotate = break_secret.index("Set-KvSecret")
