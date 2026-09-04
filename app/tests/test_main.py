@@ -3979,12 +3979,12 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             "perf": (
                 "Zava-quiz-api-latency-elevated",
                 'ContainerAppName_s == "quiz-perf"',
-                "| summarize P95 = percentile(ms, 95)",
+                "| where ms > 500",
             ),
             "query": (
                 "Zava-quiz-loading-latency-elevated",
                 'ContainerAppName_s == "quiz-query"',
-                "| summarize P95 = percentile(ms, 95)",
+                "| where ms > 500",
             ),
             "pool": (
                 "Zava-quiz-errors-elevated",
@@ -4104,17 +4104,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertNotIn("by bin(TimeGenerated, 5m)", alerts)
         self.assertEqual(
             alerts.count("| summarize AggregatedValue = count()"),
-            6,
-        )
-        self.assertEqual(
-            alerts.count("| summarize P95 = percentile(ms, 95)"),
-            2,
-        )
-        self.assertEqual(
-            alerts.count(
-                "| project AggregatedValue = coalesce(todouble(P95), 0.0)"
-            ),
-            2,
+            len(expected_alerts),
         )
         self.assertEqual(
             alerts.count("scopes: [ logAnalyticsWorkspaceId ]"),

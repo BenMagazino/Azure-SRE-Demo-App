@@ -201,11 +201,11 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize P95 = percentile(ms, 95)\n| project AggregatedValue = coalesce(todouble(P95), 0.0)'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
-          timeAggregation: 'Average'
+          timeAggregation: 'Total'
           operator: 'GreaterThan'
-          threshold: 500
+          threshold: 0
           failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
         }
       ]
@@ -230,11 +230,11 @@ resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where isnotnull(ms)\n| summarize P95 = percentile(ms, 95)\n| project AggregatedValue = coalesce(todouble(P95), 0.0)'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
-          timeAggregation: 'Average'
+          timeAggregation: 'Total'
           operator: 'GreaterThan'
-          threshold: 500
+          threshold: 0
           failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
         }
       ]
