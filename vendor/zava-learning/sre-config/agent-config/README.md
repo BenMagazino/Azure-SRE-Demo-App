@@ -20,7 +20,7 @@ supported SRE Agent data-plane APIs used by the Azure portal.
 | `skills/zava-reporting/SKILL.md` | Presents a branded **in-thread** executive summary (markdown + before/after visuals inline), then produces the downloadable deliverables (PPT deck / HTML email / Teams card), or whichever subset the agent requests — **deliverable-only, does not send** | data-plane skill PUT |
 | `skills/pagerduty-incident-update/SKILL.md` | PagerDuty communication & closure — acknowledge, post a symptom-only summary note (with PR/CR links), and resolve once recovery is verified | data-plane skill PUT |
 | `skills/servicenow-change-management/SKILL.md` | Single owner of the ServiceNow Change Request + attachment tools; applies after a PR is opened for the durable fix | data-plane skill PUT |
-| `incident-filter.json` | Symptom-keyed response routing (`titleContains: Zava` → default agent, autonomous, merging disabled so every scenario gets an independent thread) | incident filter create |
+| `incident-filter.json` | Symptom-keyed response routing scoped to the environment's exact Log Analytics workspace (`titleContains: Zava` → default agent, autonomous, merging disabled) | incident filter create |
 | `../knowledge-base/zava-learning-architecture.md` | Architecture KB | knowledge upload |
 | `../templates/zava-brand.md` | Zava corporate reporting/brand standard (colors, tone, layouts) — cited by the reporting skills via `SearchMemory` | knowledge upload (`zava-brand`) |
 | `../templates/zava-report-template.md` | Canonical incident-report skeleton + deck/email/Teams formats | knowledge upload (`zava-report-template`) |
@@ -32,6 +32,7 @@ supported SRE Agent data-plane APIs used by the Azure portal.
 - `@@REPO@@` — GitHub `owner/repo` for code-fix PRs (same repo that hosts the app + `infra/`)
 - `@@APP_INSIGHTS_ID@@` / `@@APP_INSIGHTS_NAME@@` / `@@LOG_ANALYTICS_ID@@` / `@@LOG_ANALYTICS_NAME@@`
 - `@@INCIDENT_PLATFORM@@` — `PagerDuty` (default) or `AzMonitor`
+- `@@LOG_ANALYTICS_WORKSPACE_RESOURCE_ID@@` — exact workspace resource ID used to isolate Azure Monitor incidents between parallel Zava environments
 
 ## Prerequisites
 

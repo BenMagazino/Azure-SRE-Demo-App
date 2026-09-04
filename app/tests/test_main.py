@@ -3451,14 +3451,17 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         upsert,
         http_json,
     ) -> None:
-        payload = main_module.zava_response_plan_payload()
+        workspace_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/log-zava"
+        payload = main_module.zava_response_plan_payload(workspace_id)
         self.assertIs(payload["mergeEnabled"], False)
+        self.assertEqual(payload["targetResource"], workspace_id)
         upsert.return_value = (200, json.dumps(payload))
         http_json.return_value = (200, json.dumps(payload))
 
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            workspace_id,
         )
 
         self.assertTrue(ready)
@@ -3475,6 +3478,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            workspace_id,
         )
         self.assertFalse(ready)
         self.assertIn("readback returned HTTP 404", error)
@@ -3484,12 +3488,13 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            workspace_id,
         )
         self.assertFalse(ready)
         self.assertIn("did not match", error)
 
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
-        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "5")
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "6")
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
         self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
@@ -3567,12 +3572,24 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             )
         )
         self.assertIs(incident_filter["filter"]["mergeEnabled"], False)
+        self.assertEqual(
+            incident_filter["filter"]["azMonitorFilterSettings"],
+            {
+                "targetResourceType": "microsoft.operationalinsights/workspaces",
+                "targetResource": "@@LOG_ANALYTICS_WORKSPACE_RESOURCE_ID@@",
+            },
+        )
         configure_agent = (
             main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
             / "scripts"
             / "configure-agent.mjs"
         ).read_text(encoding="utf-8")
         self.assertIn("mergeEnabled: false", configure_agent)
+        self.assertIn(
+            'targetResourceType: "microsoft.operationalinsights/workspaces"',
+            configure_agent,
+        )
+        self.assertIn("targetResource: law.id", configure_agent)
 
     def test_performance_runbook_requires_deterministic_pool_recovery(self) -> None:
         config_root = (

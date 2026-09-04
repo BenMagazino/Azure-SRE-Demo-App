@@ -685,7 +685,7 @@ ZAVA_CORE_SKILLS = (
     "zava-audit-report",
     "zava-reporting",
 )
-ZAVA_CORE_CONFIG_VERSION = "5"
+ZAVA_CORE_CONFIG_VERSION = "6"
 ZAVA_OPTIONAL_SKILLS = {
     "pagerduty": "pagerduty-incident-update",
     "servicenow": "servicenow-change-management",
@@ -2502,6 +2502,13 @@ def validate_zava_existing_lab(
             issues.append("The Zava Azure SRE Agent has no data-plane endpoint.")
 
     endpoint = str(agent_details.get("endpoint") or "").rstrip("/")
+    expected_workspace_resource_id = str(
+        _first_resource(
+            resources_by_type,
+            "microsoft.operationalinsights/workspaces",
+        ).get("id")
+        or ""
+    )
     integration_status: dict[str, str] = {
         "pagerduty": "not_configured",
         "servicenow": "not_configured",
@@ -2689,6 +2696,12 @@ def validate_zava_existing_lab(
                     filter_payload = {}
                 if (
                     filter_payload.get("titleContains") != "Zava"
+                    or str(
+                        filter_payload.get("targetResourceType") or ""
+                    ).casefold()
+                    != "microsoft.operationalinsights/workspaces"
+                    or str(filter_payload.get("targetResource") or "").casefold()
+                    != expected_workspace_resource_id.casefold()
                     or filter_payload.get("handlingAgent")
                     != "zava-incident-responder"
                     or filter_payload.get("agentMode") != "autonomous"
@@ -4984,7 +4997,12 @@ def parse_zava_agent_manifest(
     return properties
 
 
-def zava_response_plan_payload() -> dict[str, Any]:
+def zava_response_plan_payload(
+    log_analytics_workspace_resource_id: str,
+) -> dict[str, Any]:
+    workspace_id = log_analytics_workspace_resource_id.strip()
+    if not workspace_id:
+        raise ValueError("The Zava response plan requires a Log Analytics workspace.")
     return {
         "id": "zava-learning-response",
         "name": "Zava Learning Response",
@@ -4994,6 +5012,8 @@ def zava_response_plan_payload() -> dict[str, Any]:
         "titleContainsAll": [],
         "titleContainsAny": [],
         "titleNotContains": [],
+        "targetResourceType": "microsoft.operationalinsights/workspaces",
+        "targetResource": workspace_id,
         "handlingAgent": "zava-incident-responder",
         "agentMode": "autonomous",
         "maxAutomatedInvestigationAttempts": 3,
@@ -5003,11 +5023,18 @@ def zava_response_plan_payload() -> dict[str, Any]:
     }
 
 
-def zava_response_plan_is_valid(payload: Any) -> bool:
+def zava_response_plan_is_valid(
+    payload: Any,
+    log_analytics_workspace_resource_id: str,
+) -> bool:
+    workspace_id = log_analytics_workspace_resource_id.strip().casefold()
     return (
         isinstance(payload, dict)
         and payload.get("id") == "zava-learning-response"
         and payload.get("titleContains") == "Zava"
+        and str(payload.get("targetResourceType") or "").casefold()
+        == "microsoft.operationalinsights/workspaces"
+        and str(payload.get("targetResource") or "").strip().casefold() == workspace_id
         and payload.get("handlingAgent") == "zava-incident-responder"
         and payload.get("agentMode") == "autonomous"
         and payload.get("mergeEnabled") is False
@@ -5018,6 +5045,7 @@ def zava_response_plan_is_valid(payload: Any) -> bool:
 def ensure_zava_response_plan(
     endpoint: str,
     token: str,
+    log_analytics_workspace_resource_id: str,
 ) -> tuple[bool, str]:
     url = (
         f"{endpoint.rstrip('/')}/api/v1/incidentPlayground/filters/"
@@ -5026,7 +5054,7 @@ def ensure_zava_response_plan(
     status, response = upsert_response_plan(
         url,
         token,
-        zava_response_plan_payload(),
+        zava_response_plan_payload(log_analytics_workspace_resource_id),
     )
     if status not in (200, 201, 202, 204):
         return False, f"response-plan upsert returned HTTP {status}: {response[:300]}"
@@ -5037,7 +5065,10 @@ def ensure_zava_response_plan(
         payload = json.loads(response)
     except json.JSONDecodeError:
         return False, "response-plan readback returned invalid JSON"
-    if not zava_response_plan_is_valid(payload):
+    if not zava_response_plan_is_valid(
+        payload,
+        log_analytics_workspace_resource_id,
+    ):
         return False, "response-plan readback did not match the required Zava plan"
     return True, ""
 
@@ -5497,7 +5528,11 @@ def configure_zava_agent_core(
             )
             return False
     job.emit("step", name="Applying and verifying zava-learning-response")
-    plan_ready, plan_error = ensure_zava_response_plan(endpoint, token)
+    plan_ready, plan_error = ensure_zava_response_plan(
+        endpoint,
+        token,
+        values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"],
+    )
     if not plan_ready:
         job.emit(
             "error",
@@ -5794,7 +5829,11 @@ def configure_zava_optional_integrations(
         return False, status_by_integration
 
     if requested["pagerduty"]:
-        plan_ready, plan_error = ensure_zava_response_plan(endpoint, data_token)
+        plan_ready, plan_error = ensure_zava_response_plan(
+            endpoint,
+            data_token,
+            values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"],
+        )
         if not plan_ready:
             job.emit(
                 "error",

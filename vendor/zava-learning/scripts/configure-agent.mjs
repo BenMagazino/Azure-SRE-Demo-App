@@ -104,7 +104,7 @@ function azJson(args) {
 // Pick the PLATFORM resource (log-zava*/appi-zava*), never the agent's own workspace/app-insights.
 const pick = (arr, re) => (Array.isArray(arr) ? arr.find((x) => re.test(x?.name || "")) : null) || {};
 const law = pick(azJson(["monitor", "log-analytics", "workspace", "list", "-g", RG,
-  "--query", "[].{name:name,customerId:customerId}"]), /^log-zava/);
+  "--query", "[].{name:name,id:id,customerId:customerId}"]), /^log-zava/);
 const appi = pick(azJson(["monitor", "app-insights", "component", "show", "-g", RG,
   "--query", "[].{name:name,appId:appId}"]), /^appi-zava/);
 const acr = pick(azJson(["acr", "list", "-g", RG, "--query", "[].{name:name}"]), /^acr/);
@@ -115,6 +115,10 @@ const ACR_NAME = acr.name || "", CAE_NAME = cae.name || "";
 if (LAW_GUID) console.log(`law: ${LAW_NAME} (${LAW_GUID})`);
 if (APPI_APPID) console.log(`appinsights: ${APPI_NAME} (${APPI_APPID})`);
 if (!LAW_GUID || !APPI_APPID) console.log("(WARNING: some resource IDs unresolved; knowledge placeholders will be blank)");
+if (!law.id) {
+  console.error("The Zava response plan requires the environment's Log Analytics workspace resource ID.");
+  process.exit(1);
+}
 
 // ServiceNow creds are injected into staged tool copies at apply time (never committed): the
 // Python function-tool sandbox cannot read env/.env, so the creds must be literal in functionCode.
@@ -562,7 +566,7 @@ if (process.env.PAGERDUTY_API_TOKEN) {
 
 // ---- 4. Incident response plan / trigger (symptom-keyed, autonomous) ------
 // Created as a Microsoft.App/agents/incidentFilters child resource over ARM.
-// Symptom-only: titleContains "Zava" routes every student-facing Zava incident to the
+// Symptom-only: titleContains "Zava" routes this environment's Zava incidents to the
 // custom zava-incident-responder agent, which scopes the skill menu (allowedSkills + system
 // skills) and prescribes the ordered runbook (triage -> mitigate -> RCA -> evidence ->
 // recommendations -> PR -> Change Request -> report) via its instructions + critic-on-handoff
@@ -571,6 +575,8 @@ if (process.env.PAGERDUTY_API_TOKEN) {
 const filterSpec = {
   incidentPlatform: process.env.PAGERDUTY_API_TOKEN ? "PagerDuty" : "AzMonitor",
   titleContains: "Zava",
+  targetResourceType: "microsoft.operationalinsights/workspaces",
+  targetResource: law.id,
   agentMode: "autonomous",
   handlingAgent: "zava-incident-responder",
   isEnabled: true,
