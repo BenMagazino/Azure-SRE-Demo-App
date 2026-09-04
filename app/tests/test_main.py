@@ -4048,6 +4048,8 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                 alert_block = alerts[start:end]
                 for fragment in required_fragments:
                     self.assertIn(fragment, alert_block)
+                if scenario_id == "appgw":
+                    self.assertIn("threshold: 2", alert_block)
                 self.assertIn("| where TimeGenerated >= ago(30m)", alert_block)
                 self.assertIn(
                     "| where ingestion_time() >= ago(10m)",

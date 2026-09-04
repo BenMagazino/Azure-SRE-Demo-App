@@ -147,7 +147,7 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
-          threshold: 5
+          threshold: 2
           failingPeriods: { numberOfEvaluationPeriods: 1, minFailingPeriodsToAlert: 1 }
         }
       ]
