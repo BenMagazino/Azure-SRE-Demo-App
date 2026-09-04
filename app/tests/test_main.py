@@ -4434,9 +4434,9 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
 
         self.assertEqual(
             main_module.ZAVA_IMPACT_CONVERGENCE_SECONDS,
-            {"appgw": 240, "perf": 240, "secret": 240},
+            {"nsg": 240, "appgw": 240, "perf": 240, "secret": 240},
         )
-        for scenario_id in ("nsg", "app", "query", "pool"):
+        for scenario_id in ("app", "query", "pool"):
             with self.subTest(scenario_id=scenario_id):
                 scenario = scenarios[scenario_id]
                 scenario_url = (
