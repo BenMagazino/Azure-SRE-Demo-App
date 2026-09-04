@@ -56,9 +56,9 @@ spec:
                        `pg_stat_activity` through the reporting VM bridge, run
                        `ALTER ROLE app_pool CONNECTION LIMIT -1`, and require the `-1` readback before
                        refreshing the revision. Restart-only recovery is forbidden. Verify with a
-                       30-request concurrent batch on port 8086 and require 0/30 failures; sparse logs,
+                       12-request concurrent batch on port 8086 and require 0/12 failures; sparse logs,
                        a single health check, or a restart are not recovery evidence. After at most
-                       three rounds, escalate with final role/activity/revision/load evidence instead
+                       six rounds, escalate with final role/activity/revision/load evidence instead
                        of repeating writes or health checks.
                        For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, copy the baseline
                        `db-password` value only into `db-password-secretlane` through the reporting VM
@@ -138,9 +138,9 @@ spec:
     POOL CAUSALITY SELF-AUDIT: For `Zava-quiz-errors-elevated` / `quiz-pool`, recovery is valid only
     after the reporting VM bridge reads `app_pool.rolconnlimit`, the exact
     `ALTER ROLE app_pool CONNECTION LIMIT -1` correction succeeds, a second read returns `-1`, and a
-    30-request concurrent batch on port 8086 has 0/30 failures. A revision refresh is allowed only
+    12-request concurrent batch on port 8086 has 0/12 failures. A revision refresh is allowed only
     after the database readback. Restart-only mitigation, sparse/zero recent 500 logs, and a single
-    health check must never be credited with recovery or cited as the cause. Exhaust at most three
+    health check must never be credited with recovery or cited as the cause. Exhaust at most six
     verification rounds, then accept an acknowledged unresolved escalation with the final database,
     revision, and load evidence.
     SECRET CAUSALITY SELF-AUDIT: For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, reject

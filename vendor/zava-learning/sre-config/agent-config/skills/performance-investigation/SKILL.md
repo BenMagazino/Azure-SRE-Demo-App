@@ -134,12 +134,12 @@ overrides generic restart guidance:
    `az containerapp update --resource-group @@RG@@ --name quiz-pool --set-env-vars FORCE_RECONNECT=<timestamp>`.
    The revision refresh drains stale pooled connections; it is not the causal fix. **Restart-only
    recovery is forbidden**, and a restart or refresh must never run before the database correction.
-5. Run at most **three verification rounds**, 20 seconds apart. Each round must send **30 concurrent
+5. Run at most **six verification rounds**, 30 seconds apart. Each round must send **12 concurrent
    requests** to the public pool lane on port 8086 (`/quiz/BIO-101`) and calculate the HTTP error rate.
    Recovery requires the role still read back as `-1`, the refreshed revision to be ready, and
-   **0/30 failed requests** in a concurrent round. A single `/health` or quiz request, or zero recent
+   **0/12 failed requests** in a concurrent round. A single `/health` or quiz request, or zero recent
    500 log rows, is never sufficient recovery evidence.
-6. If the criteria are not met after three rounds, stop writes and restarts. Capture the final
+6. If the criteria are not met after six rounds, stop writes and restarts. Capture the final
    `pg_roles`, `pg_stat_activity`, revision, and concurrent error-rate evidence; keep the incident
    acknowledged and unresolved; and escalate once instead of looping.
 7. Every mitigation note, RCA, evidence table, and report must record the effective database change

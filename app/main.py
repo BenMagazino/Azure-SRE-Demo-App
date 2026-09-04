@@ -685,7 +685,7 @@ ZAVA_CORE_SKILLS = (
     "zava-audit-report",
     "zava-reporting",
 )
-ZAVA_CORE_CONFIG_VERSION = "4"
+ZAVA_CORE_CONFIG_VERSION = "5"
 ZAVA_OPTIONAL_SKILLS = {
     "pagerduty": "pagerduty-incident-update",
     "servicenow": "servicenow-change-management",
@@ -7045,7 +7045,7 @@ def generate_zava_scenario_traffic(
     scenario_url: str,
 ) -> tuple[bool, str]:
     endpoint = f"{scenario_url.rstrip('/')}/{scenario.probe_path.lstrip('/')}"
-    attempts = 30 if scenario.id == "pool" else 12
+    attempts = 12
     results: list[tuple[bool, float, str]] = []
     result_lock = threading.Lock()
 

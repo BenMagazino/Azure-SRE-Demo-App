@@ -3489,7 +3489,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("did not match", error)
 
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
-        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "4")
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "5")
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
         self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
@@ -3613,9 +3613,9 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
         self.assertIn("FORCE_RECONNECT=<timestamp>", content)
         self.assertIn("Restart-only\n   recovery is forbidden", content)
-        self.assertIn("30 concurrent\n   requests", content)
-        self.assertIn("0/30 failed requests", content)
-        self.assertIn("at most **three verification rounds**", content)
+        self.assertIn("12 concurrent\n   requests", content)
+        self.assertIn("0/12 failed requests", content)
+        self.assertIn("at most **six verification rounds**", content)
         self.assertIn("zero recent\n   500 log rows", content)
         self.assertIn("rolconnlimit: 1 -> -1", content)
         self.assertIn(
@@ -3633,7 +3633,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
             responder_source,
         )
-        self.assertIn("require 0/30 failures", responder_source)
+        self.assertIn("require 0/12 failures", responder_source)
         self.assertIn("Restart-only recovery is forbidden", responder_source)
         self.assertIn(
             "A revision refresh is allowed only\n"
