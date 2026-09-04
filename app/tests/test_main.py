@@ -3147,6 +3147,41 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         main_module.clear_in_memory_secrets("zava-learning", "atomic-test")
 
     @patch("app.main.time.sleep")
+    @patch("app.main.run_capture")
+    def test_zava_alert_activation_cycles_all_rules(
+        self,
+        run_capture,
+        sleep,
+    ) -> None:
+        ids = [f"/alerts/{index}" for index in range(8)]
+        run_capture.side_effect = [(True, json.dumps(ids))] + [(True, "")] * 16
+        job = Job()
+
+        success = main_module.activate_zava_alert_rules(job, "rg-zava")
+
+        self.assertTrue(success)
+        self.assertEqual(run_capture.call_count, 17)
+        sleep.assert_called_once_with(10)
+        update_calls = run_capture.call_args_list[1:]
+        self.assertTrue(
+            all(
+                call.args[0][:3] == ["az", "resource", "update"]
+                for call in update_calls
+            )
+        )
+
+    @patch("app.main.run_capture")
+    def test_zava_alert_activation_fails_closed_on_missing_rules(
+        self,
+        run_capture,
+    ) -> None:
+        run_capture.return_value = (True, json.dumps(["/alerts/one"]))
+        job = Job()
+
+        self.assertFalse(main_module.activate_zava_alert_rules(job, "rg-zava"))
+        self.assertEqual(list(job.events.queue)[-1]["type"], "error")
+
+    @patch("app.main.time.sleep")
     @patch("app.main.run_process")
     def test_zava_provision_retries_key_vault_rbac_propagation(
         self,
@@ -3359,6 +3394,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                 "run_process",
                 return_value=(True, ""),
             ) as run_process_mock,
+            patch.object(main_module, "activate_zava_alert_rules", return_value=True),
             patch.object(
                 main_module,
                 "hydrate_zava_runtime_outputs",

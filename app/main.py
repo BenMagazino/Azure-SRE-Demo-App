@@ -3409,6 +3409,56 @@ def run_zava_infrastructure_provision(
     return False
 
 
+def activate_zava_alert_rules(job: Job, resource_group: str) -> bool:
+    success, output = run_capture(
+        [
+            "az", "resource", "list",
+            "--resource-group", resource_group,
+            "--resource-type", "Microsoft.Insights/scheduledQueryRules",
+            "--query", "[].id",
+            "--output", "json",
+        ],
+        timeout=90,
+    )
+    try:
+        alert_ids = json.loads(output) if success else None
+    except json.JSONDecodeError:
+        alert_ids = None
+    ids = [
+        str(item).strip()
+        for item in (alert_ids or [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    if len(ids) != ZAVA_REQUIRED_ALERT_COUNT:
+        job.emit(
+            "error",
+            message=(
+                "Unable to activate all Zava alert rules; "
+                f"expected {ZAVA_REQUIRED_ALERT_COUNT}, found {len(ids)}."
+            ),
+        )
+        return False
+    job.emit("step", name="Activating Zava scenario alert evaluation")
+    for enabled in ("false", "true"):
+        for alert_id in ids:
+            success, _ = run_capture(
+                [
+                    "az", "resource", "update",
+                    "--ids", alert_id,
+                    "--api-version", "2023-03-15-preview",
+                    "--set", f"properties.enabled={enabled}",
+                    "--output", "none",
+                ],
+                timeout=90,
+            )
+            if not success:
+                job.emit("error", message="Unable to activate a Zava alert rule.")
+                return False
+        if enabled == "false":
+            time.sleep(10)
+    return True
+
+
 def resolved_process_command(command: list[str]) -> Optional[list[str]]:
     resolved = shutil.which(command[0])
     if resolved is None:
@@ -6615,6 +6665,9 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
     )
     if not success:
         job.emit("error", message="Zava ACR build or post-provisioning failed.")
+        job.finish(False, 1)
+        return
+    if not activate_zava_alert_rules(job, resource_group):
         job.finish(False, 1)
         return
     if preserve_agent_configuration:
