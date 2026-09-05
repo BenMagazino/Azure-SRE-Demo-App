@@ -18,8 +18,8 @@ param pagerDutyConfigured bool = false
 var hasPagerDuty = !empty(pagerDutyWebhookUrl)
 var routePagerDuty = hasPagerDuty || pagerDutyConfigured
 // Resource logs can arrive 3-20 minutes after TimeGenerated. Keep that event-time
-// eligibility, but only evaluate rows ingested in the last 10 minutes so a burst
-// is caught by at least one PT5M evaluation and then ages out for auto-mitigation.
+// eligibility, but only evaluate rows ingested in the last 20 minutes so the SRE
+// incident poller has time to consume the alert before it auto-mitigates.
 // Ungrouped summaries emit one zero-valued row when no eligible records remain,
 // allowing stateful alerts to resolve instead of treating a healthy window as NoData.
 var alertEvaluationFrequency = 'PT5M'
@@ -56,7 +56,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-nsg-listener"\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-nsg-listener"\n| extend status = toint(httpStatus_d)\n| where status == 499 or status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -85,7 +85,7 @@ resource quizContentUnavailable 'Microsoft.Insights/scheduledQueryRules@2023-03-
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-app-listener"\n| extend status = toint(httpStatus_d)\n| where status == 404 or status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-app-listener"\n| extend status = toint(httpStatus_d)\n| where status == 404 or status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -114,7 +114,7 @@ resource quizLaunchErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-0
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-secret-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-secret-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -143,7 +143,7 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -172,7 +172,7 @@ resource quizErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-pool-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-pool-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -201,7 +201,7 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -230,7 +230,7 @@ resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -259,7 +259,7 @@ resource gradeExportsFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
     criteria: {
       allOf: [
         {
-          query: 'Syslog\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(10m)\n| where ProcessName == "zava-export"\n| where SyslogMessage has "FAILED"\n| summarize AggregatedValue = count()'
+          query: 'Syslog\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ProcessName == "zava-export"\n| where SyslogMessage has "FAILED"\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'

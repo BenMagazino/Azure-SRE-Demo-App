@@ -4110,7 +4110,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                     self.assertIn("threshold: 2", alert_block)
                 self.assertIn("| where TimeGenerated >= ago(30m)", alert_block)
                 self.assertIn(
-                    "| where ingestion_time() >= ago(10m)",
+                    "| where ingestion_time() >= ago(20m)",
                     alert_block,
                 )
                 self.assertIn(
@@ -4156,7 +4156,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             len(expected_alerts),
         )
         self.assertEqual(
-            alerts.count("| where ingestion_time() >= ago(10m)"),
+            alerts.count("| where ingestion_time() >= ago(20m)"),
             len(expected_alerts),
         )
         self.assertNotIn("by bin(TimeGenerated, 5m)", alerts)
