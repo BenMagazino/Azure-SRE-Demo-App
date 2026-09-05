@@ -7,7 +7,7 @@
     "priorities": [ "Sev0", "Sev1", "Sev2", "Sev3", "Sev4" ],
     "incidentType": "",
     "alertId": "",
-    "titleContains": "Zava",
+    "titleContains": "Zava-@@ENVIRONMENT@@-",
     "titleContainsAll": [],
     "titleContainsAny": [],
     "titleNotContains": [],

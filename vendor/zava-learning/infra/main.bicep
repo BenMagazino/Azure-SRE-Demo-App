@@ -266,6 +266,7 @@ module alerts 'modules/alerts.bicep' = {
   params: {
     location: location
     resourceToken: resourceToken
+    environmentName: environmentName
     tags: tags
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
     pagerDutyWebhookUrl: pagerDutyWebhookUrl

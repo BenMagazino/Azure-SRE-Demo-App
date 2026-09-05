@@ -641,17 +641,17 @@ ZAVA_CONTAINER_APPS = frozenset({
     "quiz-secret",
 })
 ZAVA_LANE_PORTS = tuple(range(8081, 8088))
-ZAVA_SCENARIO_ALERT_NAMES = {
-    "nsg": "Zava-quiz-launch-failing",
-    "appgw": "Zava-portal-5xx-elevated",
-    "app": "Zava-quiz-content-unavailable",
-    "perf": "Zava-quiz-api-latency-elevated",
-    "query": "Zava-quiz-loading-latency-elevated",
-    "pool": "Zava-quiz-errors-elevated",
-    "secret": "Zava-quiz-launch-errors-elevated",
-    "disk": "Zava-grade-exports-failing",
+ZAVA_SCENARIO_ALERT_SUFFIXES = {
+    "nsg": "quiz-launch-failing",
+    "appgw": "portal-5xx-elevated",
+    "app": "quiz-content-unavailable",
+    "perf": "quiz-api-latency-elevated",
+    "query": "quiz-loading-latency-elevated",
+    "pool": "quiz-errors-elevated",
+    "secret": "quiz-launch-errors-elevated",
+    "disk": "grade-exports-failing",
 }
-ZAVA_REQUIRED_ALERT_COUNT = len(ZAVA_SCENARIO_ALERT_NAMES)
+ZAVA_REQUIRED_ALERT_COUNT = len(ZAVA_SCENARIO_ALERT_SUFFIXES)
 ZAVA_IMPACT_CONVERGENCE_SECONDS = {
     "nsg": 240,
     "appgw": 240,
@@ -660,6 +660,18 @@ ZAVA_IMPACT_CONVERGENCE_SECONDS = {
 }
 ZAVA_IMPACT_RETRY_SECONDS = 15
 ZAVA_RESOURCE_LOG_INGESTION_SECONDS = 20 * 60
+
+
+def zava_alert_prefix(environment: str) -> str:
+    return f"Zava-{zava_environment_suffix(environment)}-"
+
+
+def zava_scenario_alert_names(environment: str) -> dict[str, str]:
+    prefix = zava_alert_prefix(environment)
+    return {
+        scenario_id: prefix + suffix
+        for scenario_id, suffix in ZAVA_SCENARIO_ALERT_SUFFIXES.items()
+    }
 ZAVA_MONITOR_SIGNAL_MARGIN_SECONDS = 2 * 60
 ZAVA_MONITOR_SIGNAL_TIMEOUT_SECONDS = (
     ZAVA_RESOURCE_LOG_INGESTION_SECONDS + ZAVA_MONITOR_SIGNAL_MARGIN_SECONDS
@@ -686,7 +698,7 @@ ZAVA_CORE_SKILLS = (
     "zava-audit-report",
     "zava-reporting",
 )
-ZAVA_CORE_CONFIG_VERSION = "6"
+ZAVA_CORE_CONFIG_VERSION = "7"
 ZAVA_OPTIONAL_SKILLS = {
     "pagerduty": "pagerduty-incident-update",
     "servicenow": "servicenow-change-management",
@@ -2252,9 +2264,12 @@ def validate_zava_existing_lab(
         str(alert.get("name") or "").casefold()
         for alert in scheduled_query_rules
     }
+    expected_alert_names = zava_scenario_alert_names(
+        str(environment.get("environment") or "")
+    )
     missing_alert_names = [
         name
-        for name in ZAVA_SCENARIO_ALERT_NAMES.values()
+        for name in expected_alert_names.values()
         if name.casefold() not in deployed_alert_names
     ]
     if missing_alert_names:
@@ -2696,7 +2711,8 @@ def validate_zava_existing_lab(
                 except json.JSONDecodeError:
                     filter_payload = {}
                 if (
-                    filter_payload.get("titleContains") != "Zava"
+                    filter_payload.get("titleContains")
+                    != zava_alert_prefix(str(environment.get("environment") or ""))
                     or str(
                         filter_payload.get("targetResourceType") or ""
                     ).casefold()
@@ -3409,38 +3425,56 @@ def run_zava_infrastructure_provision(
     return False
 
 
-def activate_zava_alert_rules(job: Job, resource_group: str) -> bool:
+def activate_zava_alert_rules(
+    job: Job,
+    resource_group: str,
+    environment: str,
+) -> bool:
     success, output = run_capture(
         [
             "az", "resource", "list",
             "--resource-group", resource_group,
             "--resource-type", "Microsoft.Insights/scheduledQueryRules",
-            "--query", "[].id",
+            "--query", "[].{id:id,name:name}",
             "--output", "json",
         ],
         timeout=90,
     )
     try:
-        alert_ids = json.loads(output) if success else None
+        alert_records = json.loads(output) if success else None
     except json.JSONDecodeError:
-        alert_ids = None
-    ids = [
-        str(item).strip()
-        for item in (alert_ids or [])
-        if isinstance(item, str) and str(item).strip()
+        alert_records = None
+    records = [
+        item
+        for item in (alert_records or [])
+        if isinstance(item, dict)
+        and str(item.get("id") or "").strip()
+        and str(item.get("name") or "").strip()
     ]
-    if len(ids) != ZAVA_REQUIRED_ALERT_COUNT:
+    expected_names = {
+        name.casefold()
+        for name in zava_scenario_alert_names(environment).values()
+    }
+    expected_ids = [
+        str(item["id"]).strip()
+        for item in records
+        if str(item["name"]).casefold() in expected_names
+    ]
+    if len(expected_ids) != ZAVA_REQUIRED_ALERT_COUNT:
         job.emit(
             "error",
             message=(
                 "Unable to activate all Zava alert rules; "
-                f"expected {ZAVA_REQUIRED_ALERT_COUNT}, found {len(ids)}."
+                f"expected {ZAVA_REQUIRED_ALERT_COUNT}, found {len(expected_ids)}."
             ),
         )
         return False
     job.emit("step", name="Activating Zava scenario alert evaluation")
-    for enabled in ("false", "true"):
-        for alert_id in ids:
+    for enabled, alert_ids in (
+        ("false", [str(item["id"]).strip() for item in records]),
+        ("true", expected_ids),
+    ):
+        for alert_id in alert_ids:
             success, _ = run_capture(
                 [
                     "az", "resource", "update",
@@ -5049,6 +5083,7 @@ def parse_zava_agent_manifest(
 
 
 def zava_response_plan_payload(
+    environment: str,
     log_analytics_workspace_resource_id: str,
 ) -> dict[str, Any]:
     workspace_id = log_analytics_workspace_resource_id.strip()
@@ -5059,7 +5094,7 @@ def zava_response_plan_payload(
         "name": "Zava Learning Response",
         "priorities": ["Sev0", "Sev1", "Sev2", "Sev3", "Sev4"],
         "alertId": "",
-        "titleContains": "Zava",
+        "titleContains": zava_alert_prefix(environment),
         "titleContainsAll": [],
         "titleContainsAny": [],
         "titleNotContains": [],
@@ -5076,13 +5111,14 @@ def zava_response_plan_payload(
 
 def zava_response_plan_is_valid(
     payload: Any,
+    environment: str,
     log_analytics_workspace_resource_id: str,
 ) -> bool:
     workspace_id = log_analytics_workspace_resource_id.strip().casefold()
     return (
         isinstance(payload, dict)
         and payload.get("id") == "zava-learning-response"
-        and payload.get("titleContains") == "Zava"
+        and payload.get("titleContains") == zava_alert_prefix(environment)
         and str(payload.get("targetResourceType") or "").casefold()
         == "microsoft.operationalinsights/workspaces"
         and str(payload.get("targetResource") or "").strip().casefold() == workspace_id
@@ -5096,6 +5132,7 @@ def zava_response_plan_is_valid(
 def ensure_zava_response_plan(
     endpoint: str,
     token: str,
+    environment: str,
     log_analytics_workspace_resource_id: str,
 ) -> tuple[bool, str]:
     url = (
@@ -5105,7 +5142,10 @@ def ensure_zava_response_plan(
     status, response = upsert_response_plan(
         url,
         token,
-        zava_response_plan_payload(log_analytics_workspace_resource_id),
+        zava_response_plan_payload(
+            environment,
+            log_analytics_workspace_resource_id,
+        ),
     )
     if status not in (200, 201, 202, 204):
         return False, f"response-plan upsert returned HTTP {status}: {response[:300]}"
@@ -5118,6 +5158,7 @@ def ensure_zava_response_plan(
         return False, "response-plan readback returned invalid JSON"
     if not zava_response_plan_is_valid(
         payload,
+        environment,
         log_analytics_workspace_resource_id,
     ):
         return False, "response-plan readback did not match the required Zava plan"
@@ -5582,6 +5623,7 @@ def configure_zava_agent_core(
     plan_ready, plan_error = ensure_zava_response_plan(
         endpoint,
         token,
+        environment,
         values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"],
     )
     if not plan_ready:
@@ -5883,6 +5925,7 @@ def configure_zava_optional_integrations(
         plan_ready, plan_error = ensure_zava_response_plan(
             endpoint,
             data_token,
+            environment,
             values["LOG_ANALYTICS_WORKSPACE_RESOURCE_ID"],
         )
         if not plan_ready:
@@ -6667,7 +6710,7 @@ def reconcile_zava(job: Job, restoring: bool = False) -> None:
         job.emit("error", message="Zava ACR build or post-provisioning failed.")
         job.finish(False, 1)
         return
-    if not activate_zava_alert_rules(job, resource_group):
+    if not activate_zava_alert_rules(job, resource_group, environment):
         job.finish(False, 1)
         return
     if preserve_agent_configuration:

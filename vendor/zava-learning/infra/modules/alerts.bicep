@@ -5,6 +5,8 @@
 param location string
 @description('Resource name suffix token.')
 param resourceToken string
+@description('Owning azd environment name used to isolate alert titles and response plans.')
+param environmentName string
 @description('Tags applied to all resources.')
 param tags object = {}
 @description('Log Analytics workspace resource id (alert scope).')
@@ -24,6 +26,7 @@ var routePagerDuty = hasPagerDuty || pagerDutyConfigured
 // allowing stateful alerts to resolve instead of treating a healthy window as NoData.
 var alertEvaluationFrequency = 'PT5M'
 var delayedTelemetryWindow = 'PT30M'
+var alertPrefix = 'Zava-${environmentName}'
 
 resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (hasPagerDuty) {
   name: 'ag-zava-pagerduty-${resourceToken}'
@@ -43,7 +46,7 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = if (hasPager
 }
 
 resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-launch-failing'
+  name: '${alertPrefix}-quiz-launch-failing'
   location: location
   tags: tags
   properties: {
@@ -72,7 +75,7 @@ resource quizLaunchFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
 }
 
 resource quizContentUnavailable 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-content-unavailable'
+  name: '${alertPrefix}-quiz-content-unavailable'
   location: location
   tags: tags
   properties: {
@@ -101,7 +104,7 @@ resource quizContentUnavailable 'Microsoft.Insights/scheduledQueryRules@2023-03-
 }
 
 resource quizLaunchErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-launch-errors-elevated'
+  name: '${alertPrefix}-quiz-launch-errors-elevated'
   location: location
   tags: tags
   properties: {
@@ -130,7 +133,7 @@ resource quizLaunchErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-0
 }
 
 resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-portal-5xx-elevated'
+  name: '${alertPrefix}-portal-5xx-elevated'
   location: location
   tags: tags
   properties: {
@@ -159,7 +162,7 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
 }
 
 resource quizErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-errors-elevated'
+  name: '${alertPrefix}-quiz-errors-elevated'
   location: location
   tags: tags
   properties: {
@@ -188,7 +191,7 @@ resource quizErrorsElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
 }
 
 resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-api-latency-elevated'
+  name: '${alertPrefix}-quiz-api-latency-elevated'
   location: location
   tags: tags
   properties: {
@@ -217,7 +220,7 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
 }
 
 resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-quiz-loading-latency-elevated'
+  name: '${alertPrefix}-quiz-loading-latency-elevated'
   location: location
   tags: tags
   properties: {
@@ -246,7 +249,7 @@ resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023
 }
 
 resource gradeExportsFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
-  name: 'Zava-grade-exports-failing'
+  name: '${alertPrefix}-grade-exports-failing'
   location: location
   tags: tags
   properties: {

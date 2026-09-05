@@ -51,7 +51,7 @@ spec:
                        and escalate instead of polling or writing again.
                        Every note, RCA, and report must state the effective change actually read back:
                        `access: Deny -> Allow`. Never claim a priority-only change restored service.
-                       For `Zava-quiz-errors-elevated` / `quiz-pool`, follow performance-investigation's
+                       For an alert ending `-quiz-errors-elevated` / `quiz-pool`, follow performance-investigation's
                        mandatory connection-exhaustion workflow. Read `app_pool.rolconnlimit` and
                        `pg_stat_activity` through the reporting VM bridge, run
                        `ALTER ROLE app_pool CONNECTION LIMIT -1`, and require the `-1` readback before
@@ -60,7 +60,7 @@ spec:
                        a single health check, or a restart are not recovery evidence. After at most
                        six rounds, escalate with final role/activity/revision/load evidence instead
                        of repeating writes or health checks.
-                       For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, copy the baseline
+                       For an alert ending `-quiz-launch-errors-elevated` / `quiz-secret`, copy the baseline
                        `db-password` value only into `db-password-secretlane` through the reporting VM
                        bridge; never print either value. Read and, if needed, restore `pg-password` to
                        the versionless Key Vault URL ending `/secrets/db-password-secretlane` with the
@@ -135,7 +135,7 @@ spec:
     `--access Allow` update is read back and both the `quiz-nsg` backend and port 8081 endpoint recover.
     Every note, RCA, evidence table, and report must state the observed effective change as
     `access: Deny -> Allow`. A priority-only change is never accepted or described as causal recovery.
-    POOL CAUSALITY SELF-AUDIT: For `Zava-quiz-errors-elevated` / `quiz-pool`, recovery is valid only
+    POOL CAUSALITY SELF-AUDIT: For an alert ending `-quiz-errors-elevated` / `quiz-pool`, recovery is valid only
     after the reporting VM bridge reads `app_pool.rolconnlimit`, the exact
     `ALTER ROLE app_pool CONNECTION LIMIT -1` correction succeeds, a second read returns `-1`, and a
     12-request concurrent batch on port 8086 has 0/12 failures. A revision refresh is allowed only
@@ -143,7 +143,7 @@ spec:
     health check must never be credited with recovery or cited as the cause. Exhaust at most six
     verification rounds, then accept an acknowledged unresolved escalation with the final database,
     revision, and load evidence.
-    SECRET CAUSALITY SELF-AUDIT: For `Zava-quiz-launch-errors-elevated` / `quiz-secret`, reject
+    SECRET CAUSALITY SELF-AUDIT: For an alert ending `-quiz-launch-errors-elevated` / `quiz-secret`, reject
     completion unless the baseline value was copied only into `db-password-secretlane`, the
     `pg-password` metadata readback still ends `/secrets/db-password-secretlane` with the expected
     Zava app UAMI, a new revision is latest-ready and `Running`, and port 8087 `/quiz/BIO-101` returns

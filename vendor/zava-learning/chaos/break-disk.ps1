@@ -4,7 +4,7 @@
   grade-export job can no longer write its export files and fails with "No space left
   on device". This is live operational drift on the VM (no IaC change): the export
   worker keeps running on its timer but every cycle now fails, which the symptom-only
-  Azure Monitor alert (Zava-grade-exports-failing) pages on. The SRE Agent must diagnose
+  Azure Monitor grade-exports-failing alert pages on. The SRE Agent must diagnose
   the disk-pressure root cause from Syslog / disk telemetry and free space (fix-disk.ps1).
 #>
 param(

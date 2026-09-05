@@ -3153,11 +3153,20 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         run_capture,
         sleep,
     ) -> None:
-        ids = [f"/alerts/{index}" for index in range(8)]
-        run_capture.side_effect = [(True, json.dumps(ids))] + [(True, "")] * 16
+        records = [
+            {"id": f"/alerts/{index}", "name": name}
+            for index, name in enumerate(
+                main_module.zava_scenario_alert_names("auto-6").values()
+            )
+        ]
+        run_capture.side_effect = [(True, json.dumps(records))] + [(True, "")] * 16
         job = Job()
 
-        success = main_module.activate_zava_alert_rules(job, "rg-zava")
+        success = main_module.activate_zava_alert_rules(
+            job,
+            "rg-zava",
+            "auto-6",
+        )
 
         self.assertTrue(success)
         self.assertEqual(run_capture.call_count, 17)
@@ -3175,10 +3184,15 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self,
         run_capture,
     ) -> None:
-        run_capture.return_value = (True, json.dumps(["/alerts/one"]))
+        run_capture.return_value = (
+            True,
+            json.dumps([{"id": "/alerts/one", "name": "Zava-old"}]),
+        )
         job = Job()
 
-        self.assertFalse(main_module.activate_zava_alert_rules(job, "rg-zava"))
+        self.assertFalse(
+            main_module.activate_zava_alert_rules(job, "rg-zava", "auto-6")
+        )
         self.assertEqual(list(job.events.queue)[-1]["type"], "error")
 
     @patch("app.main.time.sleep")
@@ -3488,7 +3502,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         http_json,
     ) -> None:
         workspace_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/log-zava"
-        payload = main_module.zava_response_plan_payload(workspace_id)
+        payload = main_module.zava_response_plan_payload("auto-6", workspace_id)
         self.assertIs(payload["mergeEnabled"], False)
         self.assertEqual(payload["targetResource"], workspace_id)
         upsert.return_value = (200, json.dumps(payload))
@@ -3497,6 +3511,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            "auto-6",
             workspace_id,
         )
 
@@ -3514,6 +3529,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            "auto-6",
             workspace_id,
         )
         self.assertFalse(ready)
@@ -3524,13 +3540,14 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ready, error = main_module.ensure_zava_response_plan(
             "https://agent.example.test",
             "token",
+            "auto-6",
             workspace_id,
         )
         self.assertFalse(ready)
         self.assertIn("did not match", error)
 
     def test_zava_core_asset_catalog_matches_baseline(self) -> None:
-        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "6")
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "7")
         self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
         self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
         self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
@@ -3609,6 +3626,10 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
         self.assertIs(incident_filter["filter"]["mergeEnabled"], False)
         self.assertEqual(
+            incident_filter["filter"]["titleContains"],
+            "Zava-@@ENVIRONMENT@@-",
+        )
+        self.assertEqual(
             incident_filter["filter"]["azMonitorFilterSettings"],
             {
                 "targetResourceType": "microsoft.operationalinsights/workspaces",
@@ -3639,7 +3660,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         )
         content = skill["skillContent"]
         self.assertIn(
-            "When the trigger is `Zava-quiz-errors-elevated` or the affected "
+            "When the trigger ends with `-quiz-errors-elevated` or the affected "
             "workload is `quiz-pool`",
             content,
         )
@@ -4020,53 +4041,56 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         expected_alerts = {
             "nsg": (
-                "Zava-quiz-launch-failing",
+                "quiz-launch-failing",
                 'listenerName_s == "quiz-nsg-listener"',
                 "| where status == 499 or status >= 500",
             ),
             "appgw": (
-                "Zava-portal-5xx-elevated",
+                "portal-5xx-elevated",
                 'listenerName_s == "quiz-appgw-listener"',
                 "| where status >= 500",
             ),
             "app": (
-                "Zava-quiz-content-unavailable",
+                "quiz-content-unavailable",
                 'listenerName_s == "quiz-app-listener"',
                 "| where status == 404 or status >= 500",
             ),
             "perf": (
-                "Zava-quiz-api-latency-elevated",
+                "quiz-api-latency-elevated",
                 'ContainerAppName_s == "quiz-perf"',
                 "| where ms > 500",
             ),
             "query": (
-                "Zava-quiz-loading-latency-elevated",
+                "quiz-loading-latency-elevated",
                 'ContainerAppName_s == "quiz-query"',
                 "| where ms > 500",
             ),
             "pool": (
-                "Zava-quiz-errors-elevated",
+                "quiz-errors-elevated",
                 'listenerName_s == "quiz-pool-listener"',
                 "| where status >= 500",
             ),
             "secret": (
-                "Zava-quiz-launch-errors-elevated",
+                "quiz-launch-errors-elevated",
                 'listenerName_s == "quiz-secret-listener"',
                 "| where status >= 500",
             ),
             "disk": (
-                "Zava-grade-exports-failing",
+                "grade-exports-failing",
                 'ProcessName == "zava-export"',
                 'SyslogMessage has "FAILED"',
             ),
         }
-        expected_alert_names = {
-            scenario_id: contract[0]
-            for scenario_id, contract in expected_alerts.items()
-        }
+        expected_alert_names = main_module.zava_scenario_alert_names("auto-6")
         self.assertEqual(
-            main_module.ZAVA_SCENARIO_ALERT_NAMES,
-            expected_alert_names,
+            main_module.ZAVA_SCENARIO_ALERT_SUFFIXES,
+            {
+                scenario_id: contract[0]
+                for scenario_id, contract in expected_alerts.items()
+            },
+        )
+        self.assertTrue(
+            all(name.startswith("Zava-auto-6-") for name in expected_alert_names.values())
         )
         self.assertEqual(main_module.ZAVA_REQUIRED_ALERT_COUNT, 8)
         root_cause_tokens = {
@@ -4098,7 +4122,7 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         for scenario_id, contract in expected_alerts.items():
             alert_name, *required_fragments = contract
             with self.subTest(scenario_id=scenario_id, alert_name=alert_name):
-                name_marker = f"name: '{alert_name}'"
+                name_marker = f"name: '${{alertPrefix}}-{alert_name}'"
                 start = alerts.index(name_marker)
                 end = alerts.find("\nresource ", start)
                 if end < 0:
@@ -4123,19 +4147,19 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
                     alert_block,
                 )
         for alert_name in (
-            "Zava-portal-5xx-elevated",
-            "Zava-quiz-errors-elevated",
-            "Zava-quiz-launch-errors-elevated",
+            "portal-5xx-elevated",
+            "quiz-errors-elevated",
+            "quiz-launch-errors-elevated",
         ):
-            start = alerts.index(f"name: '{alert_name}'")
+            start = alerts.index(f"name: '${{alertPrefix}}-{alert_name}'")
             end = alerts.find("\nresource ", start)
             alert_block = alerts[start:end]
             self.assertNotIn("status == 404", alert_block)
             self.assertNotIn("status == 499", alert_block)
-        nsg_start = alerts.index("name: 'Zava-quiz-launch-failing'")
+        nsg_start = alerts.index("name: '${alertPrefix}-quiz-launch-failing'")
         nsg_end = alerts.find("\nresource ", nsg_start)
         self.assertNotIn("status == 404", alerts[nsg_start:nsg_end])
-        app_start = alerts.index("name: 'Zava-quiz-content-unavailable'")
+        app_start = alerts.index("name: '${alertPrefix}-quiz-content-unavailable'")
         app_end = alerts.find("\nresource ", app_start)
         self.assertNotIn("status == 499", alerts[app_start:app_end])
         self.assertNotIn("listenerName_s in (", alerts)
@@ -4179,7 +4203,10 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             simulator,
         )
         self.assertEqual(len(simulator_alerts), len(expected_alerts))
-        self.assertEqual(set(simulator_alerts), set(expected_alert_names.values()))
+        self.assertEqual(
+            set(simulator_alerts),
+            {f"Zava-{suffix}" for suffix in main_module.ZAVA_SCENARIO_ALERT_SUFFIXES.values()},
+        )
 
     @patch("app.main.time.sleep")
     @patch("app.main.time.monotonic", side_effect=[0, 0, 10, 30])

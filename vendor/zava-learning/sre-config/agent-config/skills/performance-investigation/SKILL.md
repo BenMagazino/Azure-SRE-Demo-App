@@ -82,7 +82,7 @@ Base the RCA on the confirmed surface above — DB-internal faults must resolve 
 connection limit, or secret), never "root cause unknown."
 
 ### Mandatory invalid-secret workflow
-When the trigger is `Zava-quiz-launch-errors-elevated` or the affected workload is `quiz-secret`,
+When the trigger ends with `-quiz-launch-errors-elevated` or the affected workload is `quiz-secret`,
 this workflow overrides generic secret and restart guidance:
 
 1. Confirm the auth-failure signature without printing a credential. Read only the `pg-password`
@@ -113,7 +113,7 @@ this workflow overrides generic secret and restart guidance:
    repair and record only secret-safe metadata. Never include either secret value.
 
 ### Mandatory connection-exhaustion workflow
-When the trigger is `Zava-quiz-errors-elevated` or the affected workload is `quiz-pool`, this workflow
+When the trigger ends with `-quiz-errors-elevated` or the affected workload is `quiz-pool`, this workflow
 overrides generic restart guidance:
 
 1. Use the reporting VM managed-identity bridge (`az vm run-command invoke` with the private `psql`

@@ -133,7 +133,7 @@ drifted, and create a new revision. Completion requires the dedicated reference 
 ## Incident lifecycle in this lab
 
 - All eight scenarios have an independent **symptom-only** alert (for example,
-  `Zava-quiz-launch-failing` and `Zava-portal-5xx-elevated`). Each alert is isolated to one
+  environment-prefixed names such as `Zava-auto-6-quiz-launch-failing`). Each alert is isolated to one
   listener, workload, or export signal and never names the underlying fault — that's the diagnosis.
 - Response-plan merging is disabled so each scenario alert creates its own independently verifiable
   incident thread, even when all eight demos run sequentially within a few hours.

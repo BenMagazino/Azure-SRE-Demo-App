@@ -26,6 +26,7 @@ const repoRoot = path.join(__dirname, "..");
 // ---- inputs -------------------------------------------------------------
 const AGENT = process.env.AGENT || "sre-zavalearning-ops";
 const RG = process.env.RESOURCE_GROUP || "rg-zava-learning-demo";
+const ENVIRONMENT = RG.replace(/^rg-zava-learning-/, "");
 const SUB = process.env.AZURE_SUBSCRIPTION_ID || "";
 if (!SUB) {
   console.error("Set AZURE_SUBSCRIPTION_ID to your lab subscription before running configure-agent.mjs.");
@@ -574,7 +575,7 @@ if (process.env.PAGERDUTY_API_TOKEN) {
 // telemetry, never by alert name.
 const filterSpec = {
   incidentPlatform: process.env.PAGERDUTY_API_TOKEN ? "PagerDuty" : "AzMonitor",
-  titleContains: "Zava",
+  titleContains: `Zava-${ENVIRONMENT}-`,
   targetResourceType: "microsoft.operationalinsights/workspaces",
   targetResource: law.id,
   agentMode: "autonomous",

@@ -335,6 +335,13 @@ def load_config() -> dict:
     return cfg
 
 
+def environment_alert_name(config: dict, alert_name: str) -> str:
+    resource_group = str(config.get("resource_group") or "")
+    environment = re.sub(r"^rg-zava-learning-", "", resource_group)
+    suffix = re.sub(r"^Zava-", "", alert_name)
+    return f"Zava-{environment}-{suffix}"
+
+
 # ── HTTP / health ───────────────────────────────────────────────────
 def lane_url(appgw_url: str, lane_port) -> str:
     """Build the per-lane base URL. Every lane is fronted by the SAME App Gateway public
@@ -1029,7 +1036,11 @@ def monitor(cfg: dict, sc: dict, auto_fix: bool):
             # which emit real logs). For nsg/appgw the blackhole is invisible to Azure Monitor.
             if not alert_fired and (now - last_alert).total_seconds() >= 15:
                 last_alert = now
-                if poll_azmon_alert(sub, sc["symptom_alert"], sim_start):
+                if poll_azmon_alert(
+                    sub,
+                    environment_alert_name(cfg, sc["symptom_alert"]),
+                    sim_start,
+                ):
                     alert_fired = True
                     timeline.add("Outage detected by monitoring — on-call has been alerted.", "yellow")
 
