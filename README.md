@@ -133,8 +133,9 @@ connection-pool failures, invalid secrets, and reporting-worker disk pressure.
 Core SRE Agent configuration includes the Application Insights, Log Analytics, and Microsoft Learn
 connectors; four custom agents; all fourteen Zava skill manifests; architecture/reporting knowledge;
 the autonomous response plan; three weekly governance audits; and a daily baseline keepalive.
-Each response plan filters Azure Monitor incidents to that environment's exact Log Analytics
-workspace, preventing another Zava environment's agent from handling the alert.
+Each response plan matches an environment-specific alert-title prefix and also targets that
+environment's exact Log Analytics workspace. The title prefix provides the routing boundary between
+parallel Zava environments; the workspace target remains defense in depth.
 PagerDuty and ServiceNow connectors and the two ServiceNow custom tools are added only when their
 optional credentials are supplied.
 

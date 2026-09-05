@@ -72,7 +72,7 @@ the edge and replica health are clean, **the database is a surface you must insp
 - **Databases:** `zava` (the main quiz database used by most lanes) and `zava_query` (the query lane's
   own database). DB-touching lanes use their own logical database so one lane's DB fault can't starve
   the others.
-- **Question bank:** the `question_bank` table (~500k rows) is read on quiz load and is served by the
+- **Question bank:** the `question_bank` table (~3M rows) is read on quiz load and is served by the
   index `idx_question_bank_course`. If that index is missing/unusable, the planner falls back to a full
   table scan and quiz loading slows — an index-health problem looks like a latency incident.
 - **Connection pool / roles:** quiz services connect through a least-privilege login. The pool lane
