@@ -7,7 +7,7 @@ SELECT
   '["A","B","C","D"]'::jsonb,
   (g % 4),
   true
-FROM generate_series(1, 500000) AS g;
+FROM generate_series(1, 3000000) AS g;
 
 DROP INDEX IF EXISTS idx_question_bank_course;
 CREATE INDEX idx_question_bank_course ON question_bank (course_id) WHERE active;

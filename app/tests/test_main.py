@@ -3700,15 +3700,14 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
             main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
             / "chaos" / "fix-query.ps1"
         ).read_text(encoding="utf-8")
-        self.assertIn("generate_series(1, 500000)", schema)
-        self.assertNotIn("generate_series(1, 3000000)", schema)
+        self.assertIn("generate_series(1, 3000000)", schema)
         restore_query = (
             main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
             / "src" / "db" / "restore-question-bank.sql"
         ).read_text(encoding="utf-8")
         self.assertIn('-FilePath "src\\db\\restore-question-bank.sql"', fix_query)
         self.assertIn("TRUNCATE question_bank RESTART IDENTITY", restore_query)
-        self.assertIn("generate_series(1, 500000)", restore_query)
+        self.assertIn("generate_series(1, 3000000)", restore_query)
         self.assertIn(
             "CREATE INDEX idx_question_bank_course ON question_bank (course_id) WHERE active",
             restore_query,
