@@ -69,8 +69,10 @@ relevant database state. The pool-lane database checks below are mandatory, not 
    - **Slow quiz loading (query lane, db `zava_query`):** check the `question_bank` indexes —
      `SELECT indexname FROM pg_indexes WHERE tablename='question_bank';` and
      `SELECT relname,seq_scan,idx_scan FROM pg_stat_user_tables WHERE relname='question_bank';`.
-     A missing index on `question_bank` with seq-scans climbing is the root cause; the durable fix is
-     to (re)build it (REINDEX/CREATE INDEX) — delivered as a PR.
+     A missing or incorrectly defined index on `question_bank` with seq-scans climbing is the root
+     cause. Restore the exact baseline definition: `DROP INDEX IF EXISTS idx_question_bank_course;
+     CREATE INDEX idx_question_bank_course ON question_bank (course_id) WHERE active; ANALYZE
+     question_bank;`. Read back `pg_indexes.indexdef` and require the `WHERE active` predicate.
    - **Errors under load (pool lane, db `zava`):** follow the mandatory deterministic workflow below.
    - **Authentication errors (secret lane):** follow the mandatory invalid-secret workflow below. Do
      not assume the Container App secret reference is still isolated merely because the dedicated Key

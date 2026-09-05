@@ -3692,6 +3692,27 @@ class ZavaBackendFollowUpTests(unittest.TestCase):
         self.assertIn("at most **six verification rounds**", content)
         self.assertIn("zero recent\n   500 log rows", content)
         self.assertIn("rolconnlimit: 1 -> -1", content)
+        schema = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "src" / "db" / "schema.sql"
+        ).read_text(encoding="utf-8")
+        fix_query = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "chaos" / "fix-query.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("generate_series(1, 500000)", schema)
+        self.assertNotIn("generate_series(1, 3000000)", schema)
+        restore_query = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "src" / "db" / "restore-question-bank.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn('-FilePath "src\\db\\restore-question-bank.sql"', fix_query)
+        self.assertIn("TRUNCATE question_bank RESTART IDENTITY", restore_query)
+        self.assertIn("generate_series(1, 500000)", restore_query)
+        self.assertIn(
+            "CREATE INDEX idx_question_bank_course ON question_bank (course_id) WHERE active",
+            restore_query,
+        )
         self.assertIn(
             "only the controlled pool baseline with "
             "`ALTER ROLE app_pool CONNECTION LIMIT -1`",

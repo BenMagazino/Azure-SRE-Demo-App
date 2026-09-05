@@ -29,7 +29,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Large question bank. The quiz endpoint filters this by course_id; with
 -- idx_question_bank_course present the lookup is an index scan (fast). The query lane
--- fault DROPs that index, turning every quiz load into a seq scan over ~3M rows.
+-- fault DROPs that index, turning every quiz load into a seq scan over ~500k rows.
 CREATE TABLE IF NOT EXISTS question_bank (
   id          BIGSERIAL PRIMARY KEY,
   course_id   TEXT NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS question_bank (
   active      BOOLEAN NOT NULL DEFAULT true
 );
 
--- Seed ~3M rows spread across the courses (idempotent: only seed when empty). The table is
+-- Seed ~500k rows spread across the courses (idempotent: only seed when empty). The table is
 -- intentionally large enough that, without idx_question_bank_course, a full seq scan on the
 -- 1-vCore Burstable server takes several seconds (a believable "corrupt index" latency spike).
 INSERT INTO question_bank (course_id, prompt, options, answer_idx, active)
@@ -49,7 +49,7 @@ SELECT
   '["A","B","C","D"]'::jsonb,
   (g % 4),
   true
-FROM generate_series(1, 3000000) AS g
+FROM generate_series(1, 500000) AS g
 WHERE NOT EXISTS (SELECT 1 FROM question_bank);
 
 CREATE INDEX IF NOT EXISTS idx_question_bank_course ON question_bank (course_id) WHERE active;
