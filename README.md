@@ -7,10 +7,10 @@ A Windows-first local web application for deploying and running an
 presenter to assemble a development toolchain or run the starter lab's Bash scripts.
 
 The app packages the
-[Grubify starter lab](https://github.com/microsoft/sre-agent/tree/main/labs/starter-lab) into a
-guided six-step experience. It resolves its own Azure command-line dependencies, guides device-code
-authentication, deploys or reuses a lab, starts the demo incident, and restores or removes the
-environment.
+[Grubify starter lab](https://github.com/microsoft/sre-agent/tree/main/labs/starter-lab) and the
+multi-scenario Zava Learning lab into a guided six-step experience. It resolves each lab's
+dependencies, guides device-code authentication, deploys or reuses a lab, starts demo incidents,
+and restores or removes the environment.
 
 ## What is included
 
@@ -20,12 +20,13 @@ environment.
 | User interface | Local web app at `http://127.0.0.1:8765` |
 | Runtime | Python standard library; Python 3.14.7 is bundled in the portable package |
 | Azure tools | Private, per-user Azure CLI 2.90.0 and Azure Developer CLI 1.32.0 installs |
-| Current lab | Grubify Starter Lab: 17 Azure resources, 2 dependencies, 1 demo scenario |
-| Typical turnaround | Approximately 10-23 minutes for a new deployment |
-| Demo scenario | Memory Leak, with a four-minute expected-response countdown |
+| Labs | Grubify Starter Lab and Zava Learning |
+| Typical turnaround | Approximately 10-23 minutes for Grubify or 25-45 minutes for Zava |
+| Demo scenarios | Grubify memory leak plus eight Zava network, edge, app, database, secret, and VM scenarios |
 
-Git, Git Bash, Node.js, Rust, Docker Desktop, and administrator access are not required to run the
-portable package.
+Git, Git Bash, Node.js, Rust, Docker Desktop, and administrator access are not required for the
+core portable experience. Zava additionally requires PowerShell 7, which the app can install
+privately.
 
 ## Requirements
 
@@ -75,18 +76,18 @@ Windows' trusted certificate store is used; certificate validation is never disa
 
 ## The six-step workflow
 
-1. **Lab Picker** — Select the Grubify Starter Lab and review its dependency, resource, scenario, and
-   timing metadata.
+1. **Lab Picker** — Select Grubify or Zava Learning and review its dependency, resource, scenario,
+   and timing metadata.
 2. **Prerequisites** — Detect Azure CLI and azd, then install or update only the missing dependencies.
    The minimum supported versions are Azure CLI 2.88.0 and azd 1.28.0.
 3. **Sign in** — Complete device-code authentication for both CLIs, then select the Azure tenant and
    subscription to use.
-4. **Configure** — Scan for an existing compatible lab or choose a name and supported region for a
-   new environment. Validation is performed only for the selected existing lab.
+4. **Configure** — Scan for an existing compatible lab or configure a new environment. Zava exposes
+   separate workload, PostgreSQL, and SRE Agent regions plus optional external integrations.
 5. **Deploy** — Reuse a healthy environment, update an incomplete one, or deploy all infrastructure
    and post-provision configuration for a new lab. Progress and command output stream in the app.
-6. **Demo** — Open Grubify, its API, the resource group, or the deployed SRE Agent; run the Memory
-   Leak scenario; restore the baseline; or tear down the environment.
+6. **Demo** — Open lab-specific resources, run a supported scenario, follow Azure Monitor and SRE
+   Agent progress, restore the baseline, or tear down an app-managed environment.
 
 Device codes are copied and their verification pages are opened automatically. The app never asks
 for Azure passwords.
@@ -120,6 +121,42 @@ when validation reports drift. It does not delete the environment.
 Step 6 can open Azure links in the current browser context or in a selected local Microsoft Edge
 profile. Profiles are displayed by name and account email, while the resource group and SRE Agent
 links display their resource names rather than long URLs.
+
+### Zava Learning
+
+Zava Learning deploys an online learning platform with private data services, eleven Container
+Apps across two environments, Application Gateway, PostgreSQL, Key Vault, a reporting VM,
+monitoring, symptom-based alerts, and an autonomous Azure SRE Agent. Its scenarios cover NSG
+connectivity, Application Gateway probes, app scale-to-zero, slow releases, database query and
+connection-pool failures, invalid secrets, and reporting-worker disk pressure.
+
+Core SRE Agent configuration includes the Application Insights, Log Analytics, and Microsoft Learn
+connectors; four custom agents; all fourteen Zava skill manifests; architecture/reporting knowledge;
+the autonomous response plan; three weekly governance audits; and a daily baseline keepalive.
+Each response plan matches an environment-specific alert-title prefix and also targets that
+environment's exact Log Analytics workspace. The title prefix provides the routing boundary between
+parallel Zava environments; the workspace target remains defense in depth.
+PagerDuty and ServiceNow connectors and the two ServiceNow custom tools are added only when their
+optional credentials are supplied.
+
+Azure Monitor and Azure SRE Agent are the core path. PagerDuty and ServiceNow can be configured
+for a new Zava environment, while GitHub OAuth is connected in the SRE Agent portal after
+deployment. Optional credentials are held only while their connector or protected tool is created;
+they are never stored in local app state or diagnostics, and the SRE Agent retains the resulting
+connection.
+
+#### Optional integration setup
+
+| Integration | What to prepare | Official setup resources |
+| --- | --- | --- |
+| PagerDuty | A service with a Microsoft Azure integration URL, a **User API key**, the P-prefixed service ID, and the API-key owner's email | [Create an account](https://signup.pagerduty.com/), [Azure integration](https://www.pagerduty.com/docs/guides/azure-integration-guide/), [API keys](https://support.pagerduty.com/docs/api-access-keys), [SRE Agent PagerDuty setup](https://learn.microsoft.com/azure/sre-agent/set-up-pagerduty-indexing) |
+| ServiceNow | An instance URL and API-capable user. For a disposable lab, request a free Personal Developer Instance and use its generated admin credentials. | [Developer portal](https://developer.servicenow.com/), [Request a PDI](https://developer.servicenow.com/print_page.do?category=developer-program&identifier=obtaining-a-pdi&module=guide), [SRE Agent Python tools](https://learn.microsoft.com/azure/sre-agent/python-code-execution#python-tools-vs-mcp-connectors) |
+| GitHub | Repository access through an SRE Agent GitHub OAuth or PAT connector | [GitHub connector setup](https://learn.microsoft.com/azure/sre-agent/setup-github-connector), [Connect source code](https://learn.microsoft.com/azure/sre-agent/connect-source-code) |
+
+The original Zava `configure-agent.mjs` script does not establish GitHub OAuth. It reads
+`GITHUB_REPO`, substitutes that repository into the `pr-delivery` skill, and enables tools such as
+`FindConnectedGitHubRepo` and `GetIaCForGitHub`. A GitHub connector must still be created separately
+under **Builder > Connectors** in the SRE Agent portal before that workflow can access a repository.
 
 ## What the lab deploys
 
@@ -251,6 +288,7 @@ scripts\
   start.cmd / start.ps1    Source launcher and Python bootstrap
   build-windows.ps1        Portable ZIP builder
 vendor\starter-lab\        Vendored Grubify application, Bicep, and SRE configuration
+vendor\zava-learning\      Vendored Zava platform, scenarios, and SRE configuration
 ```
 
 The application binds only to loopback. Azure operations run as child processes using the selected

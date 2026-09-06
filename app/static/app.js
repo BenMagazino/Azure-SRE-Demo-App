@@ -52,6 +52,29 @@ let investigationCountdownState = "idle";
 let investigationCountdownEnd = 0;
 let investigationCountdownDuration = 0;
 let edgeProfilesLoaded = false;
+let renderedConfigurationLabId = "";
+
+const azureRegionLabels = {
+  australiaeast: "Australia East",
+  canadacentral: "Canada Central",
+  centralus: "Central US",
+  eastasia: "East Asia",
+  eastus2: "East US 2",
+  francecentral: "France Central",
+  italynorth: "Italy North",
+  japaneast: "Japan East",
+  koreacentral: "Korea Central",
+  northcentralus: "North Central US",
+  southafricanorth: "South Africa North",
+  southcentralus: "South Central US",
+  southeastasia: "Southeast Asia",
+  spaincentral: "Spain Central",
+  swedencentral: "Sweden Central",
+  uksouth: "UK South",
+  westcentralus: "West Central US",
+  westus2: "West US 2",
+  westus3: "West US 3",
+};
 
 async function loadSessionToken() {
   const retryDelays = [0, 250, 500, 1000];
@@ -160,10 +183,19 @@ window.addEventListener("unhandledrejection", (event) => {
   reportClientError(`Unhandled promise rejection: ${event.reason}`);
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && sessionToken) {
+    void sendClientHeartbeat().catch((error) => {
+      console.warn("Unable to renew the visible application heartbeat.", error);
+    });
+  }
+});
+
 function showPanel(id) {
   if (!workflowPanels.includes(id)) return;
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.add("hidden"));
-  document.querySelector(`#${id}`).classList.remove("hidden");
+  const panel = document.querySelector(`#${id}`);
+  panel.classList.remove("hidden");
   activePanelId = id;
   shell.classList.toggle("workflow-compact", id !== "labs");
   backButton.disabled = workflowPanels.indexOf(id) === 0;
@@ -175,6 +207,15 @@ function showPanel(id) {
     } else {
       step.removeAttribute("aria-current");
     }
+  });
+  window.requestAnimationFrame(() => {
+    const heading = panel.querySelector("h1, h2");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+    const panelTop = panel.getBoundingClientRect().top + window.scrollY - 16;
+    window.scrollTo({ top: Math.max(0, panelTop), behavior: "auto" });
   });
 }
 
@@ -259,10 +300,56 @@ function renderLabPicker() {
 function updateLabCopy() {
   const lab = currentLab();
   if (!lab) return;
-  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. Azure CLI and Azure Developer CLI are installed privately without administrator approval.`;
+  document.querySelector("#prerequisite-copy").textContent = `${lab.name} requires the tools below. App-managed tools are installed privately without administrator approval.`;
   document.querySelector("#configure-copy").textContent = `Choose the Azure environment for ${lab.name}.`;
   document.querySelector("#deploy-title").textContent = `Deploy ${lab.name}`;
   document.querySelector("#deploy-copy").textContent = `${lab.description} Azure resources and lab automation are created automatically.`;
+  renderConfigurationFields(lab);
+}
+
+function azureRegionLabel(region) {
+  return azureRegionLabels[region] || region;
+}
+
+function updateIntegrationsPanel() {
+  const panel = document.querySelector("#integrations-panel");
+  const visible = currentLab()?.id === "zava-learning" && !selectedExistingEnvironment;
+  panel.classList.toggle("hidden", !visible);
+  panel.querySelectorAll("input").forEach((input) => {
+    input.disabled = !visible;
+  });
+}
+
+function renderConfigurationFields(lab) {
+  if (renderedConfigurationLabId === lab.id) {
+    updateIntegrationsPanel();
+    return;
+  }
+
+  renderedConfigurationLabId = lab.id;
+  selectedExistingEnvironment = null;
+  document.querySelector("#environment-name").value =
+    lab.default_environment || "sre-lab";
+  const fields = document.querySelector("#region-fields");
+  fields.replaceChildren(...(lab.regions || []).map((region) => {
+    const label = document.createElement("label");
+    label.textContent = region.name;
+    const select = document.createElement("select");
+    select.id = region.id === "location" ? "azure-location" : region.id;
+    select.name = region.id;
+    select.dataset.regionId = region.id;
+    select.required = true;
+    select.replaceChildren(...(region.allowed_values || []).map((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = azureRegionLabel(value);
+      option.selected = value === region.default;
+      return option;
+    }));
+    label.append(select);
+    return label;
+  }));
+  updateIntegrationsPanel();
 }
 
 async function loadLabs() {
@@ -600,7 +687,7 @@ function renderTool(tool) {
     const install = document.createElement("div");
     install.className = "install";
     const code = document.createElement("code");
-    const appManaged = ["az", "azd"].includes(tool.id);
+    const appManaged = tool.install_command.startsWith("app-managed ");
     code.textContent = appManaged
       ? "App-managed user-profile installation (no UAC)"
       : tool.install_command;
@@ -879,16 +966,28 @@ function streamJob(jobId, log, options = {}) {
 }
 
 function azureLocationLabel(location) {
-  const option = [...document.querySelector("#azure-location").options]
+  const option = [...(document.querySelector("#azure-location")?.options || [])]
     .find((item) => item.value === location);
-  return option?.textContent || location;
+  return option?.textContent || azureRegionLabel(location);
 }
 
 function selectExistingEnvironment(environment) {
   selectedExistingEnvironment = environment;
   skipDeploymentForValidatedEnvironment = false;
   document.querySelector("#environment-name").value = environment.environment;
-  document.querySelector("#azure-location").value = environment.location;
+  const runtimeValues = environment.runtime_values || {};
+  const regionValues = {
+    location: environment.location,
+    db_location: environment.db_location || runtimeValues.AZURE_DB_LOCATION,
+    agent_location: environment.agent_location || runtimeValues.AZURE_AGENT_LOCATION,
+  };
+  document.querySelectorAll("#region-fields [data-region-id]").forEach((field) => {
+    const value = regionValues[field.dataset.regionId];
+    if (value && [...field.options].some((option) => option.value === value)) {
+      field.value = value;
+    }
+  });
+  updateIntegrationsPanel();
   validateEnvironmentButton.disabled = false;
   setSkipEnvironmentEnabled(true);
   environmentValidationStatus.className = "";
@@ -896,7 +995,9 @@ function selectExistingEnvironment(environment) {
     `${environment.environment} selected. Validation checks only this lab.`;
   document.querySelector("#configure-status").textContent = "";
   document.querySelectorAll(".environment-card").forEach((card) => {
-    const selected = card.dataset.environment === environment.environment;
+    const selected =
+      card.dataset.environment === environment.environment
+      && card.dataset.resourceGroup === environment.resource_group;
     card.classList.toggle("selected", selected);
     card.setAttribute("aria-pressed", selected ? "true" : "false");
   });
@@ -916,6 +1017,7 @@ function renderExistingEnvironments(payload) {
     button.type = "button";
     button.className = "picker-card environment-card";
     button.dataset.environment = environment.environment;
+    button.dataset.resourceGroup = environment.resource_group;
     button.setAttribute("aria-pressed", "false");
 
     const title = document.createElement("span");
@@ -960,6 +1062,7 @@ async function loadExistingEnvironments() {
   refresh.textContent = "Scanning";
   selectedExistingEnvironment = null;
   skipDeploymentForValidatedEnvironment = false;
+  updateIntegrationsPanel();
   validateEnvironmentButton.disabled = true;
   status.className = "";
   status.textContent =
@@ -987,15 +1090,39 @@ async function loadExistingEnvironments() {
 }
 
 async function saveEnvironmentConfiguration() {
+  const regions = {};
+  document.querySelectorAll("#region-fields [data-region-id]").forEach((field) => {
+    regions[field.dataset.regionId] = field.value;
+  });
+  const includeIntegrations =
+    currentLab()?.id === "zava-learning" && !selectedExistingEnvironment;
+  const integrations = includeIntegrations ? {
+    pagerduty_webhook_url: document.querySelector("#pagerduty-webhook-url").value.trim(),
+    pagerduty_api_token: document.querySelector("#pagerduty-api-token").value,
+    pagerduty_service_id: document.querySelector("#pagerduty-service-id").value.trim(),
+    pagerduty_obo_email: document.querySelector("#pagerduty-obo-email").value.trim(),
+    servicenow_url: document.querySelector("#servicenow-url").value.trim(),
+    servicenow_user: document.querySelector("#servicenow-user").value.trim(),
+    servicenow_password: document.querySelector("#servicenow-password").value,
+    github_repository: document.querySelector("#github-repository")?.value.trim() || "",
+    github_token: document.querySelector("#github-token")?.value || "",
+  } : {};
   const response = await apiPost("/api/configure", {
     environment: document.querySelector("#environment-name").value,
-    location: document.querySelector("#azure-location").value,
+    ...regions,
+    location: regions.location || "",
     existing_environment: Boolean(selectedExistingEnvironment),
+    resource_group: selectedExistingEnvironment?.resource_group || "",
+    integrations,
   });
   const result = await response.json();
   if (!response.ok) {
     throw new Error(result.error || "Configuration failed.");
   }
+  document.querySelector("#pagerduty-api-token").value = "";
+  document.querySelector("#servicenow-password").value = "";
+  const githubToken = document.querySelector("#github-token");
+  if (githubToken) githubToken.value = "";
   return result;
 }
 
@@ -1132,6 +1259,7 @@ async function skipExistingEnvironmentValidation() {
 function clearExistingEnvironmentSelection() {
   selectedExistingEnvironment = null;
   skipDeploymentForValidatedEnvironment = false;
+  updateIntegrationsPanel();
   validateEnvironmentButton.disabled = true;
   setSkipEnvironmentEnabled(false);
   environmentValidationStatus.className = "";
@@ -1163,7 +1291,7 @@ async function startDeploy() {
     await loadSummary();
     showPanel("summary");
   } else {
-    step.textContent = "Deployment failed. Review the log above and retry.";
+    step.textContent = "Deployment failed. Review the log below and retry.";
   }
 }
 
@@ -1191,7 +1319,7 @@ async function loadSummary() {
     ? "Compatible legacy labs must be removed through their original deployment workflow."
     : "";
   updateDemoActionAvailability();
-  const fields = [
+  const fallbackFields = [
     ["Lab", summary.lab_name, ""],
     ["Environment", summary.environment, ""],
     ["Azure resource group", summary.resource_group, summary.resource_group_portal_url],
@@ -1199,6 +1327,9 @@ async function loadSummary() {
     ["Grubify UI", summary.frontend_url, summary.frontend_url],
     ["Grubify API", summary.api_url, summary.api_url],
   ];
+  const fields = Array.isArray(summary.links)
+    ? summary.links.map((link) => [link.label, link.value || link.url, link.url])
+    : fallbackFields;
   const container = document.querySelector("#summary-links");
   container.replaceChildren(...fields.map(([label, value, url]) => {
     const item = document.createElement("div");
@@ -1586,10 +1717,13 @@ document.querySelector("#environment-name").addEventListener("input", (event) =>
     clearExistingEnvironmentSelection();
   }
 });
-document.querySelector("#azure-location").addEventListener("change", (event) => {
+document.querySelector("#region-fields").addEventListener("change", (event) => {
+  const regionId = event.target.dataset.regionId;
+  if (!regionId) return;
   if (
     selectedExistingEnvironment
-    && event.target.value !== selectedExistingEnvironment.location
+    && (regionId !== "location"
+      || event.target.value !== selectedExistingEnvironment.location)
   ) {
     clearExistingEnvironmentSelection();
   }

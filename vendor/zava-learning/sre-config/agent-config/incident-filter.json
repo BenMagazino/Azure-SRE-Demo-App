@@ -1,0 +1,30 @@
+{
+  "_comment": "Incident-response routing filter applied via the Azure MCP SRE tools. Symptom-keyed and scoped to this environment's Log Analytics workspace so another Zava agent cannot consume the alert. Cause-level split happens inside the runbook from telemetry, never by alert name.",
+  "name": "zava-learning-response",
+  "filter": {
+    "incidentPlatform": "@@INCIDENT_PLATFORM@@",
+    "impactedService": "",
+    "priorities": [ "Sev0", "Sev1", "Sev2", "Sev3", "Sev4" ],
+    "incidentType": "",
+    "alertId": "",
+    "titleContains": "Zava-@@ENVIRONMENT@@-",
+    "titleContainsAll": [],
+    "titleContainsAny": [],
+    "titleNotContains": [],
+    "agentMode": "autonomous",
+    "handlingAgent": "zava-incident-responder",
+    "handlingAgents": null,
+    "owningTeamId": "",
+    "owningTeamIds": [],
+    "maxAutomatedInvestigationAttempts": 3,
+    "deepInvestigationEnabled": false,
+    "mergeEnabled": false,
+    "mergeWindowHours": 3,
+    "isEnabled": true,
+    "icmFilterSettings": null,
+    "azMonitorFilterSettings": {
+      "targetResourceType": "microsoft.operationalinsights/workspaces",
+      "targetResource": "@@LOG_ANALYTICS_WORKSPACE_RESOURCE_ID@@"
+    }
+  }
+}

@@ -9,7 +9,7 @@ import zipfile
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from urllib.error import URLError
 
 import app.main as main_module
@@ -50,6 +50,7 @@ from app.main import (
     install_all_worker,
     install_managed_azd,
     install_managed_azure_cli,
+    install_managed_powershell,
     is_device_login_url,
     is_allowed_demo_external_url,
     launch_client_if_unclaimed,
@@ -182,9 +183,9 @@ class LabWorkflowTests(unittest.TestCase):
     def test_catalog_exposes_grubify_memory_leak_workflow(self) -> None:
         payload = lab_catalog_payload({"lab_id": "grubify-starter-lab"})
 
-        self.assertEqual(len(LABS), 1)
+        self.assertEqual(len(LABS), 2)
         self.assertEqual(payload["selected_lab_id"], "grubify-starter-lab")
-        self.assertEqual(len(payload["labs"]), 1)
+        self.assertEqual(len(payload["labs"]), 2)
         self.assertEqual(payload["labs"][0]["resource_count"], 17)
         self.assertEqual(payload["labs"][0]["estimated_turnaround"], "10-23 min")
         self.assertEqual(payload["labs"][0]["dependency_ids"], ("az", "azd"))
@@ -193,6 +194,36 @@ class LabWorkflowTests(unittest.TestCase):
             240,
         )
         self.assertEqual(payload["labs"][0]["scenarios"][0]["id"], "memory-leak")
+
+    def test_catalog_exposes_all_zava_scenarios_and_regions(self) -> None:
+        payload = lab_catalog_payload({"lab_id": "zava-learning"})
+        zava = next(lab for lab in payload["labs"] if lab["id"] == "zava-learning")
+
+        self.assertEqual(zava["dependency_ids"], ("az", "azd", "pwsh"))
+        self.assertEqual(
+            [region["id"] for region in zava["regions"]],
+            ["location", "db_location", "agent_location"],
+        )
+        self.assertEqual(
+            [scenario["id"] for scenario in zava["scenarios"]],
+            ["nsg", "appgw", "app", "perf", "query", "pool", "secret", "disk"],
+        )
+        self.assertEqual(
+            {
+                scenario["id"]: scenario["investigation_delay_seconds"]
+                for scenario in zava["scenarios"]
+            },
+            {
+                "nsg": 180,
+                "appgw": 360,
+                "app": 300,
+                "perf": 180,
+                "query": 240,
+                "pool": 420,
+                "secret": 360,
+                "disk": 420,
+            },
+        )
 
     def test_builds_tenant_scoped_resource_group_portal_link(self) -> None:
         self.assertEqual(
@@ -481,6 +512,46 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertEqual(
             legacy["runtime_values"]["SRE_AGENT_ENDPOINT"],
             "https://agent.example.test",
+        )
+
+    def test_zava_discovery_excludes_tagged_managed_infrastructure_groups(
+        self,
+    ) -> None:
+        tags = {
+            "sre-agent-demo-lab-id": "zava-learning",
+            "sre-agent-demo-environment": "zava-learning-auto-1",
+        }
+        environments = build_existing_environment_catalog(
+            [
+                {
+                    "name": "rg-zava-learning-zava-learning-auto-1",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+                {
+                    "name": "ME_cae-zava-nsglane_token_southcentralus",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+                {
+                    "name": "ME_cae-zava_token_southcentralus",
+                    "location": "southcentralus",
+                    "tags": tags,
+                },
+            ],
+            [{
+                "name": "sre-zava-zava-learning-auto-1",
+                "resourceGroup": "rg-zava-learning-zava-learning-auto-1",
+            }],
+            [],
+            {"zava-learning-auto-1"},
+            "zava-learning",
+        )
+
+        self.assertEqual(len(environments), 1)
+        self.assertEqual(
+            environments[0]["resource_group"],
+            "rg-zava-learning-zava-learning-auto-1",
         )
 
     @patch("app.main.save_environment_cache")
@@ -1568,29 +1639,30 @@ class PrerequisiteTests(unittest.TestCase):
         versions = {
             "az": "2.90.0",
             "azd": "1.32.0",
+            "pwsh": "7.6.5",
         }
         command_version.side_effect = lambda executable, _args: versions[executable]
         statuses = prerequisite_statuses()
         refresh_process_path.assert_called_once_with()
-        self.assertEqual([item.id for item in statuses], ["az", "azd"])
+        self.assertEqual([item.id for item in statuses], ["az", "azd", "pwsh"])
         self.assertTrue(all(item.installed for item in statuses))
         self.assertTrue(all(item.ready for item in statuses))
         self.assertTrue(all(item.state == "ready" for item in statuses))
         self.assertTrue(all(item.required for item in statuses))
         self.assertEqual(
             MINIMUM_VERSIONS,
-            {"az": "2.88.0", "azd": "1.28.0"},
+            {"az": "2.88.0", "azd": "1.28.0", "pwsh": "7.6.3"},
         )
         which.assert_called()
 
     def test_install_commands_are_app_managed(self) -> None:
-        expected = {"az", "azd"}
+        expected = {"az", "azd", "pwsh"}
         self.assertEqual(set(INSTALL_COMMANDS), expected)
         self.assertEqual(set(UPDATE_COMMANDS), expected)
         self.assertEqual(set(REPAIR_COMMANDS), expected)
-        self.assertEqual(INSTALL_ORDER, ("az", "azd"))
+        self.assertEqual(INSTALL_ORDER, ("az", "azd", "pwsh"))
         for commands in (INSTALL_COMMANDS, UPDATE_COMMANDS, REPAIR_COMMANDS):
-            for tool_id in ("az", "azd"):
+            for tool_id in ("az", "azd", "pwsh"):
                 command = commands[tool_id]
                 self.assertEqual(command[0], "app-managed")
                 self.assertNotIn("winget", command)
@@ -1607,6 +1679,7 @@ class PrerequisiteTests(unittest.TestCase):
         command_version.side_effect = lambda executable, _args: {
             "az": "2.87.0",
             "azd": "1.27.1",
+            "pwsh": "7.5.0",
         }[executable]
 
         statuses = prerequisite_statuses()
@@ -1621,15 +1694,19 @@ class PrerequisiteTests(unittest.TestCase):
         self.assertTrue(version_meets_minimum("2.90.1", "2.88.0"))
         self.assertFalse(version_meets_minimum("2.87.9", "2.88.0"))
         self.assertFalse(version_meets_minimum("installed", "2.88.0"))
+        self.assertTrue(version_meets_minimum("7.6.3", "7.6.3"))
+        self.assertFalse(version_meets_minimum("7.6.2", "7.6.3"))
 
     @patch("app.main.install_managed_azure_cli")
     @patch("app.main.install_managed_azd")
+    @patch("app.main.install_managed_powershell")
     @patch("app.main.run_process")
     @patch("app.main.prerequisite_statuses")
     def test_install_all_runs_missing_tools_sequentially(
         self,
         prerequisite_statuses,
         run_process,
+        install_managed_powershell,
         install_managed_azd,
         install_managed_azure_cli,
     ) -> None:
@@ -1660,9 +1737,14 @@ class PrerequisiteTests(unittest.TestCase):
             installed.add("azd")
             return True
 
+        def install_powershell(_job):
+            installed.add("pwsh")
+            return True
+
         prerequisite_statuses.side_effect = statuses
         install_managed_azure_cli.side_effect = install_azure_cli
         install_managed_azd.side_effect = install_azd
+        install_managed_powershell.side_effect = install_powershell
         job = Job()
 
         install_all_worker(job)
@@ -1670,6 +1752,7 @@ class PrerequisiteTests(unittest.TestCase):
         run_process.assert_not_called()
         install_managed_azure_cli.assert_called_once_with(job)
         install_managed_azd.assert_called_once_with(job)
+        install_managed_powershell.assert_called_once_with(job)
         events = list(job.events.queue)
         tool_events = [
             event
@@ -1808,6 +1891,39 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertTrue((azd_dir / "azd.exe").is_file())
             self.assertFalse((azd_dir / "azd-windows-amd64.exe").exists())
             self.assertFalse((tools_dir / "azd-staging").exists())
+            self.assertFalse(any(tools_dir.glob("*.zip")))
+        refresh_process_path.assert_called_once_with()
+
+    @patch("app.main.refresh_process_path")
+    @patch("app.main.urlopen")
+    def test_installs_checksum_verified_powershell_in_user_profile(
+        self,
+        urlopen,
+        refresh_process_path,
+    ) -> None:
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("pwsh.exe", "executable")
+            archive.writestr("LICENSE.txt", "license")
+        payload = archive_bytes.getvalue()
+        urlopen.return_value = io.BytesIO(payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            tools_dir = Path(directory) / "tools"
+            powershell_dir = tools_dir / "powershell"
+            with (
+                patch("app.main.MANAGED_TOOLS_DIR", tools_dir),
+                patch("app.main.POWERSHELL_DIR", powershell_dir),
+                patch(
+                    "app.main.POWERSHELL_SHA256",
+                    hashlib.sha256(payload).hexdigest().upper(),
+                ),
+            ):
+                job = Job()
+                self.assertTrue(install_managed_powershell(job))
+
+            self.assertTrue((powershell_dir / "pwsh.exe").is_file())
+            self.assertFalse((tools_dir / "powershell-staging").exists())
             self.assertFalse(any(tools_dir.glob("*.zip")))
         refresh_process_path.assert_called_once_with()
 
@@ -1981,6 +2097,11 @@ class ProcessTests(unittest.TestCase):
             self.assertFalse(client_lease_expired(100.0, now=319.9))
             self.assertTrue(client_lease_expired(100.0, now=320.0))
 
+    def test_default_client_lease_tolerates_browser_timer_throttling(self) -> None:
+        self.assertEqual(main_module.CLIENT_LEASE_TIMEOUT_SECONDS, 300.0)
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn('document.addEventListener("visibilitychange"', script)
+
     def test_manual_stop_launcher_uses_graceful_api_only(self) -> None:
         repository = STATIC_DIR.parents[1]
         stop_launcher = (
@@ -2073,7 +2194,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(r'"%~dp0main.py" %*', launcher)
         self.assertNotIn(r'"%~dp0app\main.py"', launcher)
         self.assertIn("AZURE_SRE_DEMO_NO_BROWSER=1", launcher)
-        self.assertIn("AZURE_SRE_DEMO_CLIENT_FALLBACK=1", launcher)
+        self.assertNotIn("AZURE_SRE_DEMO_CLIENT_FALLBACK", launcher)
         self.assertIn("Show-Splash.ps1", launcher)
         self.assertNotIn("Repair-Shortcut.ps1", launcher)
         self.assertIn("Azure SRE Agent Demo.link-template", launcher)
@@ -2163,8 +2284,13 @@ class ProcessTests(unittest.TestCase):
             'Join-Path $packagedApplication "python\\LICENSE.txt"',
             build_script,
         )
+        self.assertIn('"vendor\\starter-lab"', build_script)
+        self.assertIn('"vendor\\zava-learning"', build_script)
         self.assertTrue((repository / "LICENSE").is_file())
         self.assertTrue((repository / "THIRD-PARTY-NOTICES.txt").is_file())
+        self.assertTrue(
+            (repository / "vendor" / "zava-learning" / "README.vendor.md").is_file()
+        )
 
     def test_application_icon_has_web_and_windows_metadata(self) -> None:
         page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -2195,6 +2321,7 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".prereq-actions button", styles)
         self.assertIn('id="validate-environment"', page)
         self.assertNotIn('id="skip-environment-validation"', page)
+
         self.assertIn('id="test-mode-banner"', page)
         self.assertIn('id="azure-context-loading"', page)
         self.assertIn('class="context-spinner"', page)
@@ -2272,6 +2399,39 @@ class ProcessTests(unittest.TestCase):
             'classList.toggle("workflow-compact", id !== "labs")',
             script,
         )
+        self.assertIn("heading.focus({ preventScroll: true })", script)
+        self.assertIn(
+            'window.scrollTo({ top: Math.max(0, panelTop), behavior: "auto" })',
+            script,
+        )
+
+    def test_optional_integrations_link_to_official_setup_guides(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+        for url in (
+            "https://signup.pagerduty.com/",
+            "https://www.pagerduty.com/docs/guides/azure-integration-guide/",
+            "https://support.pagerduty.com/docs/api-access-keys",
+            "https://learn.microsoft.com/azure/sre-agent/set-up-pagerduty-indexing",
+            "https://developer.servicenow.com/",
+            "https://learn.microsoft.com/azure/sre-agent/setup-github-connector",
+            "https://learn.microsoft.com/azure/sre-agent/connect-source-code",
+        ):
+            self.assertIn(url, page)
+        self.assertGreaterEqual(page.count('class="help-tip"'), 7)
+        self.assertIn("FindConnectedGitHubRepo", page)
+        self.assertIn("<summary>Optional integrations <span>(advanced)</span></summary>", page)
+        self.assertEqual(page.count("Optional integrations"), 2)
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn(
+            "card.dataset.resourceGroup === environment.resource_group",
+            script,
+        )
+        self.assertIn(
+            "resource_group: selectedExistingEnvironment?.resource_group",
+            script,
+        )
+        self.assertIn("Review the log below and retry.", script)
 
     def test_successful_teardown_resets_frontend_lifecycle_only_after_success(
         self,
@@ -2448,10 +2608,12 @@ class ProcessTests(unittest.TestCase):
             ["-I", "-B", "-u", "-m", "azure.cli", "login"],
         )
 
+    @patch("app.main.Path.is_file", return_value=True)
     @patch("app.main.shutil.which")
-    def test_runs_managed_azure_cli_through_its_supported_cmd_entrypoint(
+    def test_runs_managed_azure_cli_through_its_bundled_python(
         self,
         which,
+        _is_file,
     ) -> None:
         cli_dir = Path(r"C:\Users\demo\AppData\Local\AzureSREAgentDemo\tools\azure-cli")
         which.return_value = str(cli_dir / "bin" / "az.cmd")
@@ -2461,7 +2623,16 @@ class ProcessTests(unittest.TestCase):
 
         self.assertEqual(
             command,
-            [str(cli_dir / "bin" / "az.cmd"), "account", "show"],
+            [
+                str(cli_dir / "python.exe"),
+                "-I",
+                "-B",
+                "-u",
+                "-m",
+                "azure.cli",
+                "account",
+                "show",
+            ],
         )
 
     @patch("app.main.subprocess.run")
@@ -2560,6 +2731,56 @@ class RequestAuthenticationTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.get_header("Accept"), "application/json")
         self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
+
+
+class HttpResilienceTests(unittest.TestCase):
+    @patch("app.main.urlopen", side_effect=TimeoutError("timed out"))
+    def test_http_json_returns_transport_failure_for_timeout(self, urlopen) -> None:
+        status, response = http_json(
+            "GET",
+            "https://example.test/api",
+            "token-value",
+            timeout_seconds=12,
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(response, "timed out")
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 12)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.http_json")
+    def test_retry_http_json_retries_transient_failure(
+        self,
+        http_json,
+        sleep,
+    ) -> None:
+        http_json.side_effect = [(0, "timed out"), (503, "busy"), (200, "{}")]
+
+        status, response = main_module.retry_http_json(
+            "POST",
+            "https://example.test/api",
+            "token-value",
+            {"name": "connector"},
+            delay_seconds=0.1,
+        )
+
+        self.assertEqual((status, response), (200, "{}"))
+        self.assertEqual(http_json.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(0.1), call(0.1)])
+
+    def test_job_worker_reports_unhandled_failure(self) -> None:
+        job = Job()
+
+        def fail(_job: Job) -> None:
+            raise TimeoutError("must remain diagnostic-only")
+
+        with self.assertLogs(main_module.LOGGER, level="ERROR"):
+            main_module.run_job_worker(job, fail)
+
+        events = list(job.events.queue)
+        self.assertTrue(job.finished)
+        self.assertEqual(events[-1], {"type": "done", "success": False, "exit_code": 1})
+        self.assertNotIn("must remain diagnostic-only", json.dumps(events))
 
 
 class ResponsePlanTests(unittest.TestCase):
@@ -3003,14 +3224,18 @@ class RegionConfigurationTests(unittest.TestCase):
 
     def test_region_dropdown_matches_backend_validation(self) -> None:
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        select = re.search(
-            r'<select id="azure-location">(.*?)</select>',
-            html,
-            re.DOTALL,
+        script = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+        grubify = next(
+            lab for lab in LABS if lab.id == "grubify-starter-lab"
         )
-        self.assertIsNotNone(select)
-        options = frozenset(re.findall(r'<option value="([^"]+)"', select.group(1)))
-        self.assertEqual(options, SRE_AGENT_REGIONS)
+
+        self.assertIn('id="region-fields"', html)
+        self.assertIn('select.dataset.regionId = region.id', script)
+        self.assertEqual(len(grubify.regions), 1)
+        self.assertEqual(
+            frozenset(grubify.regions[0].allowed_values),
+            SRE_AGENT_REGIONS,
+        )
 
     def test_bicep_regions_match_backend_validation(self) -> None:
         bicep = (VENDOR_DIR / "infra" / "main.bicep").read_text(encoding="utf-8")
@@ -3022,6 +3247,1628 @@ class RegionConfigurationTests(unittest.TestCase):
         self.assertIsNotNone(allowed)
         locations = frozenset(re.findall(r"'([^']+)'", allowed.group(1)))
         self.assertEqual(locations, SRE_AGENT_REGIONS)
+
+
+class ZavaBackendFollowUpTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        main_module.clear_in_memory_secrets("zava-learning", "atomic-test")
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_capture")
+    def test_zava_alert_activation_cycles_all_rules(
+        self,
+        run_capture,
+        sleep,
+    ) -> None:
+        records = [
+            {"id": f"/alerts/{index}", "name": name}
+            for index, name in enumerate(
+                main_module.zava_scenario_alert_names("auto-6").values()
+            )
+        ]
+        run_capture.side_effect = [(True, json.dumps(records))] + [(True, "")] * 16
+        job = Job()
+
+        success = main_module.activate_zava_alert_rules(
+            job,
+            "rg-zava",
+            "auto-6",
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(run_capture.call_count, 17)
+        sleep.assert_called_once_with(10)
+        update_calls = run_capture.call_args_list[1:]
+        self.assertTrue(
+            all(
+                call.args[0][:3] == ["az", "resource", "update"]
+                for call in update_calls
+            )
+        )
+
+    @patch("app.main.run_capture")
+    def test_zava_alert_activation_fails_closed_on_missing_rules(
+        self,
+        run_capture,
+    ) -> None:
+        run_capture.return_value = (
+            True,
+            json.dumps([{"id": "/alerts/one", "name": "Zava-old"}]),
+        )
+        job = Job()
+
+        self.assertFalse(
+            main_module.activate_zava_alert_rules(job, "rg-zava", "auto-6")
+        )
+        self.assertEqual(list(job.events.queue)[-1]["type"], "error")
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_process")
+    def test_zava_provision_retries_key_vault_rbac_propagation(
+        self,
+        run_process,
+        sleep,
+    ) -> None:
+        transient = (
+            "Unable to get value using Managed identity /identity for secret pg-password. "
+            "Error: authentication with Azure Key Vault failed using managed identity."
+        )
+        run_process.side_effect = [(False, transient), (True, "")]
+        job = Job()
+
+        success = main_module.run_zava_infrastructure_provision(
+            job,
+            "auto-5",
+            Path("vendor/zava-learning"),
+            {"POSTGRES_ADMIN_PASSWORD": "secret-value"},
+            retry_delays=(0.1,),
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(run_process.call_count, 2)
+        sleep.assert_called_once_with(0.1)
+        self.assertNotIn("secret-value", json.dumps(list(job.events.queue)))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_process")
+    def test_zava_provision_does_not_retry_unrelated_failure(
+        self,
+        run_process,
+        sleep,
+    ) -> None:
+        run_process.return_value = (False, "PostgreSQL quota exceeded")
+
+        success = main_module.run_zava_infrastructure_provision(
+            Job(),
+            "auto-5",
+            Path("vendor/zava-learning"),
+            {},
+        )
+
+        self.assertFalse(success)
+        run_process.assert_called_once()
+        sleep.assert_not_called()
+
+    @patch("app.main.retry_http_json")
+    @patch("app.main.zava_core_connector_payloads")
+    def test_microsoft_learn_test_outage_does_not_block_deployment(
+        self,
+        connector_payloads,
+        retry_http_json,
+    ) -> None:
+        connector_payloads.return_value = {"microsoft-learn": {"endpoint": "learn"}}
+        retry_http_json.side_effect = [
+            (200, "{}"),
+            (200, "{}"),
+            (0, "timed out"),
+        ]
+        job = Job()
+
+        success = main_module.ensure_zava_core_connectors(
+            job,
+            "https://agent.example.test",
+            "token",
+            {},
+        )
+
+        self.assertTrue(success)
+        events = list(job.events.queue)
+        self.assertNotIn("error", {event["type"] for event in events})
+        self.assertIn("deployment will continue", events[-1]["line"])
+
+    def test_private_bridge_allowlist_is_operational_only(self) -> None:
+        self.assertEqual(
+            main_module.ZAVA_SECRET_NAMES,
+            {"db-password", "db-pool-password", "vm-admin-password"},
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_capture")
+    def test_python_secret_bridge_starts_deallocated_vm(
+        self,
+        run_capture,
+        sleep,
+    ) -> None:
+        run_capture.side_effect = [
+            (True, "VM deallocated"),
+            (True, ""),
+            (True, "VM starting"),
+            (True, "VM running"),
+        ]
+
+        ready = main_module.ensure_zava_vm_running(
+            "rg-zava",
+            "vm-zava",
+            attempts=2,
+            delay_seconds=0.01,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(
+            run_capture.call_args_list[1].args[0][:4],
+            ["az", "vm", "start", "--resource-group"],
+        )
+        sleep.assert_called_once_with(0.01)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.run_secret_capture")
+    @patch("app.main.ensure_zava_vm_running", return_value=True)
+    def test_python_secret_bridge_retries_vm_run_command(
+        self,
+        _ensure_running,
+        run_secret_capture,
+        sleep,
+    ) -> None:
+        run_secret_capture.side_effect = [
+            (False, ""),
+            (False, ""),
+            (True, "c2VjcmV0"),
+        ]
+
+        success, value = main_module.zava_vm_secret_bridge(
+            "rg-zava",
+            "vm-zava",
+            "kv-zava",
+            "db-password",
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(value, "secret")
+        self.assertEqual(run_secret_capture.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(10), call(10)])
+
+    def test_transient_settings_replace_atomically(self) -> None:
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "old", "servicenow_password": "old"},
+        )
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "new"},
+        )
+        self.assertEqual(
+            main_module.get_in_memory_secrets("zava-learning", "atomic-test"),
+            {"pagerduty_api_token": "new"},
+        )
+
+    def test_failed_integration_setup_retains_one_time_memory(self) -> None:
+        main_module.replace_in_memory_secrets(
+            "zava-learning",
+            "atomic-test",
+            {"pagerduty_api_token": "never-log-this"},
+        )
+        job = Job(["deploy"])
+        with patch.object(
+            main_module,
+            "run_secret_capture",
+            return_value=(False, ""),
+        ):
+            configured, _status = main_module.configure_zava_optional_integrations(
+                job,
+                "atomic-test",
+                {},
+                main_module.get_in_memory_secrets("zava-learning", "atomic-test"),
+            )
+        self.assertFalse(configured)
+        self.assertEqual(
+            main_module.get_in_memory_secrets(
+                "zava-learning",
+                "atomic-test",
+            )["pagerduty_api_token"],
+            "never-log-this",
+        )
+        self.assertNotIn(
+            "never-log-this",
+            json.dumps(list(job.events.queue)),
+        )
+
+    def test_successful_deployment_clears_one_time_memory(self) -> None:
+        state = {
+            "lab_id": "zava-learning",
+            "environment": "atomic-test",
+            "location": "eastus2",
+            "db_location": "westus3",
+            "agent_location": "westus2",
+            "subscription_id": "sub",
+            "integration_status": {"pagerduty": "requested"},
+        }
+        values = {
+            "AZURE_LOCATION": "eastus2",
+            "AZURE_DB_LOCATION": "westus3",
+            "AZURE_AGENT_LOCATION": "westus2",
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+        }
+        job = Job()
+        with (
+            patch.object(main_module, "load_state", return_value=state),
+            patch.object(main_module, "azd_values", return_value=values),
+            patch.object(main_module, "set_azd_values", return_value=(True, "")),
+            patch.object(
+                main_module,
+                "zava_process_environment",
+                return_value=({"VM_ADMIN_PASSWORD": "hidden"}, None),
+            ),
+            patch.object(
+                main_module,
+                "run_process",
+                return_value=(True, ""),
+            ) as run_process_mock,
+            patch.object(main_module, "activate_zava_alert_rules", return_value=True),
+            patch.object(
+                main_module,
+                "hydrate_zava_runtime_outputs",
+                return_value=values,
+            ),
+            patch.object(
+                main_module,
+                "discover_zava_secure_resource_names",
+                return_value=values,
+            ),
+            patch.object(main_module, "configure_zava_agent_core", return_value=True),
+            patch.object(
+                main_module,
+                "configure_zava_optional_integrations",
+                return_value=(True, {"pagerduty": "healthy"}),
+            ),
+            patch.object(main_module, "save_state"),
+            patch.object(main_module, "clear_in_memory_secrets") as clear,
+        ):
+            main_module.reconcile_zava(job)
+        clear.assert_called_once_with("zava-learning", "atomic-test")
+        self.assertTrue(list(job.events.queue)[-1]["success"])
+        self.assertTrue(run_process_mock.call_args_list)
+        self.assertTrue(
+            all(
+                not call.kwargs.get("no_log_output", False)
+                for call in run_process_mock.call_args_list
+            )
+        )
+
+    def test_incomplete_or_unsupported_integrations_fail_step_four(self) -> None:
+        _values, error = main_module.parse_zava_integrations(
+            {"pagerduty_api_token": "secret"}
+        )
+        self.assertIn("requires", error)
+        _values, error = main_module.parse_zava_integrations(
+            {"github_repository": "owner/repo"}
+        )
+        self.assertIn("SRE Agent portal", error)
+
+    def test_servicenow_credentials_are_safe_python_literals(self) -> None:
+        manifest = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+            / "tools"
+            / "CreateServiceNowChangeRequest"
+            / "CreateServiceNowChangeRequest.yaml"
+        )
+        tool = main_module.parse_zava_python_tool_manifest(
+            manifest,
+            "CreateServiceNowChangeRequest",
+            {
+                "SERVICENOW_URL": "https://example.test/a\\b",
+                "SERVICENOW_USER": 'operator"name',
+                "SERVICENOW_PASS": "line1\nline2",
+            },
+        )
+
+        compile(tool["functionCode"], str(manifest), "exec")
+        self.assertNotIn("@@SERVICENOW_", tool["functionCode"])
+
+    def test_summary_links_include_ui_display_value(self) -> None:
+        links = main_module.runtime_summary_links(
+            {
+                "lab_id": "zava-learning",
+                "environment": "auto-2",
+                "tenant_id": "tenant",
+                "subscription_id": "sub",
+            },
+            {
+                "AZURE_RESOURCE_GROUP": "rg-zava",
+                "APPGW_PUBLIC_FQDN": "zava.example.test",
+                "SRE_AGENT_NAME": "sre-zava-learning-auto-2",
+            },
+        )
+        self.assertEqual(
+            [link["id"] for link in links],
+            ["environment", "resource-group", "sre-agent", "portal"],
+        )
+        self.assertEqual(links[0]["value"], "auto-2")
+        self.assertEqual(links[1]["value"], "rg-zava")
+        self.assertEqual(links[2]["value"], "sre-zava-learning-auto-2")
+        self.assertEqual(links[3]["value"], "Open learning portal")
+        self.assertFalse(any(link["id"].startswith("lane-") for link in links))
+
+    @patch("app.main.http_json")
+    @patch("app.main.upsert_response_plan")
+    def test_zava_response_plan_requires_successful_readback(
+        self,
+        upsert,
+        http_json,
+    ) -> None:
+        workspace_id = "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/log-zava"
+        payload = main_module.zava_response_plan_payload("auto-6", workspace_id)
+        self.assertIs(payload["mergeEnabled"], False)
+        self.assertEqual(payload["targetResource"], workspace_id)
+        upsert.return_value = (200, json.dumps(payload))
+        http_json.return_value = (200, json.dumps(payload))
+
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+            "auto-6",
+            workspace_id,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(error, "")
+        upsert.assert_called_once()
+        http_json.assert_called_once_with(
+            "GET",
+            "https://agent.example.test/api/v1/incidentPlayground/filters/"
+            "zava-learning-response",
+            "token",
+        )
+
+        http_json.return_value = (404, "")
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+            "auto-6",
+            workspace_id,
+        )
+        self.assertFalse(ready)
+        self.assertIn("readback returned HTTP 404", error)
+
+        merged_payload = {**payload, "mergeEnabled": True}
+        http_json.return_value = (200, json.dumps(merged_payload))
+        ready, error = main_module.ensure_zava_response_plan(
+            "https://agent.example.test",
+            "token",
+            "auto-6",
+            workspace_id,
+        )
+        self.assertFalse(ready)
+        self.assertIn("did not match", error)
+
+    def test_zava_core_asset_catalog_matches_baseline(self) -> None:
+        self.assertEqual(main_module.ZAVA_CORE_CONFIG_VERSION, "7")
+        self.assertEqual(len(main_module.ZAVA_CORE_AGENTS), 4)
+        self.assertEqual(len(main_module.ZAVA_ALL_SKILLS), 14)
+        self.assertEqual(len(main_module.ZAVA_CORE_CONNECTORS), 3)
+        self.assertEqual(len(main_module.ZAVA_SCHEDULED_TASKS), 4)
+        connector_payloads = main_module.zava_core_connector_payloads({
+            "AZURE_SRE_AGENT_IDENTITY_ID": "/identities/agent",
+            "LOG_ANALYTICS_WORKSPACE_RESOURCE_ID": "/workspaces/log",
+            "LOG_ANALYTICS_WORKSPACE_NAME": "log-zava",
+            "APPLICATIONINSIGHTS_RESOURCE_ID": "/components/appi",
+            "APPLICATIONINSIGHTS_NAME": "appi-zava",
+        })
+        self.assertEqual(
+            set(connector_payloads),
+            set(main_module.ZAVA_CORE_CONNECTORS),
+        )
+
+    def test_connectivity_runbook_requires_bounded_nsg_access_recovery(self) -> None:
+        config_root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills" / "connectivity-triage"
+            / "SKILL.md",
+            "connectivity-triage",
+        )
+        content = skill["skillContent"]
+        self.assertIn(
+            "az network nsg rule update --subscription <subscription-id> "
+            "--resource-group @@RG@@ --nsg-name <nsg-nsglane-name> "
+            "--name legacy-cross-subnet-deny --access Allow",
+            content,
+        )
+        self.assertIn("NEVER use a priority-only update for this fault", content)
+        self.assertIn("at most **three recovery rounds**", content)
+        self.assertIn("do not run `show-backend-health` again", content)
+        self.assertIn("public quiz endpoint on port 8081", content)
+        self.assertIn("backend health `Healthy` **and** HTTP 200", content)
+        self.assertIn("Keep the incident acknowledged", content)
+        self.assertIn("access: Deny -> Allow", content)
+        self.assertIn("Never state or imply that a priority-only change", content)
+        self.assertIn("restored service", content)
+
+        responder_manifest = (
+            config_root / "agent-config" / "agents" / "zava-incident-responder"
+            / "zava-incident-responder.yaml"
+        )
+        responder_source = responder_manifest.read_text(encoding="utf-8")
+        self.assertIn(
+            "`az network nsg rule update ... --access Allow`", responder_source
+        )
+        self.assertIn("priority-only mitigation is", responder_source)
+        self.assertIn("Check at most three times", responder_source)
+        self.assertIn("UNRECOVERED ESCALATION OVERRIDE", responder_source)
+        self.assertIn("NSG CAUSALITY SELF-AUDIT", responder_source)
+        self.assertIn("access: Deny -> Allow", responder_source)
+        responder = main_module.parse_zava_agent_manifest(
+            responder_manifest,
+            "zava-incident-responder",
+            {"RG": "rg-zava-learning-auto-4"},
+        )
+        instructions = responder["instructions"]
+        self.assertIn("update that rule with --access Allow", instructions)
+        self.assertIn("priority-only change is forbidden", instructions)
+        self.assertIn("must never be credited with recovery", instructions)
+        self.assertIn("access: Deny -> Allow", instructions)
+        self.assertIn("HTTP 200 on port 8081", instructions)
+        self.assertIn("at most three probe-interval checks", instructions)
+        self.assertIn("escalate instead of polling or writing again", instructions)
+        self.assertIn("accepted terminal outcome", instructions)
+
+        incident_filter = json.loads(
+            (config_root / "agent-config" / "incident-filter.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIs(incident_filter["filter"]["mergeEnabled"], False)
+        self.assertEqual(
+            incident_filter["filter"]["titleContains"],
+            "Zava-@@ENVIRONMENT@@-",
+        )
+        self.assertEqual(
+            incident_filter["filter"]["azMonitorFilterSettings"],
+            {
+                "targetResourceType": "microsoft.operationalinsights/workspaces",
+                "targetResource": "@@LOG_ANALYTICS_WORKSPACE_RESOURCE_ID@@",
+            },
+        )
+        configure_agent = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "scripts"
+            / "configure-agent.mjs"
+        ).read_text(encoding="utf-8")
+        self.assertIn("mergeEnabled: false", configure_agent)
+        self.assertIn(
+            'targetResourceType: "microsoft.operationalinsights/workspaces"',
+            configure_agent,
+        )
+        self.assertIn("targetResource: law.id", configure_agent)
+
+    def test_performance_runbook_requires_deterministic_pool_recovery(self) -> None:
+        config_root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills"
+            / "performance-investigation" / "SKILL.md",
+            "performance-investigation",
+        )
+        content = skill["skillContent"]
+        self.assertIn(
+            "When the trigger ends with `-quiz-errors-elevated` or the affected "
+            "workload is `quiz-pool`",
+            content,
+        )
+        self.assertIn("pool-lane database checks below are mandatory", content)
+        self.assertNotIn("Optionally confirm against the database", content)
+        self.assertIn("az vm run-command invoke", content)
+        self.assertIn(
+            "SELECT rolname,rolconnlimit FROM pg_roles "
+            "WHERE rolname='app_pool';",
+            content,
+        )
+        self.assertIn(
+            "FROM pg_stat_activity WHERE usename='app_pool'",
+            content,
+        )
+        self.assertIn(
+            "ALTER ROLE app_pool CONNECTION LIMIT -1",
+            content,
+        )
+        self.assertIn("app_pool.rolconnlimit = -1", content)
+        self.assertIn(
+            "expected side effect of terminating sessions during fault injection",
+            content,
+        )
+        self.assertIn("FORCE_RECONNECT=<timestamp>", content)
+        self.assertIn("Restart-only\n   recovery is forbidden", content)
+        self.assertIn("12 concurrent\n   requests", content)
+        self.assertIn("0/12 failed requests", content)
+        self.assertIn("at most **six verification rounds**", content)
+        self.assertIn("zero recent\n   500 log rows", content)
+        self.assertIn("rolconnlimit: 1 -> -1", content)
+        schema = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "src" / "db" / "schema.sql"
+        ).read_text(encoding="utf-8")
+        fix_query = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "chaos" / "fix-query.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("generate_series(1, 3000000)", schema)
+        restore_query = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "src" / "db" / "restore-question-bank.sql"
+        ).read_text(encoding="utf-8")
+        self.assertIn('-FilePath "src\\db\\restore-question-bank.sql"', fix_query)
+        self.assertIn("TRUNCATE question_bank RESTART IDENTITY", restore_query)
+        self.assertIn("generate_series(1, 3000000)", restore_query)
+        self.assertIn(
+            "CREATE INDEX idx_question_bank_course ON question_bank (course_id) WHERE active",
+            restore_query,
+        )
+        self.assertIn(
+            "only the controlled pool baseline with "
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            content,
+        )
+
+        responder_source = (
+            config_root / "agent-config" / "agents"
+            / "zava-incident-responder" / "zava-incident-responder.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("POOL CAUSALITY SELF-AUDIT", responder_source)
+        self.assertIn(
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            responder_source,
+        )
+        self.assertIn("require 0/12 failures", responder_source)
+        self.assertIn("Restart-only recovery is forbidden", responder_source)
+        self.assertIn(
+            "A revision refresh is allowed only\n"
+            "    after the database readback",
+            responder_source,
+        )
+        self.assertIn(
+            "accepted terminal outcome",
+            responder_source,
+        )
+
+        architecture = (
+            config_root / "knowledge-base" / "zava-learning-architecture.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "healthy controlled\n  baseline is `rolconnlimit = -1`",
+            architecture,
+        )
+        self.assertIn(
+            "permitted database correction is limited to restoring the "
+            "controlled\npool baseline with "
+            "`ALTER ROLE app_pool CONNECTION LIMIT -1`",
+            architecture,
+        )
+
+    def test_secret_recovery_preserves_dedicated_reference(self) -> None:
+        vendor_root = main_module.vendor_dir_for_lab(
+            main_module.LABS_BY_ID["zava-learning"]
+        )
+        chaos_root = vendor_root / "chaos"
+        common = (chaos_root / "_common.ps1").read_text(encoding="utf-8")
+        break_secret = (chaos_root / "break-secret.ps1").read_text(
+            encoding="utf-8"
+        )
+        fix_secret = (chaos_root / "fix-secret.ps1").read_text(
+            encoding="utf-8"
+        )
+        reset = (chaos_root / "reset.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("function Ensure-SecretLaneReference", common)
+        self.assertIn("function Assert-SecretLaneReference", common)
+        self.assertIn("function Wait-SecretLaneRecovery", common)
+        self.assertIn(
+            'keyVaultUrl = "$vaultUri/secrets/db-password-secretlane"',
+            common,
+        )
+        self.assertIn('$identityName = "id-zava-$token"', common)
+        self.assertIn("az containerapp secret list", common)
+        self.assertIn(
+            "$references | Where-Object { $_.name -eq $SecretName }",
+            common,
+        )
+        self.assertIn("az containerapp identity assign", common)
+        self.assertIn(
+            '"pg-password=keyvaultref:$($expected.keyVaultUrl),'
+            'identityref:$($expected.identity)"',
+            common,
+        )
+        self.assertIn("az containerapp secret set", common)
+        self.assertIn(
+            'if [ "$destination_value" = "$source_value" ]; then',
+            common,
+        )
+        self.assertIn("$state.latest -ne $PreviousRevision", common)
+        self.assertIn('$runningState -eq "Running"', common)
+        self.assertIn("$statusCode -eq 200", common)
+        self.assertIn("Assert-SecretLaneReference", common)
+        self.assertNotIn("--show-values", common)
+        self.assertNotIn("keys(identity.userAssignedIdentities)", common)
+        self.assertIn(
+            "$app.identity.userAssignedIdentities.PSObject.Properties.Name",
+            common,
+        )
+
+        break_ensure = break_secret.index("Ensure-SecretLaneReference")
+        break_rotate = break_secret.index("Set-KvSecret")
+        break_revision = break_secret.index("az containerapp update")
+        break_assert = break_secret.index("Assert-SecretLaneReference")
+        self.assertLess(break_ensure, break_rotate)
+        self.assertLess(break_rotate, break_revision)
+        self.assertLess(break_revision, break_assert)
+        self.assertIn('-Name "db-password-secretlane"', break_secret)
+
+        fix_copy = fix_secret.index("Copy-KvSecret")
+        fix_ensure = fix_secret.index("Ensure-SecretLaneReference")
+        fix_revision = fix_secret.index("az containerapp update")
+        fix_verify = fix_secret.index("Wait-SecretLaneRecovery")
+        self.assertLess(fix_copy, fix_ensure)
+        self.assertLess(fix_ensure, fix_revision)
+        self.assertLess(fix_revision, fix_verify)
+        self.assertIn('-SourceName "db-password"', fix_secret)
+        self.assertIn(
+            '-DestinationName "db-password-secretlane"',
+            fix_secret,
+        )
+        self.assertIn(
+            '-PreviousRevision $previousRevision',
+            fix_secret,
+        )
+        self.assertIn('"fix-$target.ps1"', reset)
+
+        config_root = vendor_root / "sre-config"
+        skill = main_module.parse_zava_skill_manifest(
+            config_root / "agent-config" / "skills"
+            / "performance-investigation" / "SKILL.md",
+            "performance-investigation",
+        )["skillContent"]
+        self.assertIn("### Mandatory invalid-secret workflow", skill)
+        self.assertIn(
+            "The only valid\n   reference is the **versionless** URL ending "
+            "`/secrets/db-password-secretlane`",
+            skill,
+        )
+        self.assertIn(
+            "only permitted secret-value mutation",
+            skill,
+        )
+        self.assertIn(
+            "Repointing `pg-password` to the shared\n"
+            "   `/secrets/db-password` reference is prohibited",
+            skill,
+        )
+        self.assertIn("Never request, print, log, or attach a secret value", skill)
+        self.assertIn("Check at most 17 times, 15 seconds apart", skill)
+        self.assertIn(
+            "a second metadata readback still ending\n"
+            "   `/secrets/db-password-secretlane`",
+            skill,
+        )
+
+        responder = (
+            config_root / "agent-config" / "agents"
+            / "zava-incident-responder" / "zava-incident-responder.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("SECRET CAUSALITY SELF-AUDIT", responder)
+        self.assertIn(
+            "Repointing it to shared `/secrets/db-password` is\n"
+            "                       prohibited",
+            responder,
+        )
+        self.assertIn(
+            "the dedicated URL and\n"
+            "                       UAMI still read back",
+            responder,
+        )
+        self.assertIn("never secret values", responder)
+
+        architecture = (
+            config_root / "knowledge-base" / "zava-learning-architecture.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "`quiz-secret` must always bind `pg-password` to the versionless",
+            architecture,
+        )
+        self.assertIn(
+            "the shared `/secrets/db-password` reference is never a valid "
+            "recovery",
+            architecture,
+        )
+
+    def test_parses_all_weekly_scheduled_task_manifests(self) -> None:
+        root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+            / "scheduled-tasks"
+        )
+        for name in (
+            "zava-nsg-weekly-audit",
+            "zava-rbac-weekly-audit",
+            "zava-cost-weekly-analysis",
+        ):
+            with self.subTest(task=name):
+                task = main_module.parse_zava_scheduled_task_manifest(
+                    root / f"{name}.yaml"
+                )
+                self.assertEqual(task["name"], name)
+                self.assertEqual(task["status"], "Active")
+                self.assertEqual(task["agentMode"], "autonomous")
+
+    @patch("app.main.http_json")
+    def test_creates_and_reads_back_all_required_scheduled_tasks(
+        self,
+        http_json,
+    ) -> None:
+        required = list(main_module.ZAVA_SCHEDULED_TASKS)
+        created = []
+
+        def request(method, _url, _token, payload=None):
+            if method == "GET":
+                return (
+                    200,
+                    json.dumps([{"name": name} for name in created]),
+                )
+            created.append(payload["name"])
+            return 201, ""
+
+        http_json.side_effect = request
+        job = Job()
+        root = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "sre-config"
+        )
+
+        ready = main_module.ensure_zava_scheduled_tasks(
+            job,
+            "https://agent.example.test",
+            "token",
+            {
+                "AZURE_RESOURCE_GROUP": "rg-zava-learning-demo",
+                "SRE_AGENT_NAME": "sre-zava-learning-demo",
+            },
+            root,
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(set(created), set(required))
+
+    def test_discovery_preserves_all_three_zava_regions(self) -> None:
+        environments = build_existing_environment_catalog(
+            [{
+                "name": "rg-zava",
+                "location": "eastus2",
+                "tags": {
+                    main_module.LAB_ID_TAG: "zava-learning",
+                    main_module.LAB_ENVIRONMENT_TAG: "zava",
+                },
+            }],
+            [{
+                "name": "sre-zava",
+                "resourceGroup": "rg-zava",
+                "location": "westus2",
+                "endpoint": "https://agent.example",
+            }],
+            [],
+            set(),
+            "zava-learning",
+            [],
+            [{
+                "name": "pg-zava",
+                "resourceGroup": "rg-zava",
+                "location": "westus3",
+            }],
+        )
+        self.assertEqual(environments[0]["location"], "eastus2")
+        self.assertEqual(environments[0]["db_location"], "westus3")
+        self.assertEqual(environments[0]["agent_location"], "westus2")
+
+    def test_local_azd_values_recover_partial_deployment_regions(self) -> None:
+        environment = {
+            "environment": "auto-3",
+            "agent_location": "",
+            "runtime_values": {},
+        }
+
+        main_module.hydrate_zava_local_environment(
+            environment,
+            {
+                "AZURE_LOCATION": "South Central US",
+                "AZURE_DB_LOCATION": "West US 3",
+                "AZURE_AGENT_LOCATION": "East US 2",
+                "AZURE_RESOURCE_GROUP": "rg-zava-learning-auto-3",
+            },
+        )
+
+        self.assertEqual(environment["location"], "southcentralus")
+        self.assertEqual(environment["db_location"], "westus3")
+        self.assertEqual(environment["agent_location"], "eastus2")
+        self.assertEqual(
+            environment["runtime_values"]["AZURE_RESOURCE_GROUP"],
+            "rg-zava-learning-auto-3",
+        )
+
+    def test_scenario_signal_queries_match_alert_sources(self) -> None:
+        injected = main_module.datetime(2026, 1, 1, tzinfo=main_module.timezone.utc)
+        nsg_query = main_module.zava_scenario_signal_query("nsg", injected)
+        self.assertIn(
+            'listenerName_s == "quiz-nsg-listener"',
+            nsg_query,
+        )
+        self.assertIn(
+            "toint(httpStatus_d) == 499",
+            nsg_query,
+        )
+        self.assertNotIn("toint(httpStatus_d) == 404", nsg_query)
+        app_query = main_module.zava_scenario_signal_query("app", injected)
+        self.assertIn('listenerName_s == "quiz-app-listener"', app_query)
+        self.assertIn("toint(httpStatus_d) == 404", app_query)
+        self.assertIn("toint(httpStatus_d) >= 500", app_query)
+        self.assertNotIn("toint(httpStatus_d) == 499", app_query)
+        for scenario_id in ("appgw", "pool", "secret"):
+            with self.subTest(status_contract=scenario_id):
+                query = main_module.zava_scenario_signal_query(
+                    scenario_id,
+                    injected,
+                )
+                self.assertIn(
+                    f'listenerName_s == "quiz-{scenario_id}-listener"',
+                    query,
+                )
+                self.assertIn("toint(httpStatus_d) >= 500", query)
+                self.assertNotIn("toint(httpStatus_d) == 404", query)
+                self.assertNotIn("toint(httpStatus_d) == 499", query)
+        for scenario_id in ("perf", "query"):
+            with self.subTest(latency_contract=scenario_id):
+                query = main_module.zava_scenario_signal_query(
+                    scenario_id,
+                    injected,
+                )
+                self.assertIn(
+                    f'ContainerAppName_s == "quiz-{scenario_id}"',
+                    query,
+                )
+                self.assertIn("| where ms > 500", query)
+        disk_query = main_module.zava_scenario_signal_query("disk", injected)
+        self.assertIn('ProcessName == "zava-export"', disk_query)
+        self.assertIn('SyslogMessage has "FAILED"', disk_query)
+        for scenario in main_module.LABS_BY_ID["zava-learning"].scenarios:
+            with self.subTest(scenario=scenario.id):
+                self.assertTrue(
+                    main_module.zava_scenario_signal_query(
+                        scenario.id,
+                        injected,
+                    )
+                )
+
+        alerts = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "modules"
+            / "alerts.bicep"
+        ).read_text(encoding="utf-8")
+        expected_alerts = {
+            "nsg": (
+                "quiz-launch-failing",
+                'listenerName_s == "quiz-nsg-listener"',
+                "| where status == 499 or status >= 500",
+            ),
+            "appgw": (
+                "portal-5xx-elevated",
+                'listenerName_s == "quiz-appgw-listener"',
+                "| where status >= 500",
+            ),
+            "app": (
+                "quiz-content-unavailable",
+                'listenerName_s == "quiz-app-listener"',
+                "| where status == 404 or status >= 500",
+            ),
+            "perf": (
+                "quiz-api-latency-elevated",
+                'ContainerAppName_s == "quiz-perf"',
+                "| where ms > 500",
+            ),
+            "query": (
+                "quiz-loading-latency-elevated",
+                'ContainerAppName_s == "quiz-query"',
+                "| where ms > 500",
+            ),
+            "pool": (
+                "quiz-errors-elevated",
+                'listenerName_s == "quiz-pool-listener"',
+                "| where status >= 500",
+            ),
+            "secret": (
+                "quiz-launch-errors-elevated",
+                'listenerName_s == "quiz-secret-listener"',
+                "| where status >= 500",
+            ),
+            "disk": (
+                "grade-exports-failing",
+                'ProcessName == "zava-export"',
+                'SyslogMessage has "FAILED"',
+            ),
+        }
+        expected_alert_names = main_module.zava_scenario_alert_names("auto-6")
+        self.assertEqual(
+            main_module.ZAVA_SCENARIO_ALERT_SUFFIXES,
+            {
+                scenario_id: contract[0]
+                for scenario_id, contract in expected_alerts.items()
+            },
+        )
+        self.assertTrue(
+            all(name.startswith("Zava-auto-6-") for name in expected_alert_names.values())
+        )
+        self.assertEqual(main_module.ZAVA_REQUIRED_ALERT_COUNT, 8)
+        root_cause_tokens = {
+            "app",
+            "appgw",
+            "connection",
+            "credential",
+            "database",
+            "disk",
+            "nsg",
+            "pool",
+            "query",
+            "release",
+            "secret",
+        }
+        for alert_name in expected_alert_names.values():
+            with self.subTest(symptom_only_name=alert_name):
+                self.assertTrue(
+                    set(alert_name.casefold().split("-")).isdisjoint(
+                        root_cause_tokens
+                    )
+                )
+        self.assertEqual(
+            alerts.count(
+                "'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {"
+            ),
+            len(expected_alerts),
+        )
+        for scenario_id, contract in expected_alerts.items():
+            alert_name, *required_fragments = contract
+            with self.subTest(scenario_id=scenario_id, alert_name=alert_name):
+                name_marker = f"name: '${{alertPrefix}}-{alert_name}'"
+                start = alerts.index(name_marker)
+                end = alerts.find("\nresource ", start)
+                if end < 0:
+                    end = alerts.find("\noutput ", start)
+                alert_block = alerts[start:end]
+                for fragment in required_fragments:
+                    self.assertIn(fragment, alert_block)
+                if scenario_id == "appgw":
+                    self.assertIn("threshold: 2", alert_block)
+                self.assertIn("| where TimeGenerated >= ago(30m)", alert_block)
+                self.assertIn(
+                    "| where ingestion_time() >= ago(20m)",
+                    alert_block,
+                )
+                self.assertIn(
+                    "scopes: [ logAnalyticsWorkspaceId ]",
+                    alert_block,
+                )
+                self.assertIn("autoMitigate: true", alert_block)
+                self.assertIn(
+                    "actions: { actionGroups: routePagerDuty ?",
+                    alert_block,
+                )
+        for alert_name in (
+            "portal-5xx-elevated",
+            "quiz-errors-elevated",
+            "quiz-launch-errors-elevated",
+        ):
+            start = alerts.index(f"name: '${{alertPrefix}}-{alert_name}'")
+            end = alerts.find("\nresource ", start)
+            alert_block = alerts[start:end]
+            self.assertNotIn("status == 404", alert_block)
+            self.assertNotIn("status == 499", alert_block)
+        nsg_start = alerts.index("name: '${alertPrefix}-quiz-launch-failing'")
+        nsg_end = alerts.find("\nresource ", nsg_start)
+        self.assertNotIn("status == 404", alerts[nsg_start:nsg_end])
+        app_start = alerts.index("name: '${alertPrefix}-quiz-content-unavailable'")
+        app_end = alerts.find("\nresource ", app_start)
+        self.assertNotIn("status == 499", alerts[app_start:app_end])
+        self.assertNotIn("listenerName_s in (", alerts)
+        self.assertNotIn("ContainerAppName_s in (", alerts)
+        self.assertNotIn('ContainerAppName_s startswith "quiz-"', alerts)
+        self.assertIn("var alertEvaluationFrequency = 'PT5M'", alerts)
+        self.assertIn("var delayedTelemetryWindow = 'PT30M'", alerts)
+        self.assertEqual(
+            alerts.count("evaluationFrequency: alertEvaluationFrequency"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("windowSize: delayedTelemetryWindow"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("| where TimeGenerated >= ago(30m)"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("| where ingestion_time() >= ago(20m)"),
+            len(expected_alerts),
+        )
+        self.assertNotIn("by bin(TimeGenerated, 5m)", alerts)
+        self.assertEqual(
+            alerts.count("| summarize AggregatedValue = count()"),
+            len(expected_alerts),
+        )
+        self.assertEqual(
+            alerts.count("scopes: [ logAnalyticsWorkspaceId ]"),
+            len(expected_alerts),
+        )
+        self.assertEqual(alerts.count("autoMitigate: true"), len(expected_alerts))
+        simulator = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "simulator"
+            / "demo.py"
+        ).read_text(encoding="utf-8")
+        simulator_alerts = re.findall(
+            r'"symptom_alert": "([^"]+)"',
+            simulator,
+        )
+        self.assertEqual(len(simulator_alerts), len(expected_alerts))
+        self.assertEqual(
+            set(simulator_alerts),
+            {f"Zava-{suffix}" for suffix in main_module.ZAVA_SCENARIO_ALERT_SUFFIXES.values()},
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 10, 30])
+    @patch("app.main.run_capture")
+    def test_monitor_signal_polling_accepts_late_ingested_event_time_rows(
+        self,
+        run_capture_mock,
+        _monotonic,
+        sleep,
+    ) -> None:
+        run_capture_mock.side_effect = [
+            (True, '[{"Count": 0}]'),
+            (True, '[{"Count": 4}]'),
+        ]
+        injected_at = main_module.datetime(
+            2026,
+            9,
+            3,
+            16,
+            0,
+            tzinfo=main_module.timezone.utc,
+        )
+
+        found, count = main_module.wait_for_zava_monitor_signal(
+            "workspace",
+            "app",
+            injected_at,
+        )
+
+        self.assertTrue(found)
+        self.assertEqual(count, 4)
+        self.assertEqual(
+            main_module.ZAVA_MONITOR_SIGNAL_TIMEOUT_SECONDS,
+            22 * 60,
+        )
+        self.assertEqual(run_capture_mock.call_count, 2)
+        command = run_capture_mock.call_args_list[0].args[0]
+        self.assertEqual(
+            command[command.index("--timespan") + 1],
+            "PT30M",
+        )
+        query = command[command.index("--analytics-query") + 1]
+        self.assertIn(
+            "TimeGenerated >= datetime(2026-09-03T16:00:00Z)",
+            query,
+        )
+        sleep.assert_called_once_with(20)
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 119, 120])
+    @patch("app.main.run_capture", return_value=(False, "query timed out"))
+    def test_monitor_signal_polling_fails_closed_at_bounded_deadline(
+        self,
+        run_capture_mock,
+        _monotonic,
+        sleep,
+    ) -> None:
+        found, count = main_module.wait_for_zava_monitor_signal(
+            "workspace",
+            "app",
+            main_module.datetime(
+                2026,
+                9,
+                3,
+                16,
+                0,
+                tzinfo=main_module.timezone.utc,
+            ),
+            timeout_seconds=120,
+        )
+
+        self.assertFalse(found)
+        self.assertEqual(count, 0)
+        run_capture_mock.assert_called_once()
+        self.assertEqual(run_capture_mock.call_args.kwargs["timeout"], 90)
+        sleep.assert_called_once_with(1)
+
+    @patch("app.main.wait_for_zava_monitor_signal", return_value=(True, 1))
+    @patch("app.main.wait_for_zava_customer_impact", return_value=(True, "impact"))
+    @patch("app.main.probe_http_endpoint", return_value=(True, ""))
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch("app.main.azd_values")
+    @patch("app.main.load_state")
+    def test_all_zava_countdowns_start_when_impact_is_confirmed(
+        self,
+        load_state,
+        azd_values,
+        _run_process,
+        _probe,
+        _traffic,
+        _wait_for_signal,
+    ) -> None:
+        lab = main_module.LABS_BY_ID["zava-learning"]
+        azd_values.return_value = {
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+            "APPGW_PUBLIC_FQDN": "zava.example.test",
+            "LOG_ANALYTICS_WORKSPACE_ID": "workspace",
+        }
+        for scenario in lab.scenarios:
+            with self.subTest(scenario=scenario.id):
+                load_state.return_value = {
+                    "lab_id": lab.id,
+                    "environment": "demo",
+                    "resource_group": "rg-zava",
+                    "scenario_id": scenario.id,
+                }
+                job = Job()
+
+                main_module._run_zava_scenario(job)
+
+                events = list(job.events.queue)
+                countdown_index = next(
+                    index
+                    for index, event in enumerate(events)
+                    if event["type"] == "investigation_countdown"
+                )
+                signal_index = next(
+                    index
+                    for index, event in enumerate(events)
+                    if event["type"] == "phase"
+                    and event.get("name") == "signal_confirmed"
+                )
+                self.assertLess(countdown_index, signal_index)
+                self.assertEqual(
+                    events[countdown_index]["scenario_id"],
+                    scenario.id,
+                )
+
+    @patch("app.main.wait_for_zava_monitor_signal")
+    @patch(
+        "app.main.wait_for_zava_customer_impact",
+        return_value=(False, "no required impact within 240 seconds"),
+    )
+    @patch("app.main.probe_http_endpoint", return_value=(True, ""))
+    @patch("app.main.run_process", return_value=(True, ""))
+    @patch(
+        "app.main.azd_values",
+        return_value={
+            "AZURE_RESOURCE_GROUP": "rg-zava",
+            "APPGW_PUBLIC_FQDN": "zava.example.test",
+            "LOG_ANALYTICS_WORKSPACE_ID": "workspace",
+        },
+    )
+    @patch(
+        "app.main.load_state",
+        return_value={
+            "lab_id": "zava-learning",
+            "environment": "demo",
+            "resource_group": "rg-zava",
+            "scenario_id": "appgw",
+        },
+    )
+    def test_appgw_countdown_does_not_start_when_impact_deadline_expires(
+        self,
+        _load_state,
+        _azd_values,
+        _run_process,
+        _probe,
+        _wait_for_impact,
+        wait_for_signal,
+    ) -> None:
+        job = Job()
+
+        main_module._run_zava_scenario(job)
+
+        events = list(job.events.queue)
+        self.assertFalse(
+            any(event["type"] == "investigation_countdown" for event in events)
+        )
+        wait_for_signal.assert_not_called()
+        self.assertTrue(
+            any(
+                event["type"] == "error"
+                and "expected customer impact was not observed"
+                in event["message"]
+                for event in events
+            )
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_appgw_customer_impact_polls_until_gateway_converges(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "appgw"
+        )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests returned a failure"),
+            (False, "0/12 requests returned a failure"),
+            (True, "6/12 requests returned a failure"),
+        ]
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8082",
+            timeout_seconds=60,
+            retry_seconds=5,
+        )
+
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(5), call(5)])
+        self.assertEqual(
+            detail,
+            "6/12 requests returned a failure after 3 traffic batches",
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_perf_customer_impact_polls_until_revision_converges(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "perf"
+        )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests exceeded 500 ms"),
+            (True, "8/12 requests exceeded 500 ms"),
+        ]
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8084",
+        )
+
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            detail,
+            "8/12 requests exceeded 500 ms after 2 traffic batches",
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_secret_customer_impact_polls_until_revision_converges(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "secret"
+        )
+        generate_traffic.side_effect = [
+            (False, "0/12 requests returned a failure"),
+            (True, "8/12 requests returned a failure"),
+        ]
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8087",
+        )
+
+        self.assertTrue(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(15)
+        self.assertEqual(
+            detail,
+            "8/12 requests returned a failure after 2 traffic batches",
+        )
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.generate_zava_scenario_traffic")
+    def test_unaffected_customer_impact_uses_one_batch(
+        self,
+        generate_traffic,
+        sleep,
+    ) -> None:
+        scenarios = {
+            item.id: item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+        }
+        generate_traffic.return_value = (
+            False,
+            "0/12 requests returned a failure",
+        )
+
+        self.assertEqual(
+            main_module.ZAVA_IMPACT_CONVERGENCE_SECONDS,
+            {"nsg": 240, "appgw": 240, "perf": 240, "secret": 240},
+        )
+        for scenario_id in ("app", "query", "pool"):
+            with self.subTest(scenario_id=scenario_id):
+                scenario = scenarios[scenario_id]
+                scenario_url = (
+                    f"http://zava.example.test:{scenario.lane_port}"
+                )
+                generate_traffic.reset_mock()
+
+                impact, detail = main_module.wait_for_zava_customer_impact(
+                    scenario,
+                    scenario_url,
+                )
+
+                self.assertFalse(impact)
+                self.assertEqual(
+                    detail,
+                    "0/12 requests returned a failure",
+                )
+                generate_traffic.assert_called_once_with(
+                    scenario,
+                    scenario_url,
+                )
+        sleep.assert_not_called()
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.time.monotonic", side_effect=[0, 0, 10])
+    @patch(
+        "app.main.generate_zava_scenario_traffic",
+        return_value=(False, "0/12 requests returned a failure"),
+    )
+    def test_appgw_customer_impact_stops_at_convergence_deadline(
+        self,
+        generate_traffic,
+        _monotonic,
+        sleep,
+    ) -> None:
+        scenario = next(
+            item
+            for item in main_module.LABS_BY_ID["zava-learning"].scenarios
+            if item.id == "appgw"
+        )
+
+        impact, detail = main_module.wait_for_zava_customer_impact(
+            scenario,
+            "http://zava.example.test:8082",
+            timeout_seconds=10,
+            retry_seconds=10,
+        )
+
+        self.assertFalse(impact)
+        self.assertEqual(generate_traffic.call_count, 2)
+        sleep.assert_called_once_with(10)
+        self.assertIn("after 2 traffic batches within 10 seconds", detail)
+
+    def test_zava_azure_yaml_uses_remote_container_builds(self) -> None:
+        azure_yaml = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "azure.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(azure_yaml.count("remoteBuild: true"), 3)
+        main_bicep = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "main.bicep"
+        ).read_text(encoding="utf-8")
+        agent_bicep = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "infra"
+            / "modules"
+            / "sre-agent.bicep"
+        ).read_text(encoding="utf-8")
+        deploy_script = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "scripts"
+            / "deploy-sre-agent.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Zava PostgreSQL Start Operator", main_bicep)
+        self.assertIn("dependsOn: [ aca, appgw, vm ]", main_bicep)
+        self.assertIn("postgresStartAgent", agent_bicep)
+        self.assertIn("if (createPostgresStartAssignment)", agent_bicep)
+        self.assertIn("postgresServerId=$postgresId", deploy_script)
+        self.assertIn("function Invoke-AzTsv", deploy_script)
+        self.assertIn(
+            'Invoke-AzTsv -Description "the Application Insights App ID"',
+            deploy_script,
+        )
+        self.assertIn(
+            'Invoke-AzTsv -Description "the Application Insights connection string"',
+            deploy_script,
+        )
+        self.assertIn('"--assignee-object-id", $identityPrincipalId', deploy_script)
+        self.assertIn('"--scope", $postgresId', deploy_script)
+        self.assertIn(
+            "createPostgresStartAssignment=$createPostgresStartAssignment",
+            deploy_script,
+        )
+        common_script = (
+            main_module.vendor_dir_for_lab(main_module.LABS_BY_ID["zava-learning"])
+            / "chaos"
+            / "_common.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("function Ensure-ReportingVmRunning", common_script)
+        self.assertIn(
+            "Ensure-ReportingVmRunning -ResourceGroup $ResourceGroup -VmName $vm",
+            common_script,
+        )
+        self.assertIn("for ($attempt = 1; $attempt -le 6; $attempt++)", common_script)
+
+    def test_zava_names_do_not_repeat_the_lab_prefix(self) -> None:
+        self.assertEqual(
+            main_module.zava_resource_group_name("zava-learning-auto-1"),
+            "rg-zava-learning-auto-1",
+        )
+        self.assertEqual(
+            main_module.zava_agent_name("zava-learning-auto-1"),
+            "sre-zava-learning-auto-1",
+        )
+        self.assertEqual(
+            main_module.zava_resource_group_name("demo"),
+            "rg-zava-learning-demo",
+        )
+        self.assertEqual(
+            main_module.normalize_azure_location("West US 3"),
+            "westus3",
+        )
+        self.assertEqual(
+            main_module.normalize_azure_location("South Central US"),
+            "southcentralus",
+        )
+
+    @patch("app.main.run_capture")
+    def test_discovers_single_existing_zava_agent_name(self, run_capture) -> None:
+        run_capture.return_value = (
+            True,
+            json.dumps(["sre-zava-zava-learning-auto-1"]),
+        )
+
+        self.assertEqual(
+            main_module.discover_zava_agent_names("rg-zava"),
+            ["sre-zava-zava-learning-auto-1"],
+        )
+
+    @patch("app.main.run_capture", return_value=(True, "true"))
+    def test_partial_zava_resource_group_is_treated_as_existing(
+        self,
+        _run_capture,
+    ) -> None:
+        self.assertTrue(main_module.azure_resource_group_exists("rg-zava"))
+
+    @patch("app.main.time.sleep")
+    @patch("app.main.set_azd_values", return_value=(True, ""))
+    @patch("app.main.run_capture")
+    @patch("app.main.azd_values", return_value={})
+    def test_zava_runtime_waits_for_agent_endpoint(
+        self,
+        _azd_values,
+        run_capture,
+        _set_values,
+        sleep,
+    ) -> None:
+        run_capture.side_effect = [
+            (
+                True,
+                json.dumps({
+                    "name": "sre-zava-learning-demo",
+                    "endpoint": None,
+                    "location": "eastus2",
+                }),
+            ),
+            (
+                True,
+                json.dumps({
+                    "name": "sre-zava-learning-demo",
+                    "endpoint": "https://agent.example.test",
+                    "location": "eastus2",
+                }),
+            ),
+        ]
+        job = Job()
+
+        values = main_module.hydrate_zava_runtime_outputs(
+            job,
+            "demo",
+            {
+                "resource_group": "rg-zava-learning-demo",
+                "subscription_id": "sub",
+            },
+            expected_agent_name="sre-zava-learning-demo",
+            attempts=2,
+            delay_seconds=0.01,
+        )
+
+        self.assertEqual(values["SRE_AGENT_ENDPOINT"], "https://agent.example.test")
+        sleep.assert_called_once_with(0.01)
+        first_command = run_capture.call_args_list[0].args[0]
+        self.assertEqual(first_command[:3], ["az", "resource", "show"])
+        self.assertIn("2025-05-01-preview", first_command)
+        self.assertIn(
+            "Waiting for the Zava SRE Agent endpoint",
+            [event.get("name") for event in job.events.queue],
+        )
+
+    @patch("app.main.resolved_process_command", return_value=["tool"])
+    @patch("app.main.subprocess.Popen")
+    def test_process_output_redacts_environment_values(
+        self,
+        popen,
+        _resolved,
+    ) -> None:
+        process = MagicMock()
+        process.pid = 123
+        process.stdout = iter(["failure included PreviewOnly-Secret\n"])
+        process.wait.return_value = 1
+        popen.return_value = process
+        job = Job()
+
+        success, output = run_process(
+            job,
+            ["tool"],
+            environment_overrides={"PASSWORD": "PreviewOnly-Secret"},
+        )
+
+        self.assertFalse(success)
+        self.assertNotIn("PreviewOnly-Secret", output)
+        self.assertIn("<redacted-environment-value>", output)
+        self.assertNotIn(
+            "PreviewOnly-Secret",
+            json.dumps(list(job.events.queue)),
+        )
+
+    def test_sanitizes_terminal_formatting_and_spinner_frames(self) -> None:
+        self.assertEqual(
+            main_module.sanitize_terminal_output(
+                "\x1b[K\x1b[93mSeeding database...\x1b[39m"
+            ),
+            "Seeding database...",
+        )
+        self.assertTrue(main_module.is_transient_cli_spinner("/ Running .."))
+        self.assertTrue(main_module.is_transient_cli_spinner(r"\ Running .."))
+        self.assertFalse(
+            main_module.is_transient_cli_spinner("Building learner-portal...")
+        )
 
 
 if __name__ == "__main__":
