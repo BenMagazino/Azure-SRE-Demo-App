@@ -208,7 +208,22 @@ class LabWorkflowTests(unittest.TestCase):
             [scenario["id"] for scenario in zava["scenarios"]],
             ["nsg", "appgw", "app", "perf", "query", "pool", "secret", "disk"],
         )
-        self.assertEqual(zava["scenarios"][0]["investigation_delay_seconds"], 300)
+        self.assertEqual(
+            {
+                scenario["id"]: scenario["investigation_delay_seconds"]
+                for scenario in zava["scenarios"]
+            },
+            {
+                "nsg": 180,
+                "appgw": 360,
+                "app": 300,
+                "perf": 180,
+                "query": 240,
+                "pool": 420,
+                "secret": 360,
+                "disk": 420,
+            },
+        )
 
     def test_builds_tenant_scoped_resource_group_portal_link(self) -> None:
         self.assertEqual(
