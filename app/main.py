@@ -4400,6 +4400,16 @@ def save_state(state: dict[str, Any]) -> None:
     STATE_FILE.write_text(json.dumps(sanitize(state), indent=2), encoding="utf-8")
 
 
+def reset_lifecycle_state(state: dict[str, Any]) -> None:
+    preserved_state = {
+        key: state[key]
+        for key in ("tenant_id", "subscription_id")
+        if state.get(key)
+    }
+    ENVIRONMENT_CACHE_FILE.unlink(missing_ok=True)
+    save_state(preserved_state)
+
+
 def run_capture(
     command: list[str],
     cwd: Optional[Path] = None,
@@ -6933,12 +6943,26 @@ def teardown_worker(job: Job) -> None:
         vendor_dir,
     )
     if success:
-        state["deployment_active"] = False
-        state.pop("scenario_id", None)
-        save_state(state)
         if lab:
             clear_in_memory_secrets(lab.id, str(environment))
-    job.emit("done", success=success, exit_code=0 if success else 1)
+        try:
+            reset_lifecycle_state(state)
+        except OSError as error:
+            LOGGER.exception(
+                "Azure teardown succeeded, but local lifecycle reset failed"
+            )
+            job.emit(
+                "error",
+                message=(
+                    "Azure resources were removed, but the local workflow could "
+                    f"not be reset: {error}. Review the diagnostic log and retry."
+                ),
+            )
+            job.emit("done", success=False, exit_code=1)
+            return
+        job.emit("done", success=True, exit_code=0, lifecycle_reset=True)
+        return
+    job.emit("done", success=False, exit_code=1)
 
 
 def memory_pressure_observed(
