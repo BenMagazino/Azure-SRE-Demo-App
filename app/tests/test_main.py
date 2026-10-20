@@ -367,6 +367,41 @@ class LabWorkflowTests(unittest.TestCase):
         self.assertTrue(state["deployment_active"])
 
     @patch("app.main.save_state")
+    @patch("app.main.load_state")
+    def test_switching_labs_preserves_azure_context_and_clears_local_lifecycle(
+        self,
+        load_state,
+        save_state,
+    ) -> None:
+        load_state.return_value = {
+            "lab_id": "grubify-starter-lab",
+            "environment": "sre-lab",
+            "resource_group": "rg-sre-lab",
+            "deployment_active": True,
+            "existing_environment": False,
+            "scenario_id": "memory-leak",
+            "validation_status": "ready",
+            "tenant_id": TENANT_A,
+            "subscription_id": SUBSCRIPTION_A,
+        }
+        handler = object.__new__(AppHandler)
+        handler.read_json = MagicMock(return_value={"lab_id": "zava-learning"})
+        handler.send_json = MagicMock()
+
+        handler.select_lab()
+
+        state = save_state.call_args.args[0]
+        self.assertEqual(state, {
+            "tenant_id": TENANT_A,
+            "subscription_id": SUBSCRIPTION_A,
+            "lab_id": "zava-learning",
+            "deployment_active": False,
+        })
+        payload = handler.send_json.call_args.args[0]
+        self.assertEqual(payload["lab"]["id"], "zava-learning")
+        self.assertEqual(payload["state"], state)
+
+    @patch("app.main.save_state")
     @patch("app.main.run_capture", return_value=(True, ""))
     @patch("app.main.azure_cli_management_authenticated", return_value=True)
     @patch("app.main.cached_azure_context")
@@ -553,6 +588,32 @@ class LabWorkflowTests(unittest.TestCase):
             environments[0]["resource_group"],
             "rg-zava-learning-zava-learning-auto-1",
         )
+
+    def test_zava_discovery_includes_owned_partial_resource_group(self) -> None:
+        environments = build_existing_environment_catalog(
+            [{
+                "name": "rg-zava-learning-demo",
+                "location": "southcentralus",
+                "tags": {
+                    "sre-agent-demo-lab-id": "zava-learning",
+                    "sre-agent-demo-environment": "demo",
+                    "solution": "zava-learning",
+                },
+            }],
+            [],
+            [],
+            set(),
+            "zava-learning",
+        )
+
+        self.assertEqual(len(environments), 1)
+        self.assertEqual(environments[0]["environment"], "demo")
+        self.assertEqual(
+            environments[0]["resource_group"],
+            "rg-zava-learning-demo",
+        )
+        self.assertEqual(environments[0]["detection"], "managed")
+        self.assertEqual(environments[0]["runtime_values"]["SRE_AGENT_NAME"], "")
 
     @patch("app.main.save_environment_cache")
     @patch("app.main.local_azd_environment_names", return_value=set())
