@@ -1318,13 +1318,20 @@ def build_existing_environment_catalog(
             for app in apps_by_group.get(resource_group_key, [])
         }
         tagged_lab_id = tags.get(LAB_ID_TAG.casefold(), "")
+        tagged_environment = tags.get(LAB_ENVIRONMENT_TAG.casefold(), "")
         if tagged_lab_id:
             if tagged_lab_id.casefold() != lab_id.casefold():
                 continue
+            is_managed_zava_group = (
+                bool(tagged_environment)
+                and resource_group_key
+                == zava_resource_group_name(tagged_environment).casefold()
+            )
             if (
                 lab_id == "zava-learning"
                 and resource_group_key not in agents_by_group
                 and not {"learner-portal", "assessment-api"}.issubset(app_names)
+                and not is_managed_zava_group
             ):
                 continue
             detection = "managed"
@@ -1353,7 +1360,7 @@ def build_existing_environment_catalog(
             detection = "legacy"
 
         environment = (
-            tags.get(LAB_ENVIRONMENT_TAG.casefold(), "")
+            tagged_environment
             or resource_group.removeprefix("rg-")
         )
         location = normalize_azure_location(group.get("location"))
@@ -7934,21 +7941,14 @@ class AppHandler(SimpleHTTPRequestHandler):
 
         state = load_state()
         previous_lab_id = str(state.get("lab_id", ""))
-        if (
-            previous_lab_id
-            and previous_lab_id != lab.id
-            and state.get("deployment_active")
-            and not state.get("existing_environment")
-        ):
-            self.send_json(
-                {"error": "Tear down the active lab before selecting another lab."},
-                HTTPStatus.CONFLICT,
-            )
-            return
         if not previous_lab_id:
             state["lab_id"] = lab.id
         elif previous_lab_id != lab.id:
             state = {
+                key: state[key]
+                for key in ("tenant_id", "subscription_id")
+                if state.get(key)
+            } | {
                 "lab_id": lab.id,
                 "deployment_active": False,
             }
