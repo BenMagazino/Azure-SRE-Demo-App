@@ -19,6 +19,14 @@ const investigationCountdownProgress = document.querySelector("#investigation-co
 const investigationCountdownStatus = document.querySelector("#investigation-countdown-status");
 const edgeProfileSelect = document.querySelector("#edge-profile");
 const edgeProfileStatus = document.querySelector("#edge-profile-status");
+const summaryEdgeProfileSelect = document.querySelector("#summary-edge-profile");
+const summaryEdgeProfileStatus = document.querySelector("#summary-edge-profile-status");
+const edgeProfileSelects = [edgeProfileSelect, summaryEdgeProfileSelect];
+edgeProfileSelects.forEach((select) => {
+  select.addEventListener("change", () => {
+    edgeProfileSelects.forEach((other) => { other.value = select.value; });
+  });
+});
 const backButton = document.querySelector("#back");
 const shutdownButton = document.querySelector("#shutdown");
 const shell = document.querySelector(".shell");
@@ -34,7 +42,7 @@ const heartbeatIntervalMilliseconds = 10000;
 const authStatus = { "azure-cli": false, azd: false };
 let sessionToken = "";
 let testMode = false;
-let skipEnvironmentButton = null;
+const skipEnvironmentButton = document.querySelector("#skip-environment-validation");
 let installInProgress = false;
 let azureContextCatalog = null;
 let labCatalog = [];
@@ -53,6 +61,7 @@ let investigationCountdownEnd = 0;
 let investigationCountdownDuration = 0;
 let edgeProfilesLoaded = false;
 let renderedConfigurationLabId = "";
+let environmentDiscoveryRequestId = 0;
 
 const azureRegionLabels = {
   australiaeast: "Australia East",
@@ -105,15 +114,6 @@ async function loadSessionToken() {
 
 function configureTestModeUi() {
   document.querySelector("#test-mode-banner").classList.toggle("hidden", !testMode);
-  if (!testMode || skipEnvironmentButton) return;
-  skipEnvironmentButton = document.createElement("button");
-  skipEnvironmentButton.id = "skip-environment-validation";
-  skipEnvironmentButton.type = "button";
-  skipEnvironmentButton.className = "secondary";
-  skipEnvironmentButton.textContent = "Skip validation";
-  skipEnvironmentButton.disabled = true;
-  skipEnvironmentButton.addEventListener("click", skipExistingEnvironmentValidation);
-  document.querySelector(".environment-validation-actions").append(skipEnvironmentButton);
 }
 
 function setSkipEnvironmentEnabled(enabled) {
@@ -197,6 +197,7 @@ function showPanel(id) {
   const panel = document.querySelector(`#${id}`);
   panel.classList.remove("hidden");
   activePanelId = id;
+  if (id === "authentication") void loadEdgeProfiles();
   shell.classList.toggle("workflow-compact", id !== "labs");
   backButton.disabled = workflowPanels.indexOf(id) === 0;
   document.querySelectorAll(".steps [data-panel]").forEach((step) => {
@@ -288,7 +289,9 @@ function renderLabPicker() {
     meta.textContent = `${lab.dependency_ids.length} dependencies · ${lab.scenarios.length} scenario${lab.scenarios.length === 1 ? "" : "s"} · ${lab.resource_count} resource${lab.resource_count === 1 ? "" : "s"} · ${lab.estimated_turnaround} turnaround`;
     button.append(title, description, meta);
     button.addEventListener("click", () => {
+      const labChanged = selectedLabId !== lab.id;
       selectedLabId = lab.id;
+      if (labChanged) resetEnvironmentDiscovery();
       renderLabPicker();
       document.querySelector("#continue-lab").disabled = false;
     });
@@ -327,7 +330,7 @@ function renderConfigurationFields(lab) {
   }
 
   renderedConfigurationLabId = lab.id;
-  selectedExistingEnvironment = null;
+  resetEnvironmentDiscovery();
   document.querySelector("#environment-name").value =
     lab.default_environment || "sre-lab";
   const fields = document.querySelector("#region-fields");
@@ -428,6 +431,22 @@ async function showDeviceCode(device, event) {
   link.textContent = event.browser_opened
     ? "Microsoft sign-in opened in your browser"
     : "Open Microsoft sign-in";
+  link.addEventListener("click", async (clickEvent) => {
+    clickEvent.preventDefault();
+    try {
+      const response = await apiPost("/api/open-device-login", {
+        url: event.verification_url,
+        profile: event.browser_profile || "",
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to open Microsoft sign-in.");
+      link.textContent = "Microsoft sign-in opened in your browser";
+    } catch (error) {
+      notice.classList.add("warning");
+      notice.textContent = `Unable to open Microsoft sign-in: ${error}`;
+      reportClientError(`Unable to open Microsoft sign-in: ${error}`);
+    }
+  });
   actions.append(copy, link);
   device.replaceChildren(code, notice, actions);
   device.classList.remove("hidden");
@@ -467,6 +486,32 @@ function showAuthComplete(device, button, kind, existingSession = false) {
     ? "Signed in with Azure CLI"
     : "Signed in with azd";
   button.disabled = true;
+}
+
+function setAuthenticationCard(kind, authenticated, upn = "", existingSession = false) {
+  const button = document.querySelector(`[data-auth="${kind}"]`);
+  const device = document.querySelector(`#${kind}-device`);
+  const upnLabel = document.querySelector(`#${kind}-upn`);
+  const logoutButton = document.querySelector(`[data-auth-logout="${kind}"]`);
+  authStatus[kind] = authenticated;
+  if (authenticated) {
+    showAuthComplete(device, button, kind, existingSession);
+    upnLabel.textContent = upn
+      ? `Signed in as ${upn}`
+      : "Signed in; UPN not available.";
+    logoutButton.classList.remove("hidden");
+    logoutButton.disabled = false;
+    return;
+  }
+
+  button.disabled = false;
+  button.textContent = kind === "azure-cli"
+    ? "Sign in with Azure CLI"
+    : "Sign in with azd";
+  device.classList.add("hidden");
+  upnLabel.textContent = "";
+  logoutButton.classList.add("hidden");
+  logoutButton.disabled = false;
 }
 
 function updateAuthenticationGate() {
@@ -617,12 +662,13 @@ async function loadAuthStatus() {
   const response = await fetch("/api/auth/status");
   if (!response.ok) return;
   const statuses = await response.json();
-  Object.entries(statuses).forEach(([kind, signedIn]) => {
-    authStatus[kind] = signedIn;
-    if (!signedIn) return;
-    const button = document.querySelector(`[data-auth="${kind}"]`);
-    const device = document.querySelector(`#${kind}-device`);
-    showAuthComplete(device, button, kind, true);
+  Object.entries(statuses).forEach(([kind, status]) => {
+    setAuthenticationCard(
+      kind,
+      status.authenticated === true,
+      typeof status.upn === "string" ? status.upn : "",
+      true,
+    );
   });
   if (authStatus["azure-cli"]) {
     await loadAzureContexts();
@@ -631,6 +677,84 @@ async function loadAuthStatus() {
     azureContextApplied = false;
   }
   updateAuthenticationGate();
+}
+
+async function startAuthLogout(kind) {
+  const button = document.querySelector(`[data-auth-logout="${kind}"]`);
+  const log = document.querySelector(`#${kind}-log`);
+  const device = document.querySelector(`#${kind}-device`);
+  const confirmation = kind === "azure-cli"
+    ? "Sign out of Azure CLI? This clears every account cached for your Windows user."
+    : "Sign out of Azure Developer CLI? This signs out only the Azure Developer CLI session.";
+  if (!window.confirm(confirmation)) {
+    return;
+  }
+  button.disabled = true;
+  log.textContent += "\nSigning out...\n";
+
+  try {
+    const response = await apiPost(`/api/auth/${kind}/logout`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to sign out");
+    const events = new EventSource(`/api/jobs/${result.job_id}/events`);
+    let completed = false;
+    events.onmessage = ({ data }) => {
+      try {
+        const event = JSON.parse(data);
+        if (event.type === "output" || event.type === "step") {
+          log.textContent += event.type === "output"
+            ? `${event.line}\n`
+            : `${event.name}...\n`;
+        }
+        if (event.type === "error") {
+          log.textContent += `ERROR: ${event.message}\n`;
+        }
+        if (event.type !== "done") return;
+
+        completed = true;
+        log.textContent += event.success
+          ? "\nSign-out completed.\n"
+          : `\nSign-out failed (exit ${event.exit_code}).\n`;
+        if (event.success) {
+          setAuthenticationCard(kind, false);
+          if (kind === "azure-cli") {
+            azureContextApplied = false;
+            azureContextCatalog = null;
+            azureContextCard.classList.add("hidden");
+            azureContextStatus.className = "";
+            azureContextStatus.textContent =
+              "Sign in again and apply an Azure subscription before continuing.";
+            applyAzureContextButton.disabled = false;
+            applyAzureContextButton.textContent = "Use selected subscription";
+          }
+          updateAuthenticationGate();
+        } else {
+          button.disabled = false;
+          device.className = "device-card warning";
+          device.textContent = "Sign-out failed. The existing sign-in state was retained.";
+        }
+        events.close();
+      } catch (error) {
+        completed = true;
+        log.textContent += `Sign-out event processing failed: ${error}\n`;
+        reportClientError(`Sign-out event processing failed: ${error}`);
+        events.close();
+        button.disabled = false;
+      }
+    };
+    events.onerror = () => {
+      if (completed) return;
+      completed = true;
+      log.textContent +=
+        "Sign-out event stream was interrupted. The current sign-in state was retained.\n";
+      reportClientError(`Sign-out event stream interrupted for ${kind}`);
+      events.close();
+      button.disabled = false;
+    };
+  } catch (error) {
+    log.textContent += `Failed to start sign-out: ${error}\n`;
+    button.disabled = false;
+  }
 }
 
 async function loadPrerequisites() {
@@ -862,7 +986,10 @@ async function startAuth(kind) {
     const context = kind === "azure-cli" && !azureContextCard.classList.contains("hidden")
       ? selectedAzureContext()
       : undefined;
-    const response = await apiPost(`/api/auth/${kind}`, context);
+    const response = await apiPost(`/api/auth/${kind}`, {
+      ...context,
+      profile: edgeProfileSelect.value,
+    });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to start sign-in");
     const events = new EventSource(`/api/jobs/${result.job_id}/events`);
@@ -896,18 +1023,13 @@ async function startAuth(kind) {
           log.textContent += event.success
             ? "\nSign-in completed.\n"
             : `\nSign-in failed (exit ${event.exit_code}).\n`;
-          authStatus[kind] = event.success;
           if (event.success) {
-            showAuthComplete(device, button, kind);
-            if (kind === "azure-cli") {
-              void loadAzureContexts().catch((error) => {
-                azureContextStatus.className = "warning";
-                azureContextStatus.textContent = `Unable to load Azure accounts: ${error}`;
-                reportClientError(`Unable to load Azure accounts: ${error}`);
-              });
-            }
+            setAuthenticationCard(kind, true);
+            void loadAuthStatus().catch((error) => {
+              reportClientError(`Unable to refresh authentication status: ${error}`);
+            });
           } else {
-            button.disabled = false;
+            setAuthenticationCard(kind, false);
           }
           updateAuthenticationGate();
           events.close();
@@ -1054,16 +1176,30 @@ function renderExistingEnvironments(payload) {
   }
 }
 
+function resetEnvironmentDiscovery() {
+  environmentDiscoveryRequestId += 1;
+  clearExistingEnvironmentSelection();
+  document.querySelector("#existing-environment-list").replaceChildren();
+  const status = document.querySelector("#environment-discovery-status");
+  status.className = "";
+  status.textContent = "Scan the selected subscription for compatible labs.";
+  const refresh = document.querySelector("#refresh-environments");
+  refresh.disabled = false;
+  refresh.removeAttribute("aria-busy");
+  refresh.textContent = "Scan subscription";
+}
+
 async function loadExistingEnvironments() {
+  resetEnvironmentDiscovery();
+  const requestId = environmentDiscoveryRequestId;
+  const labId = selectedLabId;
+  const isCurrentRequest = () =>
+    requestId === environmentDiscoveryRequestId && labId === selectedLabId;
   const status = document.querySelector("#environment-discovery-status");
   const refresh = document.querySelector("#refresh-environments");
   refresh.disabled = true;
   refresh.setAttribute("aria-busy", "true");
   refresh.textContent = "Scanning";
-  selectedExistingEnvironment = null;
-  skipDeploymentForValidatedEnvironment = false;
-  updateIntegrationsPanel();
-  validateEnvironmentButton.disabled = true;
   status.className = "";
   status.textContent =
     "Scanning the selected subscription and checking local azd environments...";
@@ -1074,18 +1210,22 @@ async function loadExistingEnvironments() {
       throw new Error("Restart the local application to enable environment discovery.");
     }
     const payload = await response.json();
+    if (!isCurrentRequest()) return;
     if (!response.ok) {
       throw new Error(payload.error || "Environment discovery failed.");
     }
     renderExistingEnvironments(payload);
   } catch (error) {
+    if (!isCurrentRequest()) return;
     status.className = "warning";
     status.textContent = `Unable to scan for existing labs: ${error}`;
     document.querySelector("#existing-environment-list").replaceChildren();
   } finally {
-    refresh.disabled = false;
-    refresh.removeAttribute("aria-busy");
-    refresh.textContent = "Scan subscription";
+    if (isCurrentRequest()) {
+      refresh.disabled = false;
+      refresh.removeAttribute("aria-busy");
+      refresh.textContent = "Scan subscription";
+    }
   }
 }
 
@@ -1168,9 +1308,11 @@ async function validateExistingEnvironment() {
   validateEnvironmentButton.textContent = "Validating";
   environmentValidationStatus.className = "";
   environmentValidationStatus.textContent =
-    `Checking ${environment.environment} without scanning other labs...`;
+    `Preparing local configuration for ${environment.environment}...`;
   try {
     await saveEnvironmentConfiguration();
+    environmentValidationStatus.textContent =
+      `Checking resource readiness and endpoint availability for ${environment.environment}...`;
     const response = await apiPost("/api/environments/validate", {
       environment: environment.environment,
       resource_group: environment.resource_group,
@@ -1182,7 +1324,7 @@ async function validateExistingEnvironment() {
     if (result.ready) {
       environmentValidationStatus.className = "success";
       environmentValidationStatus.textContent =
-        `${environment.environment} is ready. Opening the demo.`;
+        `${environment.environment} is ready. Loading the demo summary...`;
       skipDeploymentForValidatedEnvironment = true;
       await loadSummary();
       showPanel("summary");
@@ -1202,7 +1344,7 @@ async function validateExistingEnvironment() {
       `Unable to validate ${environment.environment}: ${error.message}`;
   } finally {
     validateEnvironmentButton.removeAttribute("aria-busy");
-    validateEnvironmentButton.textContent = "Validate selected lab";
+    validateEnvironmentButton.textContent = "Validate Selected Lab";
     validateEnvironmentButton.disabled =
       selectedExistingEnvironment !== environment;
     setSkipEnvironmentEnabled(selectedExistingEnvironment === environment);
@@ -1211,10 +1353,11 @@ async function validateExistingEnvironment() {
 
 async function skipExistingEnvironmentValidation() {
   const environment = selectedExistingEnvironment;
-  if (!testMode || !environment) return;
+  if (!environment) return;
   const confirmed = window.confirm(
-    "TEST MODE: Skip all resource readiness and endpoint availability checks "
-    + `for ${environment.environment}? The demo may be stopped, unavailable, or unsafe to use.`
+    `Skip validation for ${environment.environment}? Without validation, the lab `
+    + "could be in an unstable state. Resource readiness and endpoint availability "
+    + "will not be checked, and the demo may not work correctly. Continue?"
   );
   if (!confirmed) return;
 
@@ -1224,9 +1367,11 @@ async function skipExistingEnvironmentValidation() {
   skipEnvironmentButton.textContent = "Skipping";
   environmentValidationStatus.className = "warning";
   environmentValidationStatus.textContent =
-    `Skipping validation for ${environment.environment} in test mode...`;
+    `Preparing local configuration for ${environment.environment}...`;
   try {
     await saveEnvironmentConfiguration();
+    environmentValidationStatus.textContent =
+      "Saving discovered lab settings without readiness checks...";
     const response = await apiPost("/api/environments/skip-validation", {
       environment: environment.environment,
       resource_group: environment.resource_group,
@@ -1238,7 +1383,7 @@ async function skipExistingEnvironmentValidation() {
     }
     environmentValidationStatus.className = "warning";
     environmentValidationStatus.textContent =
-      `${environment.environment} validation was skipped. Readiness is unknown.`;
+      "Validation skipped. Loading the demo summary...";
     skipDeploymentForValidatedEnvironment = true;
     await loadSummary();
     showPanel("summary");
@@ -1249,7 +1394,7 @@ async function skipExistingEnvironmentValidation() {
       `Unable to skip validation for ${environment.environment}: ${error.message}`;
   } finally {
     skipEnvironmentButton.removeAttribute("aria-busy");
-    skipEnvironmentButton.textContent = "Skip validation";
+    skipEnvironmentButton.textContent = "Skip Validation";
     validateEnvironmentButton.disabled =
       selectedExistingEnvironment !== environment;
     setSkipEnvironmentEnabled(selectedExistingEnvironment === environment);
@@ -1314,7 +1459,7 @@ async function loadSummary() {
     summary.existing_environment && summary.environment_detection === "legacy";
   teardownButton.textContent = legacyEnvironment
     ? "Teardown unavailable"
-    : "Tear down Azure resources";
+    : "Tear Down Azure Resources";
   teardownButton.title = legacyEnvironment
     ? "Compatible legacy labs must be removed through their original deployment workflow."
     : "";
@@ -1363,6 +1508,7 @@ async function loadSummary() {
 async function loadEdgeProfiles() {
   if (edgeProfilesLoaded) return;
   edgeProfileStatus.textContent = "Finding Microsoft Edge profiles...";
+  summaryEdgeProfileStatus.textContent = edgeProfileStatus.textContent;
   try {
     const response = await fetch("/api/edge-profiles", { cache: "no-store" });
     const result = await response.json();
@@ -1370,20 +1516,24 @@ async function loadEdgeProfiles() {
       throw new Error(result.error || "Unable to load Microsoft Edge profiles.");
     }
     const profiles = result.profiles || [];
-    const options = [new Option("Current browser profile", "")];
+    const options = [new Option("Default browser", "")];
     profiles.forEach((profile) => {
       const identity = profile.email ? ` - ${profile.email}` : "";
       options.push(new Option(`${profile.name}${identity}`, profile.id));
     });
-    edgeProfileSelect.replaceChildren(...options);
-    edgeProfileSelect.disabled = !result.edge_available || profiles.length === 0;
+    edgeProfileSelects.forEach((select) => {
+      select.replaceChildren(...options.map((option) => option.cloneNode(true)));
+      select.disabled = !result.edge_available || profiles.length === 0;
+    });
     edgeProfileStatus.textContent = edgeProfileSelect.disabled
       ? "No selectable Microsoft Edge profiles were found."
-      : "Select a work profile to open Azure and SRE links with that identity.";
+      : "";
+    summaryEdgeProfileStatus.textContent = edgeProfileStatus.textContent;
     edgeProfilesLoaded = true;
   } catch (error) {
-    edgeProfileSelect.disabled = true;
+    edgeProfileSelects.forEach((select) => { select.disabled = true; });
     edgeProfileStatus.textContent = `Unable to load Microsoft Edge profiles: ${error}`;
+    summaryEdgeProfileStatus.textContent = edgeProfileStatus.textContent;
   }
 }
 
@@ -1391,7 +1541,7 @@ async function openSummaryLink(event, url) {
   const profile = edgeProfileSelect.value;
   if (!profile) return;
   event.preventDefault();
-  edgeProfileStatus.textContent = "Opening link in the selected Microsoft Edge profile...";
+  summaryEdgeProfileStatus.textContent = "Opening link in the selected Microsoft Edge profile...";
   try {
     const response = await apiPost("/api/open-edge-link", { url, profile });
     const result = await response.json();
@@ -1400,9 +1550,9 @@ async function openSummaryLink(event, url) {
     }
     const selectedLabel =
       edgeProfileSelect.options[edgeProfileSelect.selectedIndex]?.textContent;
-    edgeProfileStatus.textContent = `Opened in ${selectedLabel}.`;
+    summaryEdgeProfileStatus.textContent = `Opened in ${selectedLabel}.`;
   } catch (error) {
-    edgeProfileStatus.textContent = `Unable to open the selected profile: ${error}`;
+    summaryEdgeProfileStatus.textContent = `Unable to open the selected profile: ${error}`;
   }
 }
 
@@ -1533,6 +1683,7 @@ function resetLifecycleAfterTeardown() {
   persistedLabId = "";
   selectedLabId = "";
   selectedScenarioId = "";
+  resetEnvironmentDiscovery();
   selectedExistingEnvironment = null;
   skipDeploymentForValidatedEnvironment = false;
   currentSummary = null;
@@ -1569,7 +1720,7 @@ function resetLifecycleAfterTeardown() {
   installAllButton.disabled = false;
   installAllProgress.textContent = "";
   installAllProgress.classList.add("hidden");
-  teardownButton.textContent = "Tear down Azure resources";
+  teardownButton.textContent = "Tear Down Azure Resources";
   teardownButton.title = "";
 
   renderLabPicker();
@@ -1688,6 +1839,9 @@ continueButton.addEventListener("click", () => showPanel("authentication"));
 document.querySelectorAll("[data-auth]").forEach((button) => {
   button.addEventListener("click", () => startAuth(button.dataset.auth));
 });
+document.querySelectorAll("[data-auth-logout]").forEach((button) => {
+  button.addEventListener("click", () => startAuthLogout(button.dataset.authLogout));
+});
 azureTenant.addEventListener("change", () => {
   populateSubscriptions();
   markAzureContextChanged();
@@ -1709,6 +1863,7 @@ document.querySelector("#refresh-environments").addEventListener(
   loadExistingEnvironments,
 );
 validateEnvironmentButton.addEventListener("click", validateExistingEnvironment);
+skipEnvironmentButton.addEventListener("click", skipExistingEnvironmentValidation);
 document.querySelector("#environment-name").addEventListener("input", (event) => {
   if (
     selectedExistingEnvironment

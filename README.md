@@ -80,8 +80,10 @@ Windows' trusted certificate store is used; certificate validation is never disa
    and timing metadata.
 2. **Prerequisites** — Detect Azure CLI and azd, then install or update only the missing dependencies.
    The minimum supported versions are Azure CLI 2.88.0 and azd 1.28.0.
-3. **Sign in** — Complete device-code authentication for both CLIs, then select the Azure tenant and
-   subscription to use.
+3. **Sign in** — Complete device-code authentication for both CLIs, verify the displayed account
+   UPNs, then select the Azure tenant and subscription to use. Sign out of either CLI to retire its
+   current session and sign in again; Azure CLI sign-out clears all Azure CLI accounts cached for
+   the current Windows user.
 4. **Configure** — Scan for an existing compatible lab or configure a new environment. Zava exposes
    separate workload, PostgreSQL, and SRE Agent regions plus optional external integrations.
 5. **Deploy** — Reuse a healthy environment, update an incomplete one, or deploy all infrastructure
@@ -90,7 +92,10 @@ Windows' trusted certificate store is used; certificate validation is never disa
    Agent progress, restore the baseline, or tear down an app-managed environment.
 
 Device codes are copied and their verification pages are opened automatically. The app never asks
-for Azure passwords.
+for Azure passwords. Each sign-in card displays the UPN reported by its CLI when available; it
+shows when a UPN is unavailable rather than inferring one. Azure CLI and Azure Developer CLI have
+independent sign-out controls. Azure CLI's native logout clears its cached accounts, while azd's
+logout clears its own authentication session.
 
 ### Existing environments
 
@@ -118,8 +123,12 @@ plan.
 configuration, knowledge base, incident-handler subagent, and response plan. Use it after a demo or
 when validation reports drift. It does not delete the environment.
 
-Step 6 can open Azure links in the current browser context or in a selected local Microsoft Edge
-profile. Profiles are displayed by name and account email, while the resource group and SRE Agent
+Step 3 lets you select a local Microsoft Edge profile for both CLIs' device-code sign-in pages,
+including signing in again after sign-out. The selection also applies to Step 6 Azure links.
+The dropdown is available in both steps, and changing either updates the other.
+Without a selection, sign-in uses the default browser. Selecting a browser profile does not change
+an existing CLI session; sign out and sign in again to switch accounts. Profiles are displayed by
+name and account email, while the resource group and SRE Agent
 links display their resource names rather than long URLs.
 
 ### Zava Learning
@@ -189,9 +198,11 @@ diagnostic filters.
 
 ### Test mode
 
-Test mode is off by default. It adds a clearly labeled **Skip validation** action for a selected
-existing lab and bypasses only designated nonessential stabilization delays. The skip action
-requires confirmation and records the environment as `skipped`, not validated. Normal validation
+Step 4 offers a yellow **Skip Validation** action for a selected existing lab. It requires
+confirmation that the lab could be unstable without validation and records the environment as
+`skipped`, not validated; resource readiness and endpoint availability remain unknown.
+
+Test mode is off by default and bypasses only designated nonessential stabilization delays. Normal validation
 still performs all control-plane, running-state, ready-revision, endpoint, SRE Agent data-plane,
 and alert checks in test mode.
 

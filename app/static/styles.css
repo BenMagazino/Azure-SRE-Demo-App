@@ -152,6 +152,16 @@ button.secondary:hover:not(:disabled),
   background: var(--cp-accent-soft);
 }
 
+button.warning-action {
+  border-color: var(--cp-warning);
+  background: var(--cp-warning);
+  color: #242424;
+}
+
+button.warning-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cp-warning) 85%, #ffffff);
+}
+
 button.danger {
   border-color: var(--cp-danger);
   background: var(--cp-danger);
@@ -500,6 +510,11 @@ header p,
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
+  width: 100%;
+}
+
+.environment-validation-actions p {
+  flex: 1 1 16rem;
 }
 
 .environment-validation p {
@@ -823,6 +838,13 @@ header p,
   border: 1px solid var(--cp-border);
   border-radius: 16px;
   background: var(--cp-surface-soft);
+}
+
+.auth-account {
+  min-height: 1.5em;
+  margin: 0.65rem 0;
+  color: var(--cp-text-soft);
+  overflow-wrap: anywhere;
 }
 
 .log {
