@@ -77,18 +77,35 @@
       </section>
 
       <section id="authentication" class="panel hidden">
-        <h2>Sign in to Azure</h2>
+        <div class="summary-heading">
+          <h2>Sign in to Azure</h2>
+          <div class="edge-profile-picker">
+            <label for="edge-profile">Open sign-in pages and demo links with</label>
+            <select id="edge-profile">
+              <option value="">Default browser</option>
+            </select>
+            <p id="edge-profile-status" aria-live="polite"></p>
+          </div>
+        </div>
         <p>Azure CLI and Azure Developer CLI use device-code sign-in. Codes are copied and opened automatically; no localhost OAuth callback is required.</p>
         <div class="auth-grid">
           <article>
             <h3>Azure CLI</h3>
             <button data-auth="azure-cli">Sign in with Azure CLI</button>
+            <p id="azure-cli-upn" class="auth-account" aria-live="polite"></p>
+            <button data-auth-logout="azure-cli" class="secondary hidden">
+              Sign out and re-authenticate
+            </button>
             <div id="azure-cli-device" class="device-card hidden"></div>
             <pre id="azure-cli-log" class="log"></pre>
           </article>
           <article>
             <h3>Azure Developer CLI</h3>
             <button data-auth="azd">Sign in with azd</button>
+            <p id="azd-upn" class="auth-account" aria-live="polite"></p>
+            <button data-auth-logout="azd" class="secondary hidden">
+              Sign out and re-authenticate
+            </button>
             <div id="azd-device" class="device-card hidden"></div>
             <pre id="azd-log" class="log"></pre>
           </article>
@@ -160,12 +177,15 @@
           <div class="environment-validation">
             <div class="environment-validation-actions">
               <button id="validate-environment" type="button" disabled>
-                Validate selected lab
+                Validate Selected Lab
               </button>
+              <button id="skip-environment-validation" type="button" class="warning-action" disabled>
+                Skip Validation
+              </button>
+              <p id="environment-validation-status" role="status" aria-live="polite">
+                Select an existing lab to validate only that environment.
+              </p>
             </div>
-            <p id="environment-validation-status" aria-live="polite">
-              Select an existing lab to validate only that environment.
-            </p>
           </div>
         </section>
         <div class="environment-choice-divider" role="separator">
@@ -428,11 +448,11 @@
         <div class="summary-heading">
           <h2>Demo ready</h2>
           <div class="edge-profile-picker">
-            <label for="edge-profile">Open Step 6 links with</label>
-            <select id="edge-profile">
-              <option value="">Current browser profile</option>
+            <label for="summary-edge-profile">Open Step 6 links with</label>
+            <select id="summary-edge-profile">
+              <option value="">Default browser</option>
             </select>
-            <p id="edge-profile-status" aria-live="polite"></p>
+            <p id="summary-edge-profile-status" aria-live="polite"></p>
           </div>
         </div>
         <p id="summary-validation-status" class="warning hidden" role="alert"></p>
@@ -461,9 +481,9 @@
           <button
             id="restore-baseline"
             title="Reapply the declared infrastructure, application images, and SRE Agent configuration to repair demo drift.">
-            Restore baseline
+            Restore Baseline
           </button>
-          <button id="teardown" class="secondary">Tear down Azure resources</button>
+          <button id="teardown" class="warning-action">Tear Down Azure Resources</button>
         </div>
         <pre id="demo-log" class="log large"></pre>
       </section>

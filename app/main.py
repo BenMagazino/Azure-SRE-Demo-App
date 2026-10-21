@@ -933,6 +933,7 @@ class Job:
     def __init__(self, command: Optional[list[str]] = None) -> None:
         self.id = str(uuid.uuid4())
         self.command = command or []
+        self.browser_profile = ""
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
         self.process: Optional[subprocess.Popen[str]] = None
         self.process_lock = threading.Lock()
@@ -3366,11 +3367,21 @@ def run_process(
             job.emit("output", line=safe_line)
             device = parse_device_code(line)
             if device:
-                browser_opened = open_browser_url(device["verification_url"])
+                browser_opened = (
+                    open_edge_profile_url(device["verification_url"], job.browser_profile)
+                    if job.browser_profile
+                    else open_browser_url(device["verification_url"])
+                )
+                if not browser_opened:
+                    job.emit(
+                        "error",
+                        message="Unable to open Microsoft sign-in in the selected browser. Use the sign-in link to retry.",
+                    )
                 job.emit(
                     "device_code",
                     **device,
                     browser_opened=browser_opened,
+                    browser_profile=job.browser_profile,
                 )
         exit_code = process.wait()
     finally:
@@ -4308,8 +4319,10 @@ def launch_client_if_unclaimed(
 def create_job(
     command: Optional[list[str]] = None,
     worker: Optional[Any] = None,
+    browser_profile: str = "",
 ) -> Job:
     job = Job(command)
+    job.browser_profile = browser_profile
     with JOBS_LOCK:
         JOBS[job.id] = job
     target = worker or stream_process
@@ -4422,6 +4435,7 @@ def run_capture(
     cwd: Optional[Path] = None,
     timeout: int = 60,
     environment_overrides: Optional[dict[str, str]] = None,
+    log_output: bool = True,
 ) -> tuple[bool, str]:
     process_command = resolved_process_command(command)
     if process_command is None:
@@ -4460,13 +4474,21 @@ def run_capture(
         LOGGER.exception("Capture command failed: %s", redact_command(command))
         return False, str(error)
     output = (result.stdout or result.stderr).strip()
-    LOGGER.debug(
-        "Capture command complete command=%s exit_code=%s duration=%.3fs output=%s",
-        redact_command(command),
-        result.returncode,
-        time.monotonic() - started,
-        redact_text(output),
-    )
+    if log_output:
+        LOGGER.debug(
+            "Capture command complete command=%s exit_code=%s duration=%.3fs output=%s",
+            redact_command(command),
+            result.returncode,
+            time.monotonic() - started,
+            redact_text(output),
+        )
+    else:
+        LOGGER.debug(
+            "Capture command complete command=%s exit_code=%s duration=%.3fs",
+            redact_command(command),
+            result.returncode,
+            time.monotonic() - started,
+        )
     return result.returncode == 0, output
 
 
@@ -4675,31 +4697,136 @@ def rehydrate_zava_secrets(
     return recovered, missing
 
 
-def authentication_statuses() -> dict[str, bool]:
-    azure_cli = azure_cli_management_authenticated()
-    azd_command_succeeded, azd_output = run_capture([
-        "azd",
-        "auth",
-        "login",
-        "--check-status",
-        "--output",
-        "json",
-    ])
-    azd_authenticated = False
+def azure_cli_authenticated_upn() -> Optional[str]:
+    success, output = run_capture(
+        [
+            "az",
+            "account",
+            "show",
+            "--query",
+            "user",
+            "--output",
+            "json",
+            "--only-show-errors",
+        ],
+        timeout=10,
+        log_output=False,
+    )
+    if not success:
+        LOGGER.warning("Unable to retrieve Azure CLI account identity metadata")
+        return None
+    try:
+        user = json.loads(output)
+    except json.JSONDecodeError:
+        LOGGER.warning("Azure CLI returned invalid account identity metadata")
+        return None
+    if not isinstance(user, dict) or user.get("type") != "user":
+        return None
+    name = user.get("name")
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def azd_authentication_details() -> tuple[bool, Optional[str]]:
+    azd_command_succeeded, azd_output = run_capture(
+        [
+            "azd",
+            "auth",
+            "login",
+            "--check-status",
+            "--output",
+            "json",
+        ],
+        log_output=False,
+    )
     if azd_command_succeeded:
         try:
             azd_status = json.loads(azd_output)
-            if isinstance(azd_status, dict):
-                azd_authenticated = azd_status.get("status") == "success"
-            else:
+            if not isinstance(azd_status, dict):
                 LOGGER.warning(
                     "Azure Developer CLI returned an unexpected status response"
                 )
+                return False, None
         except json.JSONDecodeError as error:
             LOGGER.warning("Unable to parse Azure Developer CLI status: %s", error)
-    statuses = {"azure-cli": azure_cli, "azd": azd_authenticated}
-    LOGGER.info("Authentication status: %s", statuses)
+            return False, None
+    else:
+        return False, None
+
+    if azd_status.get("status") != "success":
+        return False, None
+    account_type = azd_status.get("type")
+    if account_type is not None and account_type != "user":
+        return True, None
+    for key in ("userPrincipalName", "upn", "email", "username"):
+        value = azd_status.get(key)
+        if isinstance(value, str) and value.strip():
+            return True, value.strip()
+
+    identity_success, identity_output = run_capture(
+        ["azd", "auth", "login", "--check-status"],
+        log_output=False,
+    )
+    if identity_success:
+        match = re.search(
+            r"(?im)^Logged in to Azure as\s+(.+?)\s*$",
+            identity_output,
+        )
+        if match:
+            return True, match.group(1).strip()
+    LOGGER.info("Azure Developer CLI is authenticated; UPN is unavailable")
+    return True, None
+
+
+AUTH_LOGOUT_COMMANDS = {
+    "azure-cli": ["az", "logout"],
+    "azd": ["azd", "auth", "logout"],
+}
+
+
+def authentication_statuses() -> dict[str, dict[str, Any]]:
+    azure_cli = azure_cli_management_authenticated()
+    azure_cli_upn = azure_cli_authenticated_upn() if azure_cli else None
+    azd_authenticated, azd_upn = azd_authentication_details()
+    statuses = {
+        "azure-cli": {"authenticated": azure_cli, "upn": azure_cli_upn},
+        "azd": {"authenticated": azd_authenticated, "upn": azd_upn},
+    }
+    LOGGER.info(
+        "Authentication status: azure_cli=%s azd=%s",
+        azure_cli,
+        azd_authenticated,
+    )
     return statuses
+
+
+def authentication_logout_worker(job: Job, kind: str) -> None:
+    command = AUTH_LOGOUT_COMMANDS[kind]
+    job.emit("step", name=f"Signing out of {kind}")
+    success, output = run_capture(command, timeout=30, log_output=False)
+    if not success:
+        job.emit(
+            "error",
+            message=redact_text(output)
+            or f"Unable to sign out of {kind}. Review the diagnostic log and retry.",
+        )
+        job.finish(False, 1)
+        return
+
+    still_authenticated = (
+        azure_cli_management_authenticated()
+        if kind == "azure-cli"
+        else azd_authentication_details()[0]
+    )
+    if still_authenticated:
+        job.emit(
+            "error",
+            message=f"{kind} still reports an authenticated session after sign-out.",
+        )
+        job.finish(False, 1)
+        return
+
+    job.emit("output", line=f"Signed out of {kind}. You can sign in again now.")
+    job.finish(True, 0)
 
 
 def azd_values(
@@ -7750,12 +7877,45 @@ class AppHandler(SimpleHTTPRequestHandler):
         if path == "/api/lab":
             self.select_lab()
             return
-        if path == "/api/auth/azure-cli":
+        if path.startswith("/api/auth/") and path.endswith("/logout"):
+            kind = path.removeprefix("/api/auth/").removesuffix("/logout").strip("/")
+            if kind not in AUTH_LOGOUT_COMMANDS:
+                self.send_json(
+                    {"error": "Unsupported authentication provider"},
+                    HTTPStatus.NOT_FOUND,
+                )
+                return
+            job = create_job(
+                AUTH_LOGOUT_COMMANDS[kind],
+                worker=lambda current_job: authentication_logout_worker(
+                    current_job,
+                    kind,
+                ),
+            )
+            self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
+            return
+        if path in {"/api/auth/azure-cli", "/api/auth/azd"}:
             try:
                 payload = self.read_json()
             except (ValueError, json.JSONDecodeError):
                 self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
                 return
+            if not isinstance(payload, dict):
+                self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
+                return
+            browser_profile = str(payload.get("profile") or "").strip()
+            if browser_profile and (
+                find_edge() is None
+                or browser_profile not in {
+                    profile["id"] for profile in discover_edge_profiles()
+                }
+            ):
+                self.send_json(
+                    {"error": "The selected Microsoft Edge profile is unavailable."},
+                    HTTPStatus.CONFLICT,
+                )
+                return
+        if path == "/api/auth/azure-cli":
             tenant_id = str(payload.get("tenant_id", "")).strip()
             subscription_id = str(payload.get("subscription_id", "")).strip()
             if tenant_id or subscription_id:
@@ -7794,12 +7954,17 @@ class AppHandler(SimpleHTTPRequestHandler):
                     "https://management.core.windows.net//.default",
                     "--use-device-code",
                 ]
-            job = create_job(command, worker=azure_login_worker)
+            job = create_job(
+                command,
+                worker=azure_login_worker,
+                browser_profile=browser_profile,
+            )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
         if path == "/api/auth/azd":
             job = create_job(
                 azd_login_command(cached_azure_context()),
+                browser_profile=browser_profile,
             )
             self.send_json({"job_id": job.id}, HTTPStatus.ACCEPTED)
             return
@@ -7832,15 +7997,27 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/open-device-login":
             try:
-                verification_url = str(self.read_json().get("url", ""))
+                payload = self.read_json()
+                if not isinstance(payload, dict):
+                    raise ValueError("Expected a JSON object")
+                verification_url = str(payload.get("url", ""))
+                profile = str(payload.get("profile") or "").strip()
             except (ValueError, json.JSONDecodeError):
                 self.send_json({"error": "Invalid JSON request"}, HTTPStatus.BAD_REQUEST)
                 return
             if not is_device_login_url(verification_url):
                 self.send_json({"error": "Invalid Microsoft device-login URL"}, HTTPStatus.BAD_REQUEST)
                 return
-            if not open_browser_url(verification_url):
-                self.send_json({"error": "Unable to open the default browser"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            opened = (
+                open_edge_profile_url(verification_url, profile)
+                if profile
+                else open_browser_url(verification_url)
+            )
+            if not opened:
+                self.send_json(
+                    {"error": "Unable to open Microsoft sign-in in the selected browser."},
+                    HTTPStatus.CONFLICT,
+                )
                 return
             self.send_json({"opened": True})
             return
@@ -8362,16 +8539,6 @@ class AppHandler(SimpleHTTPRequestHandler):
 
     def skip_environment_validation(self) -> None:
         client = getattr(self, "client_address", ("<unknown>",))[0]
-        if not is_test_mode():
-            LOGGER.warning(
-                "Rejected validation skip because test mode is disabled client=%s",
-                client,
-            )
-            self.send_json(
-                {"error": "Validation skip is available only in test mode."},
-                HTTPStatus.FORBIDDEN,
-            )
-            return
         try:
             payload = self.read_json()
         except (ValueError, json.JSONDecodeError):
@@ -8423,7 +8590,7 @@ class AppHandler(SimpleHTTPRequestHandler):
             )
             return
         issue = (
-            "Validation was explicitly skipped in test mode; resource readiness "
+            "Validation was explicitly skipped; resource readiness "
             "and endpoint availability are unknown."
         )
         state["deployment_active"] = True
@@ -8436,7 +8603,7 @@ class AppHandler(SimpleHTTPRequestHandler):
         state.pop("validated_at", None)
         save_state(state)
         LOGGER.warning(
-            "TEST MODE validation skipped environment=%s resource_group=%s "
+            "Validation skipped environment=%s resource_group=%s "
             "subscription=%s client=%s",
             environment_name,
             candidate.get("resource_group", ""),

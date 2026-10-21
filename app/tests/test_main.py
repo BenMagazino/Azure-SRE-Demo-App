@@ -29,10 +29,13 @@ from app.main import (
     ToolStatus,
     VENDOR_DIR,
     activate_azure_context,
+    authentication_logout_worker,
     authentication_statuses,
+    azd_authentication_details,
     azd_login_command,
     azure_context_is_available,
     azure_cli_management_authenticated,
+    azure_cli_authenticated_upn,
     azure_resource_group_portal_url,
     azure_login_worker,
     break_cart_worker,
@@ -1029,21 +1032,17 @@ class TestModeValidationTests(unittest.TestCase):
         return handler
 
     @patch("app.main.is_test_mode", return_value=False)
-    def test_skip_is_rejected_when_test_mode_is_off(self, _is_test_mode) -> None:
+    def test_skip_is_available_when_test_mode_is_off(self, _is_test_mode) -> None:
         handler = self.handler({
             "environment": "existing-lab",
             "resource_group": "rg-existing-lab",
             "acknowledge_risk": True,
         })
-        handler.existing_environment_candidate = MagicMock()
+        handler.existing_environment_candidate = MagicMock(return_value=None)
 
         handler.skip_environment_validation()
 
-        handler.existing_environment_candidate.assert_not_called()
-        self.assertEqual(
-            handler.send_json.call_args.args[1],
-            HTTPStatus.FORBIDDEN,
-        )
+        handler.existing_environment_candidate.assert_called_once()
 
     @patch("app.main.is_test_mode", return_value=True)
     def test_skip_requires_explicit_risk_acknowledgement(
@@ -1066,8 +1065,8 @@ class TestModeValidationTests(unittest.TestCase):
 
     @patch("app.main.save_state")
     @patch("app.main.set_azd_values", return_value=(True, ""))
-    @patch("app.main.is_test_mode", return_value=True)
-    def test_skip_records_explicit_state_in_test_mode(
+    @patch("app.main.is_test_mode", return_value=False)
+    def test_skip_records_explicit_state_without_test_mode(
         self,
         _is_test_mode,
         set_values,
@@ -1243,6 +1242,53 @@ class TestModeValidationTests(unittest.TestCase):
 
 
 class DeviceCodeTests(unittest.TestCase):
+    def test_device_codes_open_in_the_job_edge_profile(self) -> None:
+        for line in (
+            "To sign in, use a web browser to open the page "
+            "https://microsoft.com/devicelogin and enter the code ABCD-EFGH "
+            "to authenticate.",
+            "Start by copying the next code: FD9EAW26Z",
+        ):
+            with (
+                self.subTest(line=line),
+                patch("app.main.resolved_process_command", return_value=["cli"]),
+                patch("app.main.subprocess.Popen") as popen,
+                patch("app.main.open_edge_profile_url", return_value=True) as open_profile,
+                patch("app.main.open_browser_url") as open_default,
+            ):
+                popen.return_value.stdout = [line]
+                popen.return_value.wait.return_value = 0
+                job = Job(["cli"])
+                job.browser_profile = "Profile 1"
+
+                run_process(job, job.command)
+
+                open_profile.assert_called_once_with(
+                    "https://microsoft.com/devicelogin", "Profile 1",
+                )
+                open_default.assert_not_called()
+                events = list(job.events.queue)
+                device = next(event for event in events if event["type"] == "device_code")
+                self.assertEqual(device["browser_profile"], "Profile 1")
+                self.assertTrue(device["browser_opened"])
+
+    @patch("app.main.resolved_process_command", return_value=["cli"])
+    @patch("app.main.subprocess.Popen")
+    @patch("app.main.open_edge_profile_url", return_value=False)
+    @patch("app.main.open_browser_url")
+    def test_profile_launch_failure_does_not_fall_back_to_wrong_browser(
+        self, open_default, _open_profile, popen, _resolve,
+    ) -> None:
+        popen.return_value.stdout = ["Start by copying the next code: FD9EAW26Z"]
+        popen.return_value.wait.return_value = 0
+        job = Job(["cli"])
+        job.browser_profile = "Profile 1"
+
+        run_process(job, job.command)
+
+        open_default.assert_not_called()
+        self.assertTrue(any(event["type"] == "error" for event in job.events.queue))
+
     def test_parses_azure_cli_device_code(self) -> None:
         line = (
             "To sign in, use a web browser to open the page "
@@ -2381,7 +2427,34 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".workflow-compact .step-leading #back", styles)
         self.assertIn(".prereq-actions button", styles)
         self.assertIn('id="validate-environment"', page)
-        self.assertNotIn('id="skip-environment-validation"', page)
+        self.assertIn('id="skip-environment-validation"', page)
+        self.assertIn('class="warning-action"', page)
+        self.assertIn("button.warning-action", styles)
+        self.assertIn("could be in an unstable state", script)
+        self.assertIn('id="environment-validation-status" role="status"', page)
+        self.assertLess(
+            page.index('id="skip-environment-validation"'),
+            page.index('id="environment-validation-status"'),
+        )
+        self.assertIn(".environment-validation-actions p", styles)
+        self.assertIn("Preparing local configuration for", script)
+        self.assertIn("Saving discovered lab settings without readiness checks...", script)
+        self.assertIn("Validation skipped. Loading the demo summary...", script)
+        self.assertIn("Validate Selected Lab", page)
+        self.assertIn('validateEnvironmentButton.textContent = "Validate Selected Lab"', script)
+        self.assertIn("Checking resource readiness and endpoint availability for", script)
+        self.assertIn('id="azure-cli-upn"', page)
+        self.assertIn('id="azd-upn"', page)
+        self.assertIn('data-auth-logout="azure-cli"', page)
+        self.assertIn('data-auth-logout="azd"', page)
+        self.assertNotIn('class="auth-account-note"', page)
+        self.assertIn("clears every account cached for your Windows user", script)
+        self.assertIn("This signs out only the Azure Developer CLI session.", script)
+        self.assertIn("setAuthenticationCard", script)
+        self.assertIn("Signed in; UPN not available.", script)
+        self.assertIn("startAuthLogout", script)
+        self.assertIn("window.confirm(", script)
+        self.assertIn("if (!window.confirm(confirmation))", script)
 
         self.assertIn('id="test-mode-banner"', page)
         self.assertIn('id="azure-context-loading"', page)
@@ -2393,6 +2466,25 @@ class ProcessTests(unittest.TestCase):
         self.assertIn('class="context-card new-environment-card"', page)
         self.assertIn('id="investigation-countdown"', page)
         self.assertIn('id="edge-profile"', page)
+        self.assertLess(page.index('id="edge-profile"'), page.index('data-auth="azure-cli"'))
+        self.assertEqual(page.count('id="edge-profile"'), 1)
+        auth_header = page.split('<section id="authentication"', 1)[1].split(
+            '<div class="auth-grid">', 1,
+        )[0]
+        self.assertIn('<div class="summary-heading">', auth_header)
+        self.assertLess(
+            auth_header.index('id="edge-profile"'),
+            auth_header.index("Azure CLI and Azure Developer CLI use device-code"),
+        )
+        self.assertEqual(page.count('id="summary-edge-profile"'), 1)
+        self.assertGreater(
+            page.index('id="summary-edge-profile"'), page.index('id="summary"'),
+        )
+        self.assertIn("other.value = select.value", script)
+        self.assertIn('if (id === "authentication") void loadEdgeProfiles();', script)
+        self.assertIn("profile: edgeProfileSelect.value", script)
+        self.assertIn('apiPost("/api/open-device-login"', script)
+        self.assertIn('profile: event.browser_profile || ""', script)
         self.assertIn('apiPost("/api/open-edge-link"', script)
         self.assertIn(".edge-profile-picker", styles)
         self.assertIn("resource_group_portal_url", script)
@@ -2432,11 +2524,8 @@ class ProcessTests(unittest.TestCase):
         self.assertIn(".environment-discovery", styles)
         self.assertNotIn("No GitHub connection is required", script)
         self.assertIn('apiPost("/api/environments/validate"', script)
-        self.assertIn(
-            'skipEnvironmentButton = document.createElement("button")',
-            script,
-        )
-        self.assertIn('if (!testMode || !environment) return;', script)
+        self.assertIn('document.querySelector("#skip-environment-validation")', script)
+        self.assertIn('if (!environment) return;', script)
         self.assertIn(
             'apiPost("/api/environments/skip-validation"',
             script,
@@ -2739,11 +2828,23 @@ class ProcessTests(unittest.TestCase):
         run_capture,
     ) -> None:
         azure_cli_management_authenticated.return_value = True
-        run_capture.return_value = True, '{"status":"unauthenticated"}'
+        run_capture.side_effect = [
+            (True, '{"type":"user","name":"azure.user@example.com"}'),
+            (True, '{"status":"unauthenticated"}'),
+        ]
 
         statuses = authentication_statuses()
 
-        self.assertEqual(statuses, {"azure-cli": True, "azd": False})
+        self.assertEqual(
+            statuses,
+            {
+                "azure-cli": {
+                    "authenticated": True,
+                    "upn": "azure.user@example.com",
+                },
+                "azd": {"authenticated": False, "upn": None},
+            },
+        )
 
     @patch("app.main.run_capture")
     @patch("app.main.azure_cli_management_authenticated")
@@ -2753,14 +2854,112 @@ class ProcessTests(unittest.TestCase):
         run_capture,
     ) -> None:
         azure_cli_management_authenticated.return_value = False
-        run_capture.return_value = (
-            True,
-            '{"status":"success","expiresOn":"2026-08-31T03:24:40Z"}',
-        )
+        run_capture.side_effect = [
+            (
+                True,
+                '{"status":"success","expiresOn":"2026-08-31T03:24:40Z"}',
+            ),
+            (True, "Logged in to Azure as azd.user@example.com"),
+        ]
 
         statuses = authentication_statuses()
 
-        self.assertEqual(statuses, {"azure-cli": False, "azd": True})
+        self.assertEqual(
+            statuses,
+            {
+                "azure-cli": {"authenticated": False, "upn": None},
+                "azd": {"authenticated": True, "upn": "azd.user@example.com"},
+            },
+        )
+
+    @patch("app.main.run_capture")
+    def test_does_not_report_service_principal_name_as_azure_upn(
+        self,
+        run_capture,
+    ) -> None:
+        run_capture.return_value = (
+            True,
+            '{"type":"servicePrincipal","name":"00000000-0000-0000-0000-000000000000"}',
+        )
+
+        self.assertIsNone(azure_cli_authenticated_upn())
+
+    @patch("app.main.run_capture")
+    def test_does_not_report_non_user_azd_identity_as_upn(self, run_capture) -> None:
+        run_capture.return_value = (
+            True,
+            '{"status":"success","type":"servicePrincipal","username":"application-id"}',
+        )
+
+        self.assertEqual(azd_authentication_details(), (True, None))
+
+    @patch("app.main.run_capture")
+    def test_reads_azd_upn_from_machine_readable_status(self, run_capture) -> None:
+        run_capture.return_value = (
+            True,
+            '{"status":"success","type":"user","email":"azd.user@example.com"}',
+        )
+
+        self.assertEqual(
+            azd_authentication_details(),
+            (True, "azd.user@example.com"),
+        )
+        run_capture.assert_called_once()
+
+    @patch("app.main.azure_cli_management_authenticated", return_value=False)
+    @patch("app.main.run_capture", return_value=(True, ""))
+    def test_azure_cli_logout_worker_reports_success(
+        self,
+        run_capture,
+        _azure_cli_authenticated,
+    ) -> None:
+        job = Job()
+
+        authentication_logout_worker(job, "azure-cli")
+
+        run_capture.assert_called_once_with(
+            ["az", "logout"],
+            timeout=30,
+            log_output=False,
+        )
+        events = [job.events.get_nowait() for _ in range(job.events.qsize())]
+        self.assertEqual(events[-1], {"type": "done", "success": True, "exit_code": 0})
+
+    @patch("app.main.run_capture", return_value=(False, "logout failed"))
+    def test_failed_azd_logout_worker_reports_error(self, run_capture) -> None:
+        job = Job()
+
+        authentication_logout_worker(job, "azd")
+
+        run_capture.assert_called_once_with(
+            ["azd", "auth", "logout"],
+            timeout=30,
+            log_output=False,
+        )
+        events = [job.events.get_nowait() for _ in range(job.events.qsize())]
+        self.assertTrue(any(event.get("type") == "error" for event in events))
+        self.assertEqual(
+            events[-1],
+            {"type": "done", "success": False, "exit_code": 1},
+        )
+
+    @patch("app.main.azd_authentication_details", return_value=(True, "user@example.com"))
+    @patch("app.main.run_capture", return_value=(True, ""))
+    def test_does_not_report_azd_logout_success_while_session_remains(
+        self,
+        _run_capture,
+        _azd_authentication_details,
+    ) -> None:
+        job = Job()
+
+        authentication_logout_worker(job, "azd")
+
+        events = [job.events.get_nowait() for _ in range(job.events.qsize())]
+        self.assertTrue(any(event.get("type") == "error" for event in events))
+        self.assertEqual(
+            events[-1],
+            {"type": "done", "success": False, "exit_code": 1},
+        )
 
     @patch("app.main.subprocess.Popen")
     @patch("app.main.find_edge")
@@ -2779,6 +2978,123 @@ class ProcessTests(unittest.TestCase):
 
 
 class RequestAuthenticationTests(unittest.TestCase):
+    @patch("app.main.cached_azure_context", return_value=None)
+    @patch("app.main.find_edge", return_value=Path(r"C:\Edge\msedge.exe"))
+    @patch("app.main.discover_edge_profiles", return_value=[{"id": "Profile 1"}])
+    @patch("app.main.create_job")
+    def test_both_login_routes_pass_selected_profile_to_job(
+        self, create_job, _profiles, _edge, _context,
+    ) -> None:
+        for kind in ("azure-cli", "azd"):
+            with self.subTest(kind=kind):
+                create_job.reset_mock()
+                handler = object.__new__(AppHandler)
+                handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+                handler.client_address = ("127.0.0.1", 50000)
+                handler.path = f"/api/auth/{kind}"
+                handler.read_json = MagicMock(return_value={"profile": "Profile 1"})
+                handler.send_json = MagicMock()
+
+                handler.do_POST()
+
+                self.assertEqual(
+                    create_job.call_args.kwargs["browser_profile"], "Profile 1",
+                )
+                self.assertEqual(handler.send_json.call_args.args[1], HTTPStatus.ACCEPTED)
+
+    @patch("app.main.find_edge", return_value=Path(r"C:\Edge\msedge.exe"))
+    @patch("app.main.discover_edge_profiles", return_value=[])
+    @patch("app.main.create_job")
+    def test_login_rejects_unavailable_profile(self, create_job, _profiles, _edge) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/auth/azd"
+        handler.read_json = MagicMock(return_value={"profile": r"..\Unsafe"})
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        create_job.assert_not_called()
+        self.assertEqual(handler.send_json.call_args.args[1], HTTPStatus.CONFLICT)
+
+    @patch("app.main.open_edge_profile_url", return_value=True)
+    @patch("app.main.open_browser_url")
+    def test_manual_device_link_uses_selected_profile(self, open_default, open_profile) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/open-device-login"
+        handler.read_json = MagicMock(return_value={
+            "url": "https://microsoft.com/devicelogin", "profile": "Profile 1",
+        })
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        open_profile.assert_called_once_with(
+            "https://microsoft.com/devicelogin", "Profile 1",
+        )
+        open_default.assert_not_called()
+        handler.send_json.assert_called_once_with({"opened": True})
+
+    @patch("app.main.create_job")
+    def test_azure_cli_logout_route_starts_logout_job(self, create_job) -> None:
+        create_job.return_value = MagicMock(id="logout-job")
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/auth/azure-cli/logout"
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        self.assertEqual(
+            create_job.call_args.args[0],
+            ["az", "logout"],
+        )
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.ACCEPTED,
+        )
+
+    @patch("app.main.create_job")
+    def test_azd_logout_route_starts_logout_job(self, create_job) -> None:
+        create_job.return_value = MagicMock(id="logout-job")
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/auth/azd/logout"
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        create_job.assert_called_once()
+        self.assertEqual(
+            create_job.call_args.args[0],
+            ["azd", "auth", "logout"],
+        )
+        self.assertEqual(
+            handler.send_json.call_args.args,
+            ({"job_id": "logout-job"}, HTTPStatus.ACCEPTED),
+        )
+
+    @patch("app.main.create_job")
+    def test_unknown_logout_provider_is_rejected(self, create_job) -> None:
+        handler = object.__new__(AppHandler)
+        handler.headers = {"X-SRE-Session": SESSION_TOKEN}
+        handler.client_address = ("127.0.0.1", 50000)
+        handler.path = "/api/auth/unknown/logout"
+        handler.send_json = MagicMock()
+
+        handler.do_POST()
+
+        create_job.assert_not_called()
+        self.assertEqual(
+            handler.send_json.call_args.args[1],
+            HTTPStatus.NOT_FOUND,
+        )
+
     @patch("app.main.urlopen")
     def test_http_json_uses_bearer_token(self, urlopen) -> None:
         response = MagicMock()
