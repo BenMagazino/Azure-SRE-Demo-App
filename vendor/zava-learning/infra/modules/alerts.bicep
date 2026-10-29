@@ -91,7 +91,9 @@ resource quizContentUnavailable 'Microsoft.Insights/scheduledQueryRules@2023-03-
           // Count only student-facing failures: 404s on served paths (/quiz/*, /health) and
           // backend 5xx. Internet-scanner 404s on unserved paths (/, /favicon.ico, /phpinfo.php)
           // and AGW-generated unrouted 500s from malformed scanner requests are excluded.
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-app-listener"\n| extend status = toint(httpStatus_d)\n| where status == 404 or status >= 500\n| where not(status == 500 and isempty(serverRouted_s) and timeTaken_d == 0)\n| where status >= 500 or requestUri_s startswith "/quiz/" or requestUri_s startswith "/health"\n| summarize AggregatedValue = count()'
+          // /health is matched exactly (optionally with a query string) so fuzzed look-alikes
+          // such as /healthz/ or /health.php are not counted.
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-app-listener"\n| extend status = toint(httpStatus_d)\n| where status == 404 or status >= 500\n| where not(status == 500 and isempty(serverRouted_s) and timeTaken_d == 0)\n| where status >= 500 or requestUri_s startswith "/quiz/" or requestUri_s == "/health" or requestUri_s startswith "/health?"\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
