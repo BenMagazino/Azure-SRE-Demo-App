@@ -146,7 +146,10 @@ resource portal5xxElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pr
     criteria: {
       allOf: [
         {
-          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| summarize AggregatedValue = count()'
+          // Count only backend-relevant 5xx. AGW-generated 500s for malformed internet-scanner
+          // requests (never routed: empty serverRouted_s, timeTaken_d == 0) are excluded; routed
+          // 502/504 from an unreachable or unhealthy backend still count.
+          query: 'AzureDiagnostics\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ResourceType == "APPLICATIONGATEWAYS" and Category == "ApplicationGatewayAccessLog"\n| where listenerName_s == "quiz-appgw-listener"\n| extend status = toint(httpStatus_d)\n| where status >= 500\n| where not(status == 500 and isempty(serverRouted_s) and timeTaken_d == 0)\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
