@@ -277,6 +277,33 @@ resource gradeExportsFailing 'Microsoft.Insights/scheduledQueryRules@2023-03-15-
   }
 }
 
+// Control-plane signal: fires within minutes of a lane losing all serving capacity,
+// independent of App Gateway access-log traffic (which is absent while the gateway
+// is stopped overnight). Without it, a lane can be dark for hours before the
+// log-based quiz alerts see a student request.
+resource quizLaneStoppedServing 'Microsoft.Insights/activityLogAlerts@2020-10-01' = {
+  name: '${alertPrefix}-quiz-lane-stopped-serving'
+  location: 'global'
+  tags: tags
+  properties: {
+    description: 'A student-facing quiz lane stopped serving requests.'
+    enabled: true
+    scopes: [ resourceGroup().id ]
+    condition: {
+      allOf: [
+        { field: 'category', equals: 'Administrative' }
+        { field: 'operationName', equals: 'Microsoft.App/containerApps/revisions/deactivate/action' }
+        { field: 'status', equals: 'Succeeded' }
+      ]
+    }
+    actions: {
+      actionGroups: routePagerDuty ? [
+        { actionGroupId: resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}') }
+      ] : []
+    }
+  }
+}
+
 output actionGroupId string = resourceId('Microsoft.Insights/actionGroups', 'ag-zava-pagerduty-${resourceToken}')
 output actionGroupName string = 'ag-zava-pagerduty-${resourceToken}'
 output pagerDutyConfigured bool = routePagerDuty
