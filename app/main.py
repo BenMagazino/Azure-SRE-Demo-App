@@ -5506,7 +5506,11 @@ def zava_daily_keepalive_task(values: dict[str, str]) -> dict[str, str]:
             "Server, reporting VM and zava-export timer, every Container App and "
             "baseline replica floor, learner portal, and quiz lanes on ports "
             "8081-8087. Take only the minimum non-destructive action needed to "
-            "restore availability. Do not inject faults, redeploy infrastructure, "
+            "restore availability. Startup ordering is mandatory: if PostgreSQL "
+            "is stopped, start it first and wait (bounded) until its state is "
+            "Ready before starting the Application Gateway, so health probes and "
+            "learner traffic never reach the database-backed quiz lanes while "
+            "the database is still starting. Do not inject faults, redeploy infrastructure, "
             "create incidents, open pull requests, or create change requests. "
             "Report initial state, actions, final state, and unresolved blockers."
         ),
