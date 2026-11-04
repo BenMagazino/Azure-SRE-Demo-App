@@ -204,7 +204,7 @@ resource quizApiLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023-03-
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-perf"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-perf"\n| extend path = extract(@"path=(\\S+)", 1, Log_s), status = toint(extract(@"status=(\\d+)", 1, Log_s))\n| where not(path == "/health" and status == 200)\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
@@ -233,7 +233,7 @@ resource quizLoadingLatencyElevated 'Microsoft.Insights/scheduledQueryRules@2023
     criteria: {
       allOf: [
         {
-          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-query"\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
+          query: 'ContainerAppConsoleLogs_CL\n| where TimeGenerated >= ago(30m)\n| where ingestion_time() >= ago(20m)\n| where ContainerAppName_s == "quiz-query"\n| extend path = extract(@"path=(\\S+)", 1, Log_s), status = toint(extract(@"status=(\\d+)", 1, Log_s))\n| where not(path == "/health" and status == 200)\n| where Log_s has "ms="\n| extend ms = toint(extract(@"ms=(\\d+)", 1, Log_s))\n| where ms > 500\n| summarize AggregatedValue = count()'
           metricMeasureColumn: 'AggregatedValue'
           timeAggregation: 'Total'
           operator: 'GreaterThan'
